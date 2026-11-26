@@ -85,8 +85,8 @@ export function RowChrome({
   menuRef?: Ref<RowMenuHandle>;
 }) {
   // Your handle comes with the session's one speaker index: a thousand rows don't each watch it.
-  const { selfHandle } = useSpeakers();
-  const items = useCallback(() => rowMenuItems(row, slug, selfHandle), [row, slug, selfHandle]);
+  const { selfRef } = useSpeakers();
+  const items = useCallback(() => rowMenuItems(row, slug, selfRef), [row, slug, selfRef]);
   const title = useCallback(() => rowMenuTitle(row, slug), [row, slug]);
   const time = gutterTime(row);
   return (

@@ -36,13 +36,13 @@ test("two agent recipients make two rows, one per agent, with both recipients", 
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     expect.objectContaining({
-      to: "@dev",
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
       status: "queued",
       id: expect.any(String),
       item: expect.objectContaining({ body: "both" }),
     }),
     expect.objectContaining({
-      to: "@ops",
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|ops>$/),
       status: "queued",
       id: expect.any(String),
       item: expect.objectContaining({ body: "both" }),
@@ -59,7 +59,7 @@ test("a human recipient is refused", async () => {
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     {
-      to: "@sam",
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|sam>$/),
       status: "refused",
       reason: "@sam is a person; you can message agents only.",
       code: "human",
@@ -73,15 +73,20 @@ test("the human REST send resolves only agents: each refused target is its own r
   for (const slug of ["or", "nobody", "humans", "factory"]) {
     const r = await one(slug);
     expect(r.statusCode).toBe(202);
+    // A person is a principal (named by tag); a name nobody holds stays the word it was written as.
     expect(r.json().results).toEqual([
-      expect.objectContaining({ to: `@${slug}`, status: "refused", reason: expect.any(String) }),
+      expect.objectContaining({
+        to: slug === "or" ? expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/) : `@${slug}`,
+        status: "refused",
+        reason: expect.any(String),
+      }),
     ]);
   }
   await s.seedAgent({ slug: "shelved" });
   await s.app.agents.archive("shelved", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   expect((await one("shelved")).json().results).toEqual([
     {
-      to: "@shelved",
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|shelved>$/),
       status: "refused",
       reason: "@shelved is archived and can't receive messages.",
       code: "archived",
@@ -101,9 +106,12 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
   const res = await post({ to: ["dev", "old", "nobody"], body: "mixed" });
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
-    expect.objectContaining({ to: "@dev", status: "queued" }),
     expect.objectContaining({
-      to: "@old",
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+      status: "queued",
+    }),
+    expect.objectContaining({
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|old>$/),
       status: "refused",
       reason: expect.any(String),
       code: "terminated",
@@ -154,8 +162,16 @@ test("start_failed keeps that recipient's row pending", async () => {
     expect(res.statusCode).toBe(202);
     const [bad, fine] = res.json().results;
     const reason = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
-    expect(bad).toEqual({ to: "@bad", status: "start_failed", id: expect.any(String), reason });
-    expect(fine).toMatchObject({ to: "@fine", status: "queued" });
+    expect(bad).toEqual({
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|bad>$/),
+      status: "start_failed",
+      id: expect.any(String),
+      reason,
+    });
+    expect(fine).toMatchObject({
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|fine>$/),
+      status: "queued",
+    });
     expect(
       (await t2.sql`select state from messages where id = ${bad.id}`).map((r) => r.state),
     ).toEqual(["pending"]);

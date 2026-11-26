@@ -28,6 +28,7 @@ import { Timeline } from "./timeline";
 import { recallText, uploadsFor, uploadsUsedSince } from "./uploads";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
+import { refOfWho } from "./who";
 
 export function SessionView({
   slug,
@@ -135,6 +136,7 @@ export function SessionView({
   const self = me?.user.handle;
   // Stored text names you by your tag (a command's sender, the operator input you typed).
   const selfTag = me ? tagOf(me.user.ref) : undefined;
+  const selfRef = me?.user.ref;
   const { queue, sending, cancelled, stopEpoch, landed } = s.state;
   const queueItems = useMemo(
     () =>
@@ -166,12 +168,12 @@ export function SessionView({
   useEffect(() => {
     const ordered = s.state.ordered;
     orderedRef.current = ordered;
-    if (!self) return; // read again once you are known
+    if (!selfRef) return; // read again once you are known
     const from = lookedThrough.current.slug === slug ? lookedThrough.current.seq : 0;
-    const used = uploadsUsedSince(ordered, from, self);
+    const used = uploadsUsedSince(ordered, from, selfRef);
     lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
     if (used.length) uploadsFor(userId, slug).forgetUploads(used);
-  }, [s.state.ordered, slug, self, userId]);
+  }, [s.state.ordered, slug, selfRef, userId]);
   const recall = useCallback(() => recallText(orderedRef.current, selfTag), [selfTag]);
   const composer = useMemo(
     () =>
@@ -405,7 +407,7 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
       const toMe =
         handle !== undefined &&
         parseSendResults(r.result)?.results.some(
-          (x) => "kind" in x && x.kind === "human" && x.to === `@${handle}`,
+          (x) => "kind" in x && x.kind === "human" && refOfWho(x.to) === me?.user.ref,
         ) === true;
       const fresh = r.seq > baseSeq.current || pendingAtLoad.current.has(r.seq);
       if (toMe && fresh && !announced.current.has(r.seq)) {
@@ -413,7 +415,7 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
         setMsg(`@${slug} messaged you`);
       }
     }
-  }, [scan, loaded, handle, slug, setMsg]);
+  }, [scan, loaded, handle, me?.user.ref, slug, setMsg]);
   const { errorCount, lastError } = scan;
   useEffect(() => {
     // The first render with rows (history load) announces nothing.

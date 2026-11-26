@@ -15,6 +15,7 @@ import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
 import { type PartyKind, type SenderKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
+import { whoHandle } from "./who";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
@@ -111,7 +112,7 @@ export function formatDue(due: string): string {
 
 /** Who scheduled a message, by the kind the envelope carries (`byKind`). */
 function ScheduledBy({ by, kind }: { by: string; kind: PartyKind }) {
-  const bare = by.startsWith("@") ? by.slice(1) : by;
+  const bare = whoHandle(by);
   return kind === "agent" ? (
     <AgentLink slug={bare} />
   ) : (

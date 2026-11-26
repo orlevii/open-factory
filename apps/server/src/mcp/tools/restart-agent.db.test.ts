@@ -300,7 +300,9 @@ test("a note whose recipient can't be started is reported as queued, in a fixed 
   expect(r.json).toMatchObject({
     status: "restarting",
     note_delivered: false,
-    note_error: "Your note is queued, but @dev couldn't be started.",
+    note_error: expect.stringMatching(
+      /^Your note is queued, but <@[0-9a-z]{8}\|dev> couldn't be started\.$/,
+    ),
   });
   p.emit(ev.end());
   await (await h.app.runtimes.bySlug("dev"))?.settled();

@@ -170,8 +170,9 @@ test.each([
   expect(r.json).toMatchObject({
     slug,
     status: "created",
-    note: `@${slug} is created and starts when it gets its first message.`,
+    tag: expect.stringMatching(new RegExp(`^<@[0-9a-z]{8}\\|${slug}>$`)),
   });
+  expect(r.json.note).toBe(`${r.json.tag} is created and starts when it gets its first message.`);
   const created = await row(slug);
   expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : "u-or");
   expect(created.manageOrg).toBe(false);

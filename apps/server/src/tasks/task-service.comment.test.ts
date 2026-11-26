@@ -184,9 +184,9 @@ describe("loop guard on task comments", () => {
     const r = await h.app.tasks.comment(agent("dev"), "T-1", "@qa what do you think?");
     expect(r.deliveredTo).toEqual([]);
     expect(r.held).toHaveLength(1);
-    expect(r.held[0]?.to).toBe("@qa");
+    expect(r.held[0]?.to).toMatch(/^<@[0-9a-z]{8}\|qa>$/);
     expect(r.held[0]?.note).toMatch(
-      /^Held: you and @qa exchanged \d+ messages in 1 minute with no human in between/,
+      /^Held: you and <@[0-9a-z]{8}\|qa> exchanged \d+ messages in 1 minute with no human in between/,
     );
     const [c] = await h.sql`select body from task_comments where id = ${r.id}`;
     expect(c?.body).toBe(`${tag("qa")} what do you think?`);
@@ -203,8 +203,10 @@ describe("loop guard on task comments", () => {
     const r = await h.app.tasks.comment(agent("dev"), "T-1", "@qa two");
     expect(r.held).toEqual([
       {
-        to: "@qa",
-        note: "Held: messages between you and @qa are held until a human resumes them in the Inbox; it is sent on then.",
+        to: expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/),
+        note: expect.stringMatching(
+          /^Held: messages between you and <@[0-9a-z]{8}\|qa> are held until a human resumes them in the Inbox; it is sent on then\.$/,
+        ),
       },
     ]);
   });
@@ -215,7 +217,7 @@ describe("loop guard on task comments", () => {
     expect(r.held).toEqual([]);
     expect(r.deliveredTo.sort()).toEqual(["dev", "qa"]);
     const r2 = await h.app.tasks.comment(agent("dev"), "T-1", "@qa @lead hi");
-    expect(r2.held.map((x) => x.to)).toEqual(["@qa"]);
+    expect(r2.held.map((x) => x.to)).toEqual([expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/)]);
     expect(r2.deliveredTo).toEqual(["lead"]);
   });
 

@@ -12,6 +12,7 @@ import {
   type UploadView,
 } from "@/components/composer/attachments";
 import { NETWORK_ERROR } from "@/components/composer/composer";
+import { refOfWho } from "./who";
 
 /** A 413 that isn't the server's JSON: a reverse proxy's own limit (U3 §13.5). */
 export const PROXY_TOO_LARGE =
@@ -470,16 +471,16 @@ export function stripAttachedLines(
 export function uploadsUsedSince(
   ordered: readonly SessionEvent[],
   afterSeq: number,
-  self: string | undefined,
+  selfRef: string | undefined,
 ): string[] {
   const out: string[] = [];
-  if (!self) return out;
+  if (!selfRef) return out;
   for (let i = ordered.length - 1; i >= 0; i--) {
     const se = ordered[i] as SessionEvent;
     if (se.seq <= afterSeq) break;
     if (se.event.type !== "message_in") continue;
     for (const m of se.event.messages)
-      if (m.from === `@${self}`) for (const a of m.attachments ?? []) out.push(a.uploadId);
+      if (refOfWho(m.from) === selfRef) for (const a of m.attachments ?? []) out.push(a.uploadId);
   }
   return out;
 }

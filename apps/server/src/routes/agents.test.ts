@@ -160,7 +160,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
     });
     expect(sent.json().results).toEqual([
       {
-        to: "@dev",
+        to: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
         status: "refused",
         reason: "@dev is archived and can't receive messages.",
         code: "archived",

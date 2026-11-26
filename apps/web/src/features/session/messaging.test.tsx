@@ -301,6 +301,28 @@ test("a factory fact renders the body's first line, keyed by fact code, with the
   expect(within(group).getByText(/rm -rf x/)).toBeInTheDocument();
 });
 
+test("an update group about a tagged report names it by its handle", async () => {
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "t1",
+            from: "<@b0b00001|b>",
+            fromKind: "agent",
+            kind: "member_update",
+            about: "<@b0b00001|b>",
+            body: "Done.",
+          }),
+        ],
+      },
+    ],
+    "Done.",
+  );
+  expect(screen.getByRole("article", { name: "Update from @b" })).toBeInTheDocument();
+});
+
 test("a fact's one escaped envelope close is decoded in its detail", async () => {
   await open(
     [
@@ -467,7 +489,9 @@ test("a send to a person has no footer; Open in inbox opens its inbox item", asy
       { type: "turn_started" },
       call({ to: ["@alice"], body: "need a human" }),
       result(
-        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m10" }] }),
+        JSON.stringify({
+          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m10" }],
+        }),
       ),
     ],
     "need a human",
@@ -497,7 +521,9 @@ test("a send to a person with no inbox item of yours has no Open in inbox", asyn
       { type: "turn_started" },
       call({ to: ["@alice"], body: "need a human" }),
       result(
-        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m10" }] }),
+        JSON.stringify({
+          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m10" }],
+        }),
       ),
     ],
     "need a human",
@@ -706,7 +732,9 @@ test("the announcer says '<name> messaged you' for a send to this human, not to 
   push(call({ to: ["@alice"], body: "to alice" }, "t_h"));
   push(
     result(
-      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m2" }] }),
+      JSON.stringify({
+        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m2" }],
+      }),
       false,
       "t_h",
     ),
@@ -796,7 +824,9 @@ test("Load earlier does not announce an older send to the viewer", async () => {
     se(call({ to: ["@alice"], body: "old" }, "t_old")),
     se(
       result(
-        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m0" }] }),
+        JSON.stringify({
+          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m0" }],
+        }),
         false,
         "t_old",
       ),
@@ -915,7 +945,9 @@ test("the announcer re-announces a second send to this human (the live text chan
   push(call({ to: ["@alice"], body: "one" }, "t_1"));
   push(
     result(
-      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m1" }] }),
+      JSON.stringify({
+        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m1" }],
+      }),
       false,
       "t_1",
     ),
@@ -925,7 +957,9 @@ test("the announcer re-announces a second send to this human (the live text chan
   push(call({ to: ["@alice"], body: "two" }, "t_2"));
   push(
     result(
-      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m2" }] }),
+      JSON.stringify({
+        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m2" }],
+      }),
       false,
       "t_2",
     ),
@@ -941,7 +975,9 @@ test("the announcer announces a send whose call was on screen at load and whose 
       call({ to: ["@alice"], body: "pending at load" }, "t_p"),
       call({ to: ["@alice"], body: "done at load" }, "t_d"),
       result(
-        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m0" }] }),
+        JSON.stringify({
+          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m0" }],
+        }),
         false,
         "t_d",
       ),
@@ -957,7 +993,9 @@ test("the announcer announces a send whose call was on screen at load and whose 
       agent: "dev",
       event: se(
         result(
-          JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m1" }] }),
+          JSON.stringify({
+            results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m1" }],
+          }),
           false,
           "t_p",
         ),

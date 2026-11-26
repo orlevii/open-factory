@@ -179,12 +179,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ slug }) => {
-        const { handle: s, warning } = await d.agents.handleOf(slug);
+        const { handle: s, tag, warning } = await d.agents.handleOf(slug);
         const [a, cfg] = await Promise.all([d.agents.summary(s), d.config.getConfig(s)]);
-        const facing = await d.facing({ handles: [a.slug], texts: [a.description] });
+        const facing = await d.facing({ texts: [a.description] });
         return {
           slug: a.slug,
-          tag: facing.tag(a.slug),
+          tag: tag ?? `@${a.slug}`,
           display_name: a.displayName,
           description: facing.render(a.description),
           kind: a.kind,
@@ -225,11 +225,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           actor,
           tagWarnings,
         );
+        const tag = (await d.facing({ handles: [slug] })).tag(slug);
         return {
           slug,
-          tag: (await d.facing({ handles: [slug] })).tag(slug),
+          tag,
           status: "created",
-          note: `@${slug} is created and starts when it gets its first message.`,
+          note: `${tag} is created and starts when it gets its first message.`,
           ...warned(manager.warning, ...tagWarnings),
         };
       },
@@ -239,7 +240,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
-        const { handle: slug, warning } = await d.agents.handleOf(a.slug);
+        const { handle: slug, tag, warning } = await d.agents.handleOf(a.slug);
         const manager =
           a.reports_to !== undefined ? await d.agents.managerHandleOf(a.reports_to) : undefined;
         const before = await d.agents.summary(slug);
@@ -273,7 +274,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           (identity && !before.archivedAt && before.status !== "hibernated");
         return {
           slug,
-          tag: (await d.facing({ handles: [slug] })).tag(slug),
+          tag: tag ?? `@${slug}`,
           changed,
           restart,
           ...(r.config?.checked === "schema"
@@ -288,11 +289,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Archive an agent (not yourself). Refused while it has reports; the refusal names them.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const { handle, warning } = await d.agents.handleOf(slug);
+        const { handle, tag, warning } = await d.agents.handleOf(slug);
         const a = await d.agents.archive(handle, actor);
         return {
           slug: a.slug,
-          tag: (await d.facing({ handles: [handle] })).tag(handle),
+          tag: tag ?? `@${handle}`,
           archived: true,
           ...warned(warning),
         };
@@ -303,11 +304,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Unarchive an agent. Refused when its manager is archived, or when it can manage the org.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const { handle, warning } = await d.agents.handleOf(slug);
+        const { handle, tag, warning } = await d.agents.handleOf(slug);
         const a = await d.agents.unarchive(handle, actor);
         return {
           slug: a.slug,
-          tag: (await d.facing({ handles: [handle] })).tag(handle),
+          tag: tag ?? `@${handle}`,
           archived: false,
           ...warned(warning),
         };

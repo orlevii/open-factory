@@ -29,6 +29,7 @@ import { formatTime } from "./format";
 import { parseSendResults } from "./outgoing-message";
 import type { Row } from "./rows";
 import { recipientSummary } from "./speaker-line";
+import { refOfWho, whoHandle, whoName } from "./who";
 
 /** One row-menu entry (U3 §7.5). Plain data, so a row's list is memoized per row object. */
 export type RowMenuItem =
@@ -56,7 +57,7 @@ const clock = (iso: string) => {
  *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), View in the
  *  recipient's session (a delivered send to an agent), Open in inbox (a send to a human, when it is
  *  in your inbox), and the time on touch. */
-export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem[] {
+export function rowMenuItems(row: Row, slug: string, selfRef?: string): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
       kind: "copy",
@@ -68,7 +69,7 @@ export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem
   if (row.kind === "message") {
     items.push({ kind: "copy", label: "Copy text", text: row.message.body });
     // A message from you to this agent is in your chat with it.
-    if (self && row.message.fromKind === "human" && handleOf(row.message.from) === handleOf(self))
+    if (selfRef && row.message.fromKind === "human" && refOfWho(row.message.from) === selfRef)
       items.push({ kind: "chat", label: "Open in chat", slug, messageId: row.message.id });
   }
   if (row.kind === "peer")
@@ -88,7 +89,7 @@ export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem
   if (row.kind === "outgoing" || row.kind === "spawn")
     items.push({ kind: "call", label: "View tool call" });
   if (row.kind === "outgoing") {
-    const to = (row.call.input as { to: string[] }).to.map(handleOf);
+    const to = (row.call.input as { to: string[] }).to.map(whoName);
     if (to.length > 1) items.push({ kind: "recipients", label: "Recipients", text: to.join(", ") });
     // A human's copy lands in the inbox; an agent's in its session. With several recipients each has
     // its own message, so the links are for a send to one.
@@ -98,10 +99,10 @@ export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem
       if (only.kind === "human") {
         items.push({ kind: "inbox", label: "Open in inbox", messageId: only.id });
         // To you: the same message sits in your chat with this agent.
-        if (self && handleOf(only.to) === handleOf(self))
+        if (selfRef && refOfWho(only.to) === selfRef)
           items.push({ kind: "chat", label: "Open in chat", slug, messageId: only.id });
       } else {
-        const bare = only.to.replace(/^@/, "");
+        const bare = whoHandle(only.to);
         items.push({
           kind: "session",
           label: `View in @${bare}'s session`,
@@ -123,14 +124,13 @@ export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem
 }
 
 const at = (name: string, iso: string | undefined) => (iso ? `${name} · ${formatTime(iso)}` : name);
-const handleOf = (who: string) => (/^[@#]/.test(who) ? who : `@${who}`);
 
 /** The row's name on the phone drawer's title line (U4 §11.1): "Message from @or · 17:55",
  *  "Bash · 17:55", the agent for its own text. */
 export function rowMenuTitle(row: Row, slug: string): string {
   switch (row.kind) {
     case "message":
-      return at(`Message from ${handleOf(row.message.from)}`, row.at);
+      return at(`Message from ${whoName(row.message.from)}`, row.at);
     case "peer": {
       // A neighborhood notice (peer_joined / peer_left), not a message.
       const who = row.envelope.subject?.slug;
@@ -138,9 +138,9 @@ export function rowMenuTitle(row: Row, slug: string): string {
       return `@${who} ${row.envelope.subject?.left ? "left" : "joined"}`;
     }
     case "update_group":
-      return at(`Updates about ${handleOf(row.about)}`, row.at);
+      return at(`Updates about ${whoName(row.about)}`, row.at);
     case "outgoing": {
-      const to = (row.call.input as { to: string[] }).to.map(handleOf);
+      const to = (row.call.input as { to: string[] }).to.map(whoName);
       return at(`Message to ${recipientSummary(to)}`, row.at);
     }
     case "spawn":
@@ -150,7 +150,7 @@ export function rowMenuTitle(row: Row, slug: string): string {
     case "tool":
       return at(row.call.name, row.at);
     case "text":
-      return at(handleOf(slug), row.at);
+      return at(whoName(slug), row.at);
     case "command":
       return at("Command", row.at);
     case "command_output":

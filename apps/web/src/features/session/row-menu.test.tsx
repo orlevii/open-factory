@@ -89,19 +89,39 @@ const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
 });
 
 test("Open in chat: on your own messages with this agent, and on a send to you", () => {
-  const chat = (row: Row, self?: string) =>
-    rowMenuItems(row, "dev", self).filter((i) => i.kind === "chat");
-  expect(chat(messageFrom("@or", "human"), "or")).toEqual([
+  // Stored envelopes and send results write principals as tags; your ref is what says "you".
+  const OR = "<@k7x2m9qd|or>";
+  const SAM = "<@p3dh8vcn|sam>";
+  const chat = (row: Row, selfRef?: string) =>
+    rowMenuItems(row, "dev", selfRef).filter((i) => i.kind === "chat");
+  expect(chat(messageFrom(OR, "human"), "k7x2m9qd")).toEqual([
     { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m4" },
   ]);
-  // Someone else's message, or no known handle: it isn't in your chat.
-  expect(chat(messageFrom("@sam", "human"), "or")).toEqual([]);
-  expect(chat(messageFrom("@or", "human"))).toEqual([]);
-  expect(chat(messageFrom("@lead", "agent"), "or")).toEqual([]);
-  expect(chat(outgoing("@or", { results: [reached("@or", "human", "m5")] }), "or")).toEqual([
+  // The ref counts, whatever label the envelope carried when it was written.
+  expect(chat(messageFrom("<@k7x2m9qd|old-name>", "human"), "k7x2m9qd")).toHaveLength(1);
+  // Someone else's message, or no known ref: it isn't in your chat.
+  expect(chat(messageFrom(SAM, "human"), "k7x2m9qd")).toEqual([]);
+  expect(chat(messageFrom(OR, "human"))).toEqual([]);
+  expect(chat(messageFrom("<@dev00000|lead>", "agent"), "k7x2m9qd")).toEqual([]);
+  expect(chat(outgoing("@or", { results: [reached(OR, "human", "m5")] }), "k7x2m9qd")).toEqual([
     { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m5" },
   ]);
-  expect(chat(outgoing("@sam", { results: [reached("@sam", "human")] }), "or")).toEqual([]);
+  expect(chat(outgoing("@sam", { results: [reached(SAM, "human")] }), "k7x2m9qd")).toEqual([]);
+});
+
+test("the drawer title names a tagged sender and a tagged report by their handle", () => {
+  expect(rowMenuTitle(messageFrom("<@k7x2m9qd|or>", "human"), "dev")).toMatch(
+    /^Message from @or · /,
+  );
+  const group: Row = {
+    kind: "update_group",
+    seq: 5,
+    at,
+    about: "<@dev00000|dev>",
+    envelopes: [],
+    key: "5",
+  };
+  expect(rowMenuTitle(group, "lead")).toMatch(/^Updates about @dev · /);
 });
 
 test("outgoing: View tool call, and Open in inbox only when it went to a human", () => {

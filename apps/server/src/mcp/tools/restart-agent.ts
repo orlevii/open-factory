@@ -97,7 +97,9 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             rt.live().status === "errored" &&
             rt.live().errorKind !== "resume_unrecoverable";
           try {
-            const early = noteFirst ? await sendNote(d, row.slug, args.note as string) : undefined;
+            const early = noteFirst
+              ? await sendNote(d, row.slug, await d.store.agentTag(row.id), args.note as string)
+              : undefined;
             const outcome = await rt.restartNow({
               by: await d.store.principalTag(d.caller.id),
               force: args.force ?? false,
@@ -111,7 +113,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             const sent = noteFirst
               ? early
               : args.note
-                ? await sendNote(d, row.slug, args.note)
+                ? await sendNote(d, row.slug, await d.store.agentTag(row.id), args.note)
                 : undefined;
             const lost = sent?.lost;
             const warnings = [
@@ -145,13 +147,14 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
 async function sendNote(
   d: RestartAgentDeps,
   slug: string,
+  tag: string,
   note: string,
 ): Promise<{ lost?: string; warnings: string[] }> {
   const { results, warnings } = await d.router.send({ agentId: d.caller.id }, [slug], note, false);
   const r = results[0];
-  if (!r) return { lost: `Your note to @${slug} wasn't delivered.`, warnings };
+  if (!r) return { lost: `Your note to ${tag} wasn't delivered.`, warnings };
   if (r.status === "refused") return { lost: `Your note wasn't delivered: ${r.reason}`, warnings };
   if (r.status === "start_failed")
-    return { lost: `Your note is queued, but @${slug} couldn't be started.`, warnings };
+    return { lost: `Your note is queued, but ${tag} couldn't be started.`, warnings };
   return { warnings };
 }

@@ -1,5 +1,6 @@
 import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
 import { childrenOf } from "./display-passes";
+import { sameWho } from "./who";
 
 type Ev<T extends AnyEvent["type"]> = Extract<AnyEvent, { type: T }>;
 export type ToolState = "running" | "done" | "failed" | "no_result";
@@ -314,7 +315,7 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
     if (m.kind === "member_update") {
       const about = m.about ?? m.from;
       const last = out.at(-1);
-      if (last?.kind === "update_group" && last.about === about) last.envelopes.push(m);
+      if (last?.kind === "update_group" && sameWho(last.about, about)) last.envelopes.push(m);
       else out.push({ kind: "update_group", seq: se.seq, at: se.at, about, envelopes: [m], key });
     } else if (m.kind === "peer_joined" || m.kind === "peer_left") {
       out.push({ kind: "peer", seq: se.seq, envelope: m, key });

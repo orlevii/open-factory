@@ -720,7 +720,7 @@ async function listenForAgents(
       // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
       const started = d.runtimes.startedOf(caller.id)?.config;
       return [
-        sendMessageTool(d.router, d.store),
+        sendMessageTool(d.router),
         sendCommandTool({
           caller,
           runtimes: d.runtimes,

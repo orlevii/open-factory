@@ -11,6 +11,7 @@ import {
   resetUploads,
   stripAttachedLines,
   uploadsFor,
+  uploadsUsedSince,
 } from "./uploads";
 
 let frames: ReturnType<typeof holdFrames>;
@@ -339,4 +340,36 @@ test("a 429 with nothing of ours in flight retries after a pause, and gives up a
   lastXhr().respond(429, busy);
   expect(s.get(s.keys()[0] as string)).toMatchObject({ status: "failed", retryable: true });
   vi.useRealTimers();
+});
+
+test("uploads used since a point are the ones on messages from your ref, whatever label they carry", () => {
+  const msg = (seq: number, from: string, uploadId: string) =>
+    ({
+      seq,
+      agentSlug: "dev",
+      turnId: null,
+      at: "2026-11-22T10:00:00.000Z",
+      event: {
+        type: "message_in",
+        messages: [
+          {
+            id: `m${seq}`,
+            from,
+            fromKind: "human",
+            kind: "message",
+            urgent: false,
+            body: "hi",
+            parts: [],
+            attachments: [{ uploadId, kind: "text", bytes: 5, name: "a.txt" }],
+          },
+        ],
+      },
+    }) as unknown as SessionEvent;
+  const ordered = [
+    msg(1, "<@a1ce0001|alice>", "u-old"),
+    msg(2, "<@a1ce0001|alice-renamed>", "u-mine"),
+    msg(3, "<@b0b00001|bob>", "u-bob"),
+  ];
+  expect(uploadsUsedSince(ordered, 1, "a1ce0001")).toEqual(["u-mine"]);
+  expect(uploadsUsedSince(ordered, 0, undefined)).toEqual([]);
 });

@@ -126,7 +126,7 @@ test("a direct report: the note follows its state (hibernated, turn open)", asyn
   expect(hib.json).toMatchObject({
     target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
-    note: "Wakes @dev to run it.",
+    note: expect.stringMatching(/^Wakes <@[0-9a-z]{8}\|dev> to run it\.$/),
   });
   await (await rt("dev")).settled();
   expect(procOf("dev")).toBeDefined();
@@ -134,7 +134,7 @@ test("a direct report: the note follows its state (hibernated, turn open)", asyn
   procOf("dev")?.emit(ev.session(), ev.turn());
   await (await rt("dev")).settled();
   const open = await call("lead", "/review", "dev");
-  expect(open.json.note).toBe("Runs when @dev's current turn ends.");
+  expect(open.json.note).toMatch(/^Runs when <@[0-9a-z]{8}\|dev>'s current turn ends\.$/);
 });
 
 test("a direct report that is idle runs it now", async () => {
@@ -160,7 +160,9 @@ test("an errored report holds it until it is restarted (restart_agent, or a huma
   expect(r.json).toMatchObject({
     target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
-    note: "@dev is errored; it runs after it is restarted (restart_agent, or a human).",
+    note: expect.stringMatching(
+      /^<@[0-9a-z]{8}\|dev> is errored; it runs after it is restarted \(restart_agent, or a human\)\.$/,
+    ),
   });
   expect(drv.starts).toHaveLength(starts);
 });
@@ -324,7 +326,9 @@ test("a second command for yourself is refused while one is pending, and the age
 });
 
 test("a hibernated report's compact wakes it with reason compact", async () => {
-  expect((await call("lead", "/compact", "dev")).json.note).toBe("Wakes @dev to run it.");
+  expect((await call("lead", "/compact", "dev")).json.note).toMatch(
+    /^Wakes <@[0-9a-z]{8}\|dev> to run it\.$/,
+  );
   await (await rt("dev")).settled();
   const started = (await h.app.store.after(ids.dev as string, 0, 1000))
     .map((e) => e.event)

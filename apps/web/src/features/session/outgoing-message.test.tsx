@@ -214,3 +214,45 @@ test("the result's kind is matched to the argument whatever its case", async () 
   // An agent by the result's word, so a chip (beside Ada's own), though the index doesn't know it.
   expect(line.querySelectorAll("[data-agent-avatar]")).toHaveLength(2);
 });
+
+test("a send written with a tag, a ref or a plain handle matches its tagged result by ref", async () => {
+  const bob = "<@b0b00001|bob>";
+  await show(
+    row(
+      [bob, "<@a1ce0001>", "carol"],
+      [
+        { to: bob, kind: "agent", status: "held", id: "m1", note: "held" },
+        { to: "<@a1ce0001|alice>", kind: "human", status: "inbox", id: "m2" },
+        {
+          to: "<@c4r01000|carol>",
+          kind: "agent",
+          status: "queued",
+          recipient_status: "idle",
+          id: "m3",
+        },
+      ],
+    ),
+  );
+  const card = screen.getByRole("article");
+  // A result's label is current; the call's stale label never shows.
+  expect(card).toHaveAccessibleName("Message from @ada to @bob, @alice, @carol");
+  expect(within(card).getByText("Held by the loop guard:")).toHaveTextContent("@bob");
+  expect(card.textContent).not.toContain("<@");
+  expect(
+    rowMenuItems(
+      row(
+        ["carol"],
+        [
+          {
+            to: "<@c4r01000|carol>",
+            kind: "agent",
+            status: "queued",
+            recipient_status: "idle",
+            id: "m3",
+          },
+        ],
+      ),
+      "ada",
+    ).find((i) => i.kind === "session"),
+  ).toMatchObject({ to: "carol", label: "View in @carol's session" });
+});

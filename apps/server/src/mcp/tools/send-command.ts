@@ -109,7 +109,7 @@ export function sendCommandTool(d: {
           const note = noteFor({
             self,
             name: cls.kind === "command" ? cls.name : typedCommandName(command),
-            slug: target.slug,
+            tag: await d.store.agentTag(target.id),
             errored: live.status === "errored",
             turnOpen: live.turnOpen,
             idle: live.status === "idle",
@@ -153,7 +153,8 @@ export function sendCommandTool(d: {
 function noteFor(i: {
   self: boolean;
   name: string;
-  slug: string;
+  /** The target as `<@ref|handle>`. */
+  tag: string;
   errored: boolean;
   turnOpen: boolean;
   idle: boolean;
@@ -163,8 +164,8 @@ function noteFor(i: {
       ? "Your /compact runs when this turn ends. Write down where you are before you end the turn."
       : `Your /${i.name} runs when this turn ends.`;
   if (i.errored)
-    return `@${i.slug} is errored; it runs after it is restarted (restart_agent, or a human).`;
-  if (i.turnOpen) return `Runs when @${i.slug}'s current turn ends.`;
+    return `${i.tag} is errored; it runs after it is restarted (restart_agent, or a human).`;
+  if (i.turnOpen) return `Runs when ${i.tag}'s current turn ends.`;
   if (i.idle) return "Runs now.";
-  return `Wakes @${i.slug} to run it.`;
+  return `Wakes ${i.tag} to run it.`;
 }

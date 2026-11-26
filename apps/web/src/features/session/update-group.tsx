@@ -2,11 +2,13 @@ import type { Envelope, RequestRef } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpFromLine, CircleAlert, CircleCheck, ShieldAlert, Users } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown, LINK_CLASS } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { Actor, terminatedPhrase } from "./spawn-block";
+import { parseWho, whoHandle, whoName } from "./who";
 
 const PART_CLAMP_LINES = 8;
 const WRITTEN_GAP_MS = 60_000;
@@ -54,8 +56,10 @@ export function UpdateGroup({
   const late =
     written !== undefined &&
     new Date(row.at).getTime() - new Date(written).getTime() > WRITTEN_GAP_MS;
-  // `about` is the report's handle as the envelope writes it, `@slug`.
-  const about = row.about.replace(/^@/, "");
+  // `about` is the report as the envelope writes it, `<@ref|handle>`: its current handle names the link.
+  const aboutRef = parseWho(row.about)?.ref;
+  const current = usePrincipal(aboutRef ?? "");
+  const about = current.status === "found" ? current.principal.handle : whoHandle(row.about);
   return (
     <article
       {...rowProps}
@@ -148,10 +152,10 @@ function ReplyLine({ report, re }: { report: string; re: RequestRef[] }) {
                 to="/agents/$slug/session"
                 params={{ slug: report }}
                 search={{ message: id }}
-                aria-label={`Open ${from}'s request in @${report}'s session`}
+                aria-label={`Open ${whoName(from)}'s request in @${report}'s session`}
                 className={`font-mono ${LINK_CLASS}`}
               >
-                {from}
+                {whoName(from)}
               </Link>
             </span>
           ))}

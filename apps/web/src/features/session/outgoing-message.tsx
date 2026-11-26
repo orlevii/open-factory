@@ -7,6 +7,7 @@ import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
 import { type Party, type PartyKind, SpeakerLine } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
+import { parseWho, whoName } from "./who";
 
 type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
 
@@ -55,9 +56,6 @@ export function parseSendResults(result: OutgoingRow["result"]): SendResults | u
   return sent;
 }
 
-/** A handle as written in a result or an argument: `@x`, however it was typed. */
-const handleOf = (to: string) => (/^[@#]/.test(to) ? to : `@${to}`);
-
 const recipientsOf = new WeakMap<object, readonly Party[]>();
 /** The recipients the call addressed, in order, each with its kind once a result names it. Cached by
  *  the result (or, before one arrives, the call), so the speaker line's props stay identical. */
@@ -65,10 +63,21 @@ function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
   const key = row.result ?? row.call;
   let parties = recipientsOf.get(key);
   if (!parties) {
-    const kinds = new Map<string, PartyKind>();
+    // A result names its recipient as a tag; the call may have written a tag, a ref or a plain handle.
+    const byRef = new Map<string, { name: string; kind: PartyKind }>();
+    const byName = new Map<string, { name: string; kind: PartyKind }>();
     for (const r of parseSendResults(row.result)?.results ?? [])
-      if ("kind" in r) kinds.set(handleOf(r.to).toLowerCase(), r.kind);
-    parties = to.map((t) => ({ handle: handleOf(t), kind: kinds.get(handleOf(t).toLowerCase()) }));
+      if ("kind" in r) {
+        const entry = { name: whoName(r.to), kind: r.kind };
+        const ref = parseWho(r.to)?.ref;
+        if (ref) byRef.set(ref, entry);
+        byName.set(entry.name.toLowerCase(), entry);
+      }
+    parties = to.map((t) => {
+      const ref = parseWho(t)?.ref;
+      const found = (ref && byRef.get(ref)) || byName.get(whoName(t).toLowerCase());
+      return { handle: found?.name ?? whoName(t), kind: found?.kind };
+    });
     recipientsOf.set(key, parties);
   }
   return parties;
@@ -222,7 +231,7 @@ export function CallBlock({
 function sendNote(row: OutgoingRow, sent: SendResults | undefined): ReactNode {
   if (!row.result) return <span>{row.turnOpen ? "Sending…" : "Not sent"}</span>;
   const lines = (sent?.results ?? []).flatMap((r): ReactNode[] => {
-    const who = handleOf(r.to);
+    const who = whoName(r.to);
     if ("reason" in r)
       return [
         <span key={who}>

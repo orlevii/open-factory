@@ -5,7 +5,7 @@ import {
   type QueueItem,
   type RefusalCode,
 } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { agentTagOf, unknownRefError } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
@@ -382,7 +382,7 @@ export class Router {
             // Every row is committed: one recipient's failure (or the shutdown) is that recipient's result, not the call's.
             this.d.log.error({ err: e, agent: agent.slug, message: row.id }, "handing over failed");
             outcome.set(w.target, {
-              to: `@${agent.slug}`,
+              to: await this.d.store.agentTag(agent.id),
               kind: "agent",
               status: "start_failed",
               id: row.id,
@@ -462,7 +462,8 @@ export class Router {
         case "principal": {
           const a = agentById.get(r.p.id);
           const u = userById.get(r.p.id);
-          const label = `@${r.p.handle}`;
+          const label = agentTagOf(r.p);
+          const at = `@${r.p.handle}`; // the sentences stay `@handle`
           if (a) {
             t = { to: label, key: `agent:${a.id}`, agent: a };
             if ("agentId" in from && a.id === from.agentId)
@@ -471,13 +472,13 @@ export class Router {
               t.refused = refusal(
                 label,
                 "archived",
-                `${label} is archived and can't receive messages.`,
+                `${at} is archived and can't receive messages.`,
               );
             else if (a.terminatedAt)
               t.refused = refusal(
                 label,
                 "terminated",
-                `${label} was terminated and can't receive messages.`,
+                `${at} was terminated and can't receive messages.`,
               );
           } else if (u) {
             t = { to: label, key: `user:${u.id}`, user: { userId: u.id, handle: r.p.handle } };
@@ -485,10 +486,10 @@ export class Router {
               t.refused = refusal(
                 label,
                 "human",
-                `${label} is a person; you can message agents only.`,
+                `${at} is a person; you can message agents only.`,
               );
             else if (u.disabledAt)
-              t.refused = refusal(label, "disabled", `${label}'s account is disabled.`);
+              t.refused = refusal(label, "disabled", `${at}'s account is disabled.`);
           } else {
             t = {
               to: label,
@@ -513,7 +514,7 @@ export class Router {
 
   /** One committed agent row's hand-off and its result. The row is durable, so nothing here fails the other recipients. */
   private async handOver(from: Sender, agent: AgentRow, row: PendingRow): Promise<RecipientResult> {
-    const to = `@${agent.slug}`;
+    const to = await this.d.store.agentTag(agent.id);
     if ("userId" in from) {
       if (this.closed) throw new Error(SHUTTING_DOWN);
       const status = await this.statusOf(agent.id);
@@ -572,7 +573,7 @@ export class Router {
     if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
     const rt = await this.d.runtimes.load(agent.id);
     return {
-      to: `@${agent.slug}`,
+      to: await this.d.store.agentTag(agent.id),
       kind: "agent",
       status: "queued",
       recipient_status: this.d.runtimes.statusOf(agent),

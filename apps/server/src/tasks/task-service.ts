@@ -9,7 +9,7 @@ import {
   taskCommentBodySchema,
   taskKey,
 } from "@open-factory/shared";
-import { tagOf, unknownRefError } from "@open-factory/shared/tags";
+import { agentTagOf, tagOf, unknownRefError } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -358,7 +358,7 @@ export class TaskService {
       .flatMap((u) => handles.get(u) ?? []);
     const held: CommentResult["held"] = [];
     for (const g of written.loopHeld) {
-      const to = `@${await this.slugOf(g.toAgentId, tx)}`;
+      const to = await this.tagOf(tx, g.toAgentId);
       held.push({
         to,
         note: g.verdict.opened
@@ -893,6 +893,13 @@ export class TaskService {
       }
     }
     return { agentRows, userIds: [...userIds], loopHeld };
+  }
+
+  /** `<@ref|handle>` of a principal, read from `principals`, as an agent reads it. */
+  private async tagOf(tx: Exec, id: string): Promise<string> {
+    const p = (await principalsByIds(tx, [id])).get(id);
+    if (!p) throw new Error(`No principal ${id}`);
+    return agentTagOf(p);
   }
 
   /** `@handle` of a principal, read from `principals` (the interim `agents.slug` is never read here). */

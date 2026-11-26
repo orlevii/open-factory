@@ -59,7 +59,14 @@ async function startIdle(slug: string) {
   await settle(slug);
   return p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
 }
-const text = (r: { content: { text: string }[] }) => r.content[0]?.text ?? "";
+/** Results name principals by tag; most tests read them by `@handle` (one test below asserts the tag shape). */
+const TAG_TEXT = /<@[0-9a-z]{8}\|([a-z0-9-]+)>/g;
+const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(TAG_TEXT, "@$1"));
+const sendPlain = async (...a: Parameters<typeof h.app.router.send>) =>
+  plain(await h.app.router.send(...a));
+const rawText = (r: { content: { text: string }[] }) => r.content[0]?.text ?? "";
+const text = (r: { content: { text: string }[] }) =>
+  (r.content[0]?.text ?? "").replace(TAG_TEXT, "@$1");
 const pendingOf = (slug: string) =>
   h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_id where a.slug = ${slug} and m.kind = 'message' order by m.created_at`;
 
@@ -75,7 +82,7 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r)).results[0];
   expect(out).toMatchObject({
-    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
+    to: "@bob",
     kind: "agent",
     status: "queued",
     recipient_status: "hibernated",
@@ -119,7 +126,7 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
     text(await callTool(url, tokA, "send_message", { to: ["bob"], body: "are you ok" })),
   ).results[0];
   expect(out).toMatchObject({
-    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
+    to: "@bob",
     kind: "agent",
     status: "pending",
     note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
@@ -214,7 +221,7 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
   if (!a || !lead) throw new Error("seed");
   const delivered = vi.spyOn(h.app.runtimes, "deliver");
   const held = vi.spyOn(h.app.runtimes, "receive");
-  const r = await router.send({ agentId: a.id }, ["bob"], "during shutdown", false);
+  const r = plain(await router.send({ agentId: a.id }, ["bob"], "during shutdown", false));
   expect(r.results).toMatchObject([{ to: "@bob", status: "queued" }]);
   await router.forward({ agentId: a.id, body: "halfway" });
   await router.peerEvents(a.id, { kind: "joined" }, { managerId: null, peerIds: [] });
@@ -290,7 +297,7 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   await signUp(h.app, { handle: "or", name: "Or" });
   const ops = await h.seedAgent({ slug: "ops" }); // top-level, a peer of lead
   const tokA = await startIdle("ada");
-  const near = JSON.parse(text(await callTool(url, tokA, "list_peers", {})));
+  const near = JSON.parse(rawText(await callTool(url, tokA, "list_peers", {})));
   const agentsOf = (r: { peers: { kind: string; handle: string; relation?: string }[] }) =>
     r.peers.filter((x) => x.kind === "agent");
   expect(agentsOf(near).map((x) => [x.handle, x.relation])).toEqual([
@@ -304,7 +311,7 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
     name: "Or",
   });
   expect(JSON.stringify(near)).not.toContain("@example.com"); // never emails
-  const all = JSON.parse(text(await callTool(url, tokA, "list_peers", { scope: "all" })));
+  const all = JSON.parse(rawText(await callTool(url, tokA, "list_peers", { scope: "all" })));
   expect(all.peers).toContainEqual(
     expect.objectContaining({ handle: `@${ops.slug}`, relation: "other" }),
   );
@@ -494,7 +501,7 @@ test("a recipient whose init fails after the commit doesn't fail the sender's ca
   const r = await callTool(url, tokA, "send_message", { to: ["bob"], body: "still here" });
   expect(r.isError).toBeFalsy();
   expect(JSON.parse(text(r)).results[0]).toMatchObject({
-    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
+    to: "@bob",
     status: "queued",
     recipient_status: "hibernated",
   });
@@ -597,7 +604,7 @@ test("errored_reported clears with the error, so the next episode is reported", 
 test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
   const ada = await h.app.store.agentBySlug("ada");
   await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
-  const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
+  const toGone = await sendPlain({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(toGone.results).toEqual([
     {
       to: "@bob",
@@ -608,7 +615,7 @@ test("a message to a terminated agent is refused; a terminated sender can't send
   ]);
   await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
   await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'ada'`;
-  const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
+  const fromEnded = await sendPlain({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(fromEnded.results).toMatchObject([
     {
       status: "refused",
@@ -619,7 +626,7 @@ test("a message to a terminated agent is refused; a terminated sender can't send
   expect(await pendingOf("bob")).toEqual([]);
   expect(await h.sql`select id from inbox_items`).toEqual([]);
   // The refusal names each recipient once, as `@handle`, like the other paths.
-  const repeated = await h.app.router.send(
+  const repeated = await sendPlain(
     { agentId: ada?.id ?? "" },
     ["bob", "@bob", " @carol "],
     "x",
@@ -773,7 +780,7 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
 describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () => {
   const sendAs = async (slug: string, to: string[], body = "hello all") => {
     const a = await h.app.store.agentBySlug(slug);
-    return h.app.router.send({ agentId: a?.id ?? "" }, to, body, false);
+    return sendPlain({ agentId: a?.id ?? "" }, to, body, false);
   };
   const rowsOf = (body: string) =>
     h.sql`select id, recipient_ids, to_id from messages where body = ${body} and kind = 'message' order by created_at, id`;
@@ -873,7 +880,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
   test("a human sender can't address a human; agents still work", async () => {
     const { user } = await signUp(h.app, { handle: "orla" });
     await signUp(h.app, { handle: "sam" });
-    const r = await h.app.router.send(
+    const r = await sendPlain(
       { userId: user.id, handle: user.handle },
       ["sam", "bob"],
       "to-mixed",
@@ -943,7 +950,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
   test("a client-id retry returns every row's result and writes nothing twice", async () => {
     const { cookie, user } = await signUp(h.app, { handle: "orla" });
     const send = () =>
-      h.app.router.send({ userId: user.id, handle: user.handle }, ["bob", "lead"], "twice", false, {
+      sendPlain({ userId: user.id, handle: user.handle }, ["bob", "lead"], "twice", false, {
         clientMessageId: "11111111-1111-4111-8111-111111111111",
       });
     const first = await send();
@@ -959,7 +966,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
 
   test("attachments go to exactly one agent: with two recipients every target is refused", async () => {
     const { user } = await signUp(h.app, { handle: "orla" });
-    const r = await h.app.router.send(
+    const r = await sendPlain(
       { userId: user.id, handle: user.handle },
       ["bob", "lead"],
       "files",
@@ -975,7 +982,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
 
   test("attachments with a refused target: the refused one keeps its own reason", async () => {
     const { user } = await signUp(h.app, { handle: "orla" });
-    const r = await h.app.router.send(
+    const r = await sendPlain(
       { userId: user.id, handle: user.handle },
       ["ghost", "bob", "lead"],
       "files2",
@@ -1001,7 +1008,7 @@ describe("loop guard on list sends", () => {
   });
   const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
   const send = async (from: string, to: string[]) =>
-    (await h.app.router.send({ agentId: await idOf(from) }, to, "ping", false)).results;
+    (await sendPlain({ agentId: await idOf(from) }, to, "ping", false)).results;
   /** Each direction sends N messages and bob one more, so the next send from ada exceeds N both ways. */
   async function loopAdaBob() {
     for (let i = 0; i < N; i++) {
@@ -1072,4 +1079,15 @@ describe("loop guard on list sends", () => {
     const [row] = await h.sql`select state from messages where body = 'from a human'`;
     expect(row?.state).toBe("pending");
   });
+});
+
+test("send_message names each recipient by tag and an unknown name as written", async () => {
+  const tokA = await startIdle("ada");
+  const bob = await h.app.store.agentBySlug("bob");
+  const out = JSON.parse(
+    rawText(await callTool(url, tokA, "send_message", { to: ["bob", "ghost"], body: "hi" })),
+  ).results;
+  expect(out[0].to).toBe(await h.app.store.agentTag(bob?.id ?? ""));
+  // A name nobody holds stays the word it was written as.
+  expect(out[1]).toMatchObject({ to: "@ghost", status: "refused" });
 });

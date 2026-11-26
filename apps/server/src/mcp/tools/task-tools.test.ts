@@ -247,8 +247,8 @@ test("comment_task: a looping peer is listed under held, the comment is still po
   expect(r.err).toBe(false);
   expect(r.json.delivered_to).toEqual([expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/)]);
   expect(r.json.held).toHaveLength(1);
-  expect(r.json.held[0].to).toBe("@qa");
-  expect(r.json.held[0].note).toMatch(/^Held: you and @qa exchanged/);
+  expect(r.json.held[0].to).toMatch(/^<@[0-9a-z]{8}\|qa>$/);
+  expect(r.json.held[0].note).toMatch(/^Held: you and <@[0-9a-z]{8}\|qa> exchanged/);
   const [c] = await h.sql`select body from task_comments where id = ${r.json.id}`;
   const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
   expect(c?.body).toBe(`<@${qa?.ref}> thoughts?`);

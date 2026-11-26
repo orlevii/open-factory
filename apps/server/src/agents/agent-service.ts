@@ -21,7 +21,7 @@ import {
   touchesLocalRuntime,
   treeOrder,
 } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { agentTagOf, unknownRefError } from "@open-factory/shared/tags";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
@@ -532,11 +532,15 @@ export class AgentService {
    * the plain-tag warning when it was a plain handle. A ref nobody holds is refused with the fix-it sentence; anything
    * else that isn't an agent passes through as written, so the service answers with its usual "no agent named" sentence.
    */
-  async handleOf(raw: string): Promise<{ handle: string; warning?: string }> {
+  async handleOf(raw: string): Promise<{ handle: string; tag?: string; warning?: string }> {
     const r = await resolveAgentArg(this.d.db, raw);
     if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
     if (r.kind === "agent")
-      return { handle: r.handle, ...(r.warning ? { warning: r.warning } : {}) };
+      return {
+        handle: r.handle,
+        tag: agentTagOf({ ref: r.ref, handle: r.handle }),
+        ...(r.warning ? { warning: r.warning } : {}),
+      };
     return { handle: r.name };
   }
 

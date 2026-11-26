@@ -194,15 +194,13 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 },
                 warnings,
               );
-              const facing = await d.facing({
-                handles: page.items.flatMap((t) => (t.assignee ? [t.assignee.handle] : [])),
-              });
+              const facing = await d.facing({ texts: page.items.map((t) => t.title) });
               return {
                 tasks: page.items.map((t) => ({
                   key: t.key,
-                  title: t.title,
+                  title: facing.render(t.title),
                   status: t.status,
-                  ...(t.assignee ? { assignee: facing.tag(t.assignee.handle) } : {}),
+                  ...(t.assignee ? { assignee: principal(t.assignee) } : {}),
                   ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                   blocked_by: t.blockedBy,
                   created_by: principal(t.createdBy),
@@ -232,19 +230,21 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
               });
               const first = t.comments[0];
               const facing = await d.facing({
-                handles: [
-                  ...(t.assignee ? [t.assignee.handle] : []),
-                  ...t.blocks.flatMap((x) => (x.assignee ? [x.assignee] : [])),
-                  ...t.links.flatMap((l) => (l.agent ? [l.agent.handle] : [])),
+                handles: t.blocks.flatMap((x) => (x.assignee ? [x.assignee] : [])),
+                texts: [
+                  t.title,
+                  t.body,
+                  ...t.dependsOn.map((x) => x.title),
+                  ...t.blocks.map((x) => x.title),
+                  ...t.comments.map((c) => c.body),
                 ],
-                texts: [t.body, ...t.comments.map((c) => c.body)],
               });
               return {
                 key: t.key,
-                title: t.title,
+                title: facing.render(t.title),
                 body: facing.render(t.body),
                 status: t.status,
-                ...(t.assignee ? { assignee: facing.tag(t.assignee.handle) } : {}),
+                ...(t.assignee ? { assignee: principal(t.assignee) } : {}),
                 ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                 created_by: principal(t.createdBy),
                 created_at: t.createdAt.toISOString(),
@@ -252,19 +252,19 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 blocked_by: t.blockedBy,
                 depends_on: t.dependsOn.map((x) => ({
                   key: x.key,
-                  title: x.title,
+                  title: facing.render(x.title),
                   status: x.status,
                 })),
                 blocks: t.blocks.map((x) => ({
                   key: x.key,
-                  title: x.title,
+                  title: facing.render(x.title),
                   status: x.status,
                   ...(x.assignee ? { assignee: facing.tag(x.assignee) } : {}),
                 })),
                 links: t.links.map((l) => ({
                   kind: l.kind,
                   ...(l.target ? { target: l.target } : {}),
-                  ...(l.agent ? { agent: facing.tag(l.agent.handle) } : {}),
+                  ...(l.agent ? { agent: principal(l.agent) } : {}),
                   ...(l.title ? { title: l.title } : {}),
                   ...(l.agent?.ended ? { ended: l.agent.ended } : {}),
                 })),

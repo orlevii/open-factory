@@ -5,6 +5,7 @@ import {
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
@@ -106,9 +107,9 @@ export function dockerCleanup(
   };
 }
 
-/** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human or an agent. */
+/** The sender as the urgent interrupt's `by` stores it: a principal's `<@ref>`; the scheduler and the factory stay words. */
 function senderLabel(row: PendingRow): string {
-  if (row.fromHandle) return `@${row.fromHandle}`;
+  if (row.fromRef) return tagOf(row.fromRef);
   if (row.kind === "scheduled") return "@scheduler";
   // S8: `task_assigned` and `task_update` have no sender columns; they are from the factory (spec §7.4).
   if (row.kind !== "message") return "@factory";

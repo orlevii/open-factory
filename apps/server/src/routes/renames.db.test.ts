@@ -54,6 +54,15 @@ test("renaming an agent returns 200 and publishes principal_updated with the new
   ]);
 });
 
+test("changing an agent's colour publishes principal_updated with the new colour", async () => {
+  const dev = await h.seedAgent({ handle: "dev" });
+  const res = await send("PATCH", `/api/agents/${await h.refOf("dev")}`, { color: 5 });
+  expect(res.statusCode).toBe(200);
+  expect(updates()).toEqual([
+    expect.objectContaining({ id: dev.id, avatar: expect.objectContaining({ color: 5 }) }),
+  ]);
+});
+
 test("renaming to a taken handle is 409 with the field error and publishes nothing", async () => {
   await h.seedAgent({ handle: "dev" });
   await h.seedAgent({ handle: "other" });

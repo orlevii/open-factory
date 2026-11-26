@@ -962,7 +962,7 @@ export class TaskService {
       if (r.kind !== "principal" || !agent)
         throw new TaskError(
           "no_agent",
-          `No agent ${l.target.startsWith("@") ? l.target : `@${l.target}`}.`,
+          `No agent @${r.kind === "principal" ? r.p.handle : "name" in r ? r.name : l.target.trim().replace(/^@/, "")}.`,
           400,
           "links",
         );

@@ -285,7 +285,7 @@ async function until<T>(
   throw new Error(`timed out after ${Math.round(ms / 1000)} s waiting for ${what}`);
 }
 
-let orUser = { userId: "", handle: "or" };
+let orUser = { userId: "", ref: "", handle: "or" };
 let samUser = { userId: "", handle: "sam" };
 let orCookie = "";
 /** Every human action goes through the real REST routes, signed in as @or (no service calls, no bypass). */
@@ -376,8 +376,9 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
     .join("; ");
   const me = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json() as {
     id: string;
+    ref: string;
   };
-  return { cookie, userId: me.id };
+  return { cookie, userId: me.id, ref: me.ref };
 }
 
 /** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
@@ -466,7 +467,7 @@ try {
     const or = await signUp("or", "Or");
     return { or, sam: await signUp("sam", "Sam", or) };
   });
-  orUser = { userId: users.or.userId, handle: "or" };
+  orUser = { userId: users.or.userId, ref: users.or.ref, handle: "or" };
   orCookie = users.or.cookie;
   await step("1. factory settings: member update debounce 180 s", () =>
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
@@ -507,7 +508,7 @@ try {
           reportsTo: "or",
           credential: "smoke",
         },
-        { kind: "human", ref: "k7x2m9qd", handle: "or" },
+        { kind: "human", ref: orUser.ref, handle: "or" },
       ),
     );
     ids.set(

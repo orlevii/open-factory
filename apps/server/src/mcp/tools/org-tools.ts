@@ -209,7 +209,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "create_agent",
-      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as @handle. It never gets manage_org.",
+      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as <@ref|handle>. It never gets manage_org.",
       createAgentToolSchema,
       async (a, actor) => {
         const handle = a.handle.trim().replace(/^@/, "");

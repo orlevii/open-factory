@@ -54,7 +54,12 @@ async function start(handle: string, open: boolean) {
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: [handle], body: "work", urgent: false, clientMessageId: crypto.randomUUID() },
+    payload: {
+      to: [h.seededRef(handle)],
+      body: "work",
+      urgent: false,
+      clientMessageId: crypto.randomUUID(),
+    },
   });
   procOf(handle)?.emit(ev.session(), ev.turn(), ev.usage(), ...(open ? [] : [ev.end()]));
   await (await rt(handle)).settled();

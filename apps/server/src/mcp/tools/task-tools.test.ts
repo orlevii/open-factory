@@ -128,6 +128,32 @@ test("get_task shows a tag in the body and in comments with the principal's curr
   }
 });
 
+test("task titles that carry a tag read back as <@ref|handle> in list_tasks and get_task", async () => {
+  const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
+  await call("lead", "create_task", { title: `Ask <@${qa?.ref}> first`, assignee: "dev" });
+  await call("lead", "create_task", {
+    title: `Then <@${qa?.ref}> ships`,
+    depends_on: ["T-1"],
+  });
+  const want = (t: string) => t.replace("QA", `<@${qa?.ref}|qa>`);
+  const listed = (await call("dev", "list_tasks", {})).json.tasks as {
+    key: string;
+    title: string;
+  }[];
+  expect(listed.find((t) => t.key === "T-1")?.title).toBe(want("Ask QA first"));
+  const t1 = (await call("dev", "get_task", { id: "T-1" })).json;
+  expect(t1.title).toBe(want("Ask QA first"));
+  expect(t1.blocks[0].title).toBe(want("Then QA ships"));
+  const t2 = (await call("dev", "get_task", { id: "T-2" })).json;
+  expect(t2.depends_on[0].title).toBe(want("Ask QA first"));
+});
+
+test("filtering list_tasks by a person's tag is refused naming the person by handle", async () => {
+  const r = await call("lead", "list_tasks", { assignee: `<@${or.ref}|or>` });
+  expect(r.err).toBe(true);
+  expect(r.text).toBe("No agent @or.");
+});
+
 test("comment_task: a plain @handle reaches the agent and warns; an unknown ref is refused and nothing is posted", async () => {
   await call("lead", "create_task", { title: "Plan", assignee: "lead" });
   const [qa] = await h.sql`select ref from principals where handle = 'qa'`;

@@ -50,7 +50,7 @@ export const agents = pgTable(
       .notNull()
       .references(() => principals.id, { onDelete: "restrict" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
-    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the handle). Identity, not overlay. */
+    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the ref). Identity, not overlay. */
     color: smallint("color"),
     lastError: text("last_error"),
     errorKind: text("error_kind"),

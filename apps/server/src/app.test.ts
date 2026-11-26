@@ -71,7 +71,7 @@ async function startIdle(
     method: "POST",
     url: `/api/messages`,
     headers: { cookie },
-    payload: { to: [handle], body: "hi" },
+    payload: { to: [t.seededRef(handle)], body: "hi" },
   });
   const p = driver.startsOf(handle).at(-1);
   if (!p) throw new Error(`${handle} not started`);
@@ -235,7 +235,7 @@ test("a report's text reaches its manager naming the request it answers", async 
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["dev"], body: "update the README" },
+      payload: { to: [t.seededRef("dev")], body: "update the README" },
     });
     expect(res.statusCode).toBeLessThan(300);
     const [asked] = await t.sql<{ id: string }[]>`

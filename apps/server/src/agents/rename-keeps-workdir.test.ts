@@ -30,18 +30,18 @@ const until = (pred: () => boolean | Promise<boolean>) =>
 test("an agent renamed between two starts keeps its workdir and resumes its session", async () => {
   const agent = await t.seedAgent({ handle: "dev" });
   const ref = testRef(agent.id);
-  const send = (to: string, body: string) =>
+  const send = (body: string) =>
     t.app.inject({
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: [to], body, urgent: false },
+      payload: { to: [ref], body, urgent: false },
     });
   const idle = async () =>
     (await t.app.inject({ method: "GET", url: `/api/agents/${ref}`, headers: { cookie } })).json()
       .agent.status === "idle";
 
-  expect((await send("dev", "hello")).statusCode).toBe(202);
+  expect((await send("hello")).statusCode).toBe(202);
   await until(async () => sessionStarts().length === 1 && (await idle()));
   const events = (
     await t.app.inject({ method: "GET", url: `/api/agents/${ref}/events`, headers: { cookie } })
@@ -49,7 +49,7 @@ test("an agent renamed between two starts keeps its workdir and resumes its sess
   const sessionId = events.find((e) => e.event.type === "session_started")?.event.sessionId;
   expect(sessionId).toBeTruthy();
 
-  // A rename is a change to the principal's handle only; the agent's row keeps the old handle until the rename endpoint.
+  // A rename changes the principal's handle only; the ref names the agent, so the next message still reaches it.
   await t.sql`update principals set handle = 'dev-renamed' where id = ${agent.id}`;
   await t.app.close(); // a graceful stop: the next message starts a new process
   const next = await t.reopen({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
@@ -59,7 +59,7 @@ test("an agent renamed between two starts keeps its workdir and resumes its sess
         method: "POST",
         url: "/api/messages",
         headers: { cookie },
-        payload: { to: ["dev-renamed"], body: "again", urgent: false },
+        payload: { to: [ref], body: "again", urgent: false },
       })
     ).statusCode,
   ).toBe(202);

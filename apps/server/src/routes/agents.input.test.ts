@@ -25,7 +25,11 @@ describe("I1 §5.1: raw session input", () => {
     or = { cookie: signedUp.cookie };
     orTag = tagOf(testRef(signedUp.user.id));
     drv.commandList = list;
-    await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
+    await call(or, "POST", "/api/messages", {
+      to: [s.seededRef("dev")],
+      body: "work",
+      urgent: false,
+    });
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
     await settled();
     await vi.waitFor(
@@ -221,7 +225,11 @@ describe("I1 §5.1: raw session input", () => {
     await s.seedAgent({ handle: "err" });
     const rt = await runtimeOf(s.app, "err");
     if (!rt) throw new Error("no runtime");
-    await call(or, "POST", "/api/messages", { to: ["err"], body: "hi", urgent: false });
+    await call(or, "POST", "/api/messages", {
+      to: [s.seededRef("err")],
+      body: "hi",
+      urgent: false,
+    });
     const procOf = () => drv.starts.filter((p) => p.spec.agentId === rt.agent.id).at(-1);
     procOf()?.emit(...ev.fullTurn(), ev.turn());
     procOf()?.exit(137);

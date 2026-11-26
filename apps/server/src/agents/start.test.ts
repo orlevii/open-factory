@@ -124,7 +124,7 @@ async function seedStartFixture() {
     })
     .returning();
   if (!row) throw new Error("seed failed");
-  agent = { ...row, handle };
+  agent = { ...row, handle, ref: testRef(row.id) };
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
   const _fake = createFakeClaude({ scenario: "reply" });
@@ -552,7 +552,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRecor
       grants: [{ name: "app", hostPath: repo }],
     },
   );
-  return { ...row, handle };
+  return { ...row, handle, ref: testRef(row.id) };
 }
 
 test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants = spawner's current", async () => {

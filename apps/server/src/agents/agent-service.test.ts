@@ -211,7 +211,7 @@ test("update: cycle rejected", async () => {
   });
 });
 
-test("update: a rename restarts the agent and exactly its direct reports", async () => {
+test("update: a display-name change restarts the agent and exactly its direct reports", async () => {
   const spy = vi.spyOn(runtimes, "requestRestart");
   try {
     await svc.update(
@@ -880,7 +880,7 @@ test("a spawned agent can't be a manager on create or edit", async () => {
   ).rejects.toMatchObject(field);
 });
 
-test("renaming a spawner restarts its live spawned agents, never a terminated one", async () => {
+test("a display-name change on a spawner restarts its live spawned agents, never a terminated one", async () => {
   const id = await createSpawner("spawner-7");
   await insertChild(t.sql, id, "spawner-7-aa11");
   await insertChild(t.sql, id, "spawner-7-dd44", true);

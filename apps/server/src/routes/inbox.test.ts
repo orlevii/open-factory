@@ -26,7 +26,7 @@ beforeEach(async () => {
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["ada"], body: "hi" },
+    payload: { to: [h.seededRef("ada")], body: "hi" },
   });
   driver.last.emit(...ev.fullTurn("sess-a"));
   await (await runtimeOf(h.app, "ada"))?.settled();
@@ -97,7 +97,7 @@ test("chats lists every agent with unread messages, newest first; ?unread=true i
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["bob"], body: "wake bob" },
+    payload: { to: [h.seededRef("bob")], body: "wake bob" },
   });
   procOf("bob").emit(...ev.fullTurn("sess-b"));
   await (await runtimeOf(h.app, "bob"))?.settled();

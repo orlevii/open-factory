@@ -317,7 +317,11 @@ test("a rate-limited manager keeps due updates queued and gets them at the reset
   await tick(DEBOUNCE + 1_000);
   expect(updatesWritten()).toEqual([]);
   expect(h.rt.queueItems()).toEqual([
-    expect.objectContaining({ kind: "message", from: "@devrep", body: "held by the pause" }),
+    expect.objectContaining({
+      kind: "message",
+      from: tagOf(testRef(REPORT)),
+      body: "held by the pause",
+    }),
   ]);
   paused.paused = undefined;
   h.rt.resumeAfterReset();
@@ -355,7 +359,7 @@ test("a manager whose recovery needs Start a new session keeps the update queued
   await update("due while errored");
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
-  expect(h.rt.queueItems()).toEqual([expect.objectContaining({ from: "@devrep" })]);
+  expect(h.rt.queueItems()).toEqual([expect.objectContaining({ from: tagOf(testRef(REPORT)) })]);
   await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(1);
@@ -403,7 +407,11 @@ test("loading an errored manager with pending updates starts nothing; they ride 
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.queueItems()).toEqual([
-    expect.objectContaining({ kind: "message", from: "@devrep", body: "stuck report text" }),
+    expect.objectContaining({
+      kind: "message",
+      from: tagOf(testRef(REPORT)),
+      body: "stuck report text",
+    }),
   ]);
   await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();

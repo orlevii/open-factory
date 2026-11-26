@@ -52,7 +52,7 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["dev"], body: "hello", urgent: false },
+    payload: { to: [t.seededRef("dev")], body: "hello", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(
@@ -126,7 +126,7 @@ test("server restart: graceful stop, then the next message resumes the same sess
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["dev"], body: "again", urgent: false },
+    payload: { to: [t.seededRef("dev")], body: "again", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(() => sessionStarts().length === 2);
@@ -156,12 +156,12 @@ const statusOf = async (app: FastifyInstance, c: string) =>
       headers: { cookie: c },
     })
   ).json().agent.status;
-const post = (app: FastifyInstance, c: string, body: string) =>
+const post = async (app: FastifyInstance, c: string, body: string) =>
   app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { cookie: c },
-    payload: { to: ["dev"], body, urgent: false },
+    payload: { to: [await agentRefOf(app, "dev")], body, urgent: false },
   });
 
 test("assembled: app.close() with a live agent, reopen(): exactly one claude process per agent", async () => {

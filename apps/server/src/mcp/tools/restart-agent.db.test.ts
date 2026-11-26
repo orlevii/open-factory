@@ -56,7 +56,7 @@ const delivered = (p: { sent: { from: string; body: string }[][] }) =>
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 /** A report of lead that is running with a turn open (a cut restart interrupts it). */
 async function runningMidTurn(handle: string) {
-  await post("/api/messages", { to: [handle], body: "work", urgent: false });
+  await post("/api/messages", { to: [h.seededRef(handle)], body: "work", urgent: false });
   const p = startsOf(handle).at(-1);
   if (!p) throw new Error("never started");
   p.emit(ev.session(), ev.turn());
@@ -151,8 +151,16 @@ test("a cut restart delivers the note from the caller after the restart notice",
   ]);
 });
 
+test("restart_agent with a note names its target by tag and returns no warnings", async () => {
+  await runningMidTurn("dev");
+  const dev = agentTagOf({ ref: testRef(ids.dev as string), handle: "dev" });
+  const r = await call("lead", { target: dev, note: "Rerun the tests." });
+  expect(r.err).toBe(false);
+  expect(r.json.warnings).toBeUndefined();
+});
+
 test("an errored report with a note restarts, resumes its session, and gets the notice then the note", async () => {
-  await post("/api/messages", { to: ["dev"], body: "start", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "start", urgent: false });
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn("sess-old"));
@@ -160,7 +168,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   await rt?.settled();
   await rt?.hibernate("apply_changes");
   await rt?.settled();
-  await post("/api/messages", { to: ["dev"], body: "again", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "again", urgent: false });
   startsOf("dev")
     .at(-1)
     ?.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
@@ -197,7 +205,7 @@ test("an errored report whose restart is refused up front gets no note", async (
 });
 
 test("a refused restart (background work and no force) restarts nothing and sends no note", async () => {
-  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "hi", urgent: false });
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn(), ev.background([{ taskId: "t1", description: "pnpm test" }]));
@@ -217,7 +225,7 @@ test("a refused restart (background work and no force) restarts nothing and send
 });
 
 test("force: true restarts the report with its background work stopped, and the note follows", async () => {
-  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "hi", urgent: false });
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn(), ev.background([{ taskId: "t1", description: "pnpm test" }]));
@@ -309,7 +317,7 @@ test("a note whose recipient can't be started is reported as queued, in a fixed 
 });
 
 test("an idle report: the restart notice comes before the note on the next process", async () => {
-  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "hi", urgent: false });
   const p = startsOf("dev").at(-1);
   p?.emit(...ev.fullTurn());
   await (await runtimeOf(h.app, "dev"))?.settled();
@@ -326,7 +334,7 @@ test("an idle report: the restart notice comes before the note on the next proce
 });
 
 test("restart_pending: the note goes to the running process; the restart follows once idle", async () => {
-  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  await post("/api/messages", { to: [h.seededRef("dev")], body: "hi", urgent: false });
   const p = startsOf("dev").at(-1);
   p?.emit(
     ...ev.fullTurn(),

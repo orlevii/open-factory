@@ -250,17 +250,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const ref = req.params.ref;
       const found = await app.store.agentByRef(ref);
       if (!found) return notFound(reply);
-      const outcome = await app.workspace.lock.run(
-        await app.store.refOfAgent(found.id),
-        async () => {
-          const row = await app.store.agentById(found.id);
-          if (!row) return "not_found" as const;
-          if (!row.terminatedAt) return "not_terminated" as const;
-          if (row.workspaceDeletedAt) return "workspace_deleted" as const;
-          await app.store.setWorkspacePinned(row.id, pinned);
-          return "ok" as const;
-        },
-      );
+      const outcome = await app.workspace.lock.run(ref, async () => {
+        const row = await app.store.agentById(found.id);
+        if (!row) return "not_found" as const;
+        if (!row.terminatedAt) return "not_terminated" as const;
+        if (row.workspaceDeletedAt) return "workspace_deleted" as const;
+        await app.store.setWorkspacePinned(row.id, pinned);
+        return "ok" as const;
+      });
       if (outcome === "not_found") return notFound(reply);
       if (outcome === "not_terminated")
         return err(

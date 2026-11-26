@@ -99,7 +99,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             rt.live().errorKind !== "resume_unrecoverable";
           try {
             const early = noteFirst
-              ? await sendNote(d, row.handle, await d.store.agentTag(row.id), args.note as string)
+              ? await sendNote(d, await d.store.agentTag(row.id), args.note as string)
               : undefined;
             const outcome = await rt.restartNow({
               by: await d.store.principalTag(d.caller.id),
@@ -114,7 +114,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             const sent = noteFirst
               ? early
               : args.note
-                ? await sendNote(d, row.handle, await d.store.agentTag(row.id), args.note)
+                ? await sendNote(d, await d.store.agentTag(row.id), args.note)
                 : undefined;
             const lost = sent?.lost;
             const warnings = [
@@ -147,16 +147,10 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
 /** Sends the caller's note: a path-free sentence when it wasn't accepted, and the tag warnings. */
 async function sendNote(
   d: RestartAgentDeps,
-  handle: string,
   tag: string,
   note: string,
 ): Promise<{ lost?: string; warnings: string[] }> {
-  const { results, warnings } = await d.router.send(
-    { agentId: d.caller.id },
-    [handle],
-    note,
-    false,
-  );
+  const { results, warnings } = await d.router.send({ agentId: d.caller.id }, [tag], note, false);
   const r = results[0];
   if (!r) return { lost: `Your note to ${tag} wasn't delivered.`, warnings };
   if (r.status === "refused") return { lost: `Your note wasn't delivered: ${r.reason}`, warnings };

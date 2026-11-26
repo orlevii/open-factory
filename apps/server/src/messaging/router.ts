@@ -906,8 +906,8 @@ export class Router {
   }
 }
 
-/** How a result names a raw recipient: a channel as typed, anything else as `@handle` (one leading `@` dropped). */
+/** How a result names a raw recipient: a channel or a tag as typed, anything else as `@handle` (one leading `@` dropped). */
 function recipientLabel(raw: string): string {
   const t = raw.trim();
-  return t.startsWith("#") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;
+  return t.startsWith("#") || t.startsWith("<@") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;
 }

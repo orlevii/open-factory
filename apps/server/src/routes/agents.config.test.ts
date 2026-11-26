@@ -103,7 +103,7 @@ describe("PUT", () => {
 
   test("a running agent: a restart check is scheduled, and the answer doesn't wait for it", async () => {
     await reset();
-    await call("POST", "/api/messages", { to: ["dev"], body: "hi", urgent: false });
+    await call("POST", "/api/messages", { to: [t.seededRef("dev")], body: "hi", urgent: false });
     driver.last.emit(ev.session(), ev.turn(), ev.text("ok"), ev.usage(), ev.end());
     const rt = await runtimeOf(t.app, "dev");
     await rt?.settled();

@@ -32,6 +32,7 @@ import {
   refOfHandle,
   seedTestPrincipal,
   testManagerUserId,
+  testRef,
 } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
@@ -260,7 +261,7 @@ async function setup(
     containers,
     runtimes,
     rt,
-    agent: { ...agent, handle },
+    agent: { ...agent, handle, ref: testRef(agent.id) },
     workspace,
     prepareStart,
     cliBundle,

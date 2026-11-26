@@ -734,8 +734,7 @@ test("boot clears write marks left on pending rows, so a firing replaces the row
     id: "sch1",
     targetAgentId: id,
     body: "later",
-    bodyAuthorUserId: "u1",
-    bodyAuthorAgentId: null,
+    bodyAuthorId: "u1",
   };
   void sched;
   const written = await t.db.transaction((tx) =>

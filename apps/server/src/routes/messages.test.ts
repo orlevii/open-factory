@@ -28,11 +28,14 @@ const post = (payload: object, cookie: string | null = or) =>
     ...(cookie ? { headers: { cookie } } : {}),
     payload,
   });
+/** The refs the web sends: an agent's, or a person's looked up by handle. */
+const refOf = async (handle: string) =>
+  String((await s.sql`select ref from principals where handle = ${handle}`)[0]?.ref);
 const rowsOf = (body: string) =>
   s.sql`select to_id, recipient_ids from messages where body = ${body} and kind = 'message' order by to_id`;
 
 test("two agent recipients make two rows, one per agent, with both recipients", async () => {
-  const res = await post({ to: ["dev", "ops"], body: "both" });
+  const res = await post({ to: [s.seededRef("dev"), s.seededRef("ops")], body: "both" });
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     expect.objectContaining({
@@ -55,7 +58,7 @@ test("two agent recipients make two rows, one per agent, with both recipients", 
 
 test("a human recipient is refused", async () => {
   await s.signUpUser({ handle: "sam" });
-  const res = await post({ to: ["sam"], body: "to a person" });
+  const res = await post({ to: [await refOf("sam")], body: "to a person" });
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     {
@@ -68,27 +71,24 @@ test("a human recipient is refused", async () => {
   expect(await rowsOf("to a person")).toEqual([]);
 });
 
-test("the human REST send resolves only agents: each refused target is its own result", async () => {
-  const one = (handle: string) => post({ to: [handle], body: "only agents" });
-  for (const handle of ["or", "nobody", "humans", "factory"]) {
-    const r = await one(handle);
-    expect(r.statusCode).toBe(202);
-    // A person is a principal (named by tag); a name nobody holds stays the word it was written as.
-    expect(r.json().results).toEqual([
-      expect.objectContaining({
-        to: handle === "or" ? expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/) : `@${handle}`,
-        status: "refused",
-        reason: expect.any(String),
-      }),
-    ]);
-  }
+test("the human REST send refuses a person and an archived agent, each as its own result", async () => {
+  const one = (ref: string) => post({ to: [ref], body: "only agents" });
+  const r = await one(await refOf("or"));
+  expect(r.statusCode).toBe(202);
+  expect(r.json().results).toEqual([
+    expect.objectContaining({
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
+      status: "refused",
+      code: "human",
+    }),
+  ]);
   await s.seedAgent({ handle: "shelved" });
   await s.app.agents.archive(await s.refOf("shelved"), {
     kind: "human",
     ref: "k7x2m9qd",
     handle: "or",
   });
-  expect((await one("shelved")).json().results).toEqual([
+  expect((await one(await refOf("shelved"))).json().results).toEqual([
     {
       to: expect.stringMatching(/^<@[0-9a-z]{8}\|shelved>$/),
       status: "refused",
@@ -99,15 +99,30 @@ test("the human REST send resolves only agents: each refused target is its own r
   expect(await rowsOf("only agents")).toEqual([]);
 });
 
+test.each([
+  ["a handle", "dev"],
+  ["a tag", "<@zzzzzzzz|dev>"],
+  ["a ref nobody holds", "zzzzzzzz"],
+])("%s as a recipient is a 400 on `to` and nothing is sent", async (_name, to) => {
+  const res = await post({ to: [s.seededRef("ops"), to], body: "bad recipient" });
+  expect(res.statusCode).toBe(400);
+  expect(res.json().error.fields).toEqual({ to: "No agent at this ref" });
+  expect(await rowsOf("bad recipient")).toEqual([]);
+});
+
 test("attachments with two recipients are 422", async () => {
-  const res = await post({ to: ["dev", "ops"], body: "files", attachments: ["u1"] });
+  const res = await post({
+    to: [s.seededRef("dev"), s.seededRef("ops")],
+    body: "files",
+    attachments: ["u1"],
+  });
   expect(res.statusCode).toBe(422);
   expect(res.json().error.code).toBe("invalid_attachment");
   expect(await rowsOf("files")).toEqual([]);
 });
 
 test("one refused recipient beside sent ones is a 202 with mixed results", async () => {
-  const res = await post({ to: ["dev", "old", "nobody"], body: "mixed" });
+  const res = await post({ to: [s.seededRef("dev"), s.seededRef("old")], body: "mixed" });
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     expect.objectContaining({
@@ -119,12 +134,6 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
       status: "refused",
       reason: expect.any(String),
       code: "terminated",
-    }),
-    expect.objectContaining({
-      to: "@nobody",
-      status: "refused",
-      reason: expect.any(String),
-      code: "not_found",
     }),
   ]);
   const rows = await rowsOf("mixed");
@@ -139,7 +148,7 @@ test("a hand-off that throws for one recipient is that recipient's start_failed,
     return real(row, ...rest);
   });
   try {
-    const res = await post({ to: ["dev", "ops"], body: "partial-fail" });
+    const res = await post({ to: [s.seededRef("dev"), s.seededRef("ops")], body: "partial-fail" });
     expect(res.statusCode).toBe(202);
     expect(res.json().results.map((x: { status: string }) => x.status)).toEqual([
       "start_failed",
@@ -161,7 +170,7 @@ test("start_failed keeps that recipient's row pending", async () => {
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["bad", "fine"], body: "partly" },
+      payload: { to: [t2.seededRef("bad"), t2.seededRef("fine")], body: "partly" },
     });
     expect(res.statusCode).toBe(202);
     const [bad, fine] = res.json().results;
@@ -200,31 +209,31 @@ test("a retry with the same clientMessageId publishes no chat_changed", async ()
   const frames: string[] = [];
   const off = s.app.bus.subscribeUser(u?.id as string, (m) => frames.push(m.type));
   const clientMessageId = randomUUID();
-  await post({ to: ["ops"], body: "quiet retry", clientMessageId });
+  await post({ to: [s.seededRef("ops")], body: "quiet retry", clientMessageId });
   await (await runtimeOf(s.app, "ops"))?.settled();
   const first = frames.filter((t) => t === "chat_changed").length;
   expect(first).toBeGreaterThan(0);
-  await post({ to: ["ops"], body: "quiet retry", clientMessageId });
+  await post({ to: [s.seededRef("ops")], body: "quiet retry", clientMessageId });
   await (await runtimeOf(s.app, "ops"))?.settled();
   expect(frames.filter((t) => t === "chat_changed")).toHaveLength(first);
   off();
 });
 
 test("a human session only: no auth and an agent token are 401", async () => {
-  expect((await post({ to: ["dev"], body: "x" }, null)).statusCode).toBe(401);
+  expect((await post({ to: [s.seededRef("dev")], body: "x" }, null)).statusCode).toBe(401);
   const { token } = s.app.agentTokens.mint(agentIds.dev as string);
   const res = await s.app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { authorization: `Bearer ${token}` },
-    payload: { to: ["dev"], body: "x" },
+    payload: { to: [s.seededRef("dev")], body: "x" },
   });
   expect(res.statusCode).toBe(401);
 });
 
 test("validation: an empty or over-64-KB body, no recipients and eleven recipients are 400", async () => {
-  expect((await post({ to: ["dev"], body: "  " })).statusCode).toBe(400);
-  expect((await post({ to: ["dev"], body: "x".repeat(65_537) })).statusCode).toBe(400);
+  expect((await post({ to: [s.seededRef("dev")], body: "  " })).statusCode).toBe(400);
+  expect((await post({ to: [s.seededRef("dev")], body: "x".repeat(65_537) })).statusCode).toBe(400);
   expect((await post({ to: [], body: "x" })).statusCode).toBe(400);
   expect(
     (await post({ to: Array.from({ length: 11 }, (_, i) => `a${i}`), body: "x" })).statusCode,
@@ -233,7 +242,7 @@ test("validation: an empty or over-64-KB body, no recipients and eleven recipien
 
 test("a message with a tag reaches only its recipients", async () => {
   const [ops] = await s.sql`select ref from principals where handle = 'ops'`;
-  const res = await post({ to: ["dev"], body: `ask <@${ops?.ref}> later` });
+  const res = await post({ to: [s.seededRef("dev")], body: `ask <@${ops?.ref}> later` });
   expect(res.statusCode).toBe(202);
   const rows =
     await s.sql`select to_id, body from messages where kind = 'message' and body like 'ask <@%' `;
@@ -241,7 +250,7 @@ test("a message with a tag reaches only its recipients", async () => {
 });
 
 test("a body with an unknown ref is 400 and writes nothing", async () => {
-  const res = await post({ to: ["dev"], body: "ask <@zzzzzzzz> later" });
+  const res = await post({ to: [s.seededRef("dev")], body: "ask <@zzzzzzzz> later" });
   expect(res.statusCode).toBe(400);
   expect(res.json().error).toMatchObject({
     code: "unknown_tag",

@@ -51,7 +51,7 @@ async function startIdle(handle: string) {
     method: "POST",
     url: `/api/messages`,
     headers: { cookie },
-    payload: { to: [handle], body: "hi" },
+    payload: { to: [h.seededRef(handle)], body: "hi" },
   });
   const p = proc(handle);
   if (!p) throw new Error(`${handle} not started: ${res.statusCode} ${res.body}`);
@@ -151,7 +151,8 @@ test("AC 3: an urgent message from an agent interrupts a working recipient", asy
   expect(proc("lead")?.controls).toContainEqual({ kind: "control", cmd: "interrupt" });
   const lead = await agentRowOf(h.app, "lead");
   const events = (await h.app.store.after(lead?.id ?? "", 0, 200)).map((e) => e.event);
-  expect(events).toContainEqual({ type: "control", cmd: "interrupt", by: "@ada" });
+  const [ada] = await h.sql`select ref from principals where handle = 'ada'`;
+  expect(events).toContainEqual({ type: "control", cmd: "interrupt", by: `<@${ada?.ref}>` });
 });
 
 test("a row loaded by init() and handed over again is written once and still wakes the agent", async () => {
@@ -289,7 +290,7 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
     method: "POST",
     url: "/api/messages",
     headers: auth,
-    payload: { to: ["bob"], body: "x" },
+    payload: { to: [h.seededRef("bob")], body: "x" },
   });
   expect(send.statusCode).toBe(401);
   const list = await h.app.inject({ method: "GET", url: "/api/agents", headers: auth });
@@ -445,7 +446,7 @@ test("R4 (owner): a human-managed agent's errored episode is one inbox item for 
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["lead"], body: "are you there" },
+      payload: { to: [h.seededRef("lead")], body: "are you there" },
     });
   await retry();
   (await nextAttempt(4))?.exit(1);
@@ -487,7 +488,7 @@ test("a member update's re stores the sender's tag: a report's text to a human m
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["ada"], body: "update the README" },
+    payload: { to: [h.seededRef("ada")], body: "update the README" },
   });
   const [asked] = await h.sql<{ id: string }[]>`
     select id from messages where to_id = ${ada?.id ?? ""} and kind = 'message'`;
@@ -598,7 +599,7 @@ test("errored_reported clears with the error, so the next episode is reported", 
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["lead"], body: "retry" },
+    payload: { to: [h.seededRef("lead")], body: "retry" },
   });
   proc("lead")?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
   await settle("lead");
@@ -910,7 +911,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
       method: "POST",
       url: "/api/messages",
       headers: { cookie: sam.cookie },
-      payload: { to: ["bob"], body: "hi bob" },
+      payload: { to: [h.seededRef("bob")], body: "hi bob" },
     });
     expect(got.sam).toContainEqual({ type: "chat_changed", agent: await h.refOf("bob") });
     expect(got.or.filter((m) => m.type === "chat_changed")).toEqual([]);
@@ -1078,7 +1079,7 @@ describe("loop guard on list sends", () => {
       method: "POST",
       url: "/api/messages",
       headers: { cookie: orCookie },
-      payload: { to: ["bob"], body: "from a human" },
+      payload: { to: [h.seededRef("bob")], body: "from a human" },
     });
     expect(res.statusCode).toBeLessThan(300);
     const [row] = await h.sql`select state from messages where body = 'from a human'`;

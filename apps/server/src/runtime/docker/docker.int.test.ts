@@ -339,7 +339,7 @@ const post = async (w: World, body = "hi", handle = w.handle) => {
     method: "POST",
     url: `/api/messages`,
     headers: { cookie: w.cookie },
-    payload: { to: [handle], body, urgent: false },
+    payload: { to: [await refOfAgent(w.t.db, await idOf(w.t.db, handle))], body, urgent: false },
   });
   expect(res.statusCode).toBe(202);
 };
@@ -784,7 +784,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     for (const handle of ["dock", "loc"]) {
       const res = await api(`/api/messages`, {
         method: "POST",
-        body: JSON.stringify({ to: [handle], body: "long job", urgent: false }),
+        body: JSON.stringify({ to: [refs[handle] as string], body: "long job", urgent: false }),
       });
       expect(res.status).toBe(202);
     }

@@ -229,8 +229,13 @@ export class SpawnService {
     } catch (err) {
       // folder_exists: the folder isn't ours (a crash's leftover or a human's); never remove it.
       if (!(err instanceof FieldError && err.code === "folder_exists")) await this.discard(ref);
-      if (err instanceof FieldError && err.code === "folder_exists")
+      if (err instanceof FieldError && err.code === "folder_exists") {
+        this.d.log.error(
+          { err, agent: handle },
+          "a spawned agent's folder already exists; leaving it",
+        );
         return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
+      }
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
       this.d.log.error({ err, agent: handle }, "materializing a spawned agent failed");
       return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
@@ -304,7 +309,7 @@ export class SpawnService {
           })
           .returning();
         if (!inserted) throw new Error("inserting the spawned agent returned no row");
-        const child = { ...inserted, handle };
+        const child = { ...inserted, handle, ref: refOf(id) };
         if (c.inherited.grants.length)
           await tx
             .insert(schema.agentProjectGrants)

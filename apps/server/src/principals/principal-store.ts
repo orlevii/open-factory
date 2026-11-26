@@ -4,12 +4,13 @@ import { refOf } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { eq, getTableColumns, inArray } from "drizzle-orm";
 
-/** An agent's row with its current handle, which lives on `principals` (the agent's id is its principal's id). */
-export type AgentRecord = AgentRow & { handle: string };
+/** An agent's row with its current handle and ref, which live on `principals` (the agent's id is its principal's id). */
+export type AgentRecord = AgentRow & { handle: string; ref: string };
 /** The columns that select an `AgentRecord` from `agents` inner-joined to `principals` on the id. */
 export const agentRecordColumns = {
   ...getTableColumns(schema.agents),
   handle: schema.principals.handle,
+  ref: schema.principals.ref,
 };
 
 /** Every agent column plus its handle: `agents` inner-joined to `principals` on the shared id. */

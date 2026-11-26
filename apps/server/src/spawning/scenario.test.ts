@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
-import { agentRowOf, makeTestApp, runtimeOf } from "../test/helpers.ts";
+import { agentRefOf, agentRowOf, makeTestApp, runtimeOf } from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>> | undefined;
@@ -125,7 +125,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["lead"], body: "start" },
+    payload: { to: [await agentRefOf(h.app, "lead")], body: "start" },
   });
   expect(sent.statusCode).toBeLessThan(300);
   const leadProc = procOf("lead");

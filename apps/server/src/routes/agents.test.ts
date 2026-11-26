@@ -43,7 +43,7 @@ test("auth runs before validation: signed-out bad input is 401, not 400", async 
   const post = await t.app.inject({
     method: "POST",
     url: "/api/messages",
-    payload: { to: ["dev"], body: 42 },
+    payload: { to: [t.seededRef("dev")], body: 42 },
   });
   expect(post.statusCode).toBe(401);
   expect(post.json().error.code).toBe("unauthorized");
@@ -133,12 +133,16 @@ test("POST /api/messages takes refs", async () => {
 });
 
 test("send, then read events back; interrupt 409 while idle, 202 with an open turn", async () => {
-  const sent = await req("POST", "/api/messages", { to: ["dev"], body: "hello", urgent: false });
+  const sent = await req("POST", "/api/messages", {
+    to: [t.seededRef("dev")],
+    body: "hello",
+    urgent: false,
+  });
   expect(sent.statusCode).toBe(202);
   expect(sent.json().results[0].item).toMatchObject({
     kind: "message",
     body: "hello",
-    from: "@or",
+    from: `<@${await t.refOf("or")}>`,
     fromKind: "human",
   });
   driver.last.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());
@@ -229,7 +233,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
       method: "POST",
       url: "/api/messages",
       headers: { cookie: c2 },
-      payload: { to: ["dev"], body: "hi", urgent: false },
+      payload: { to: [t2.seededRef("dev")], body: "hi", urgent: false },
     });
     expect(sent.json().results).toEqual([
       {
@@ -751,14 +755,22 @@ describe("U3 §6.4: cancel and restore a held message", () => {
   /** A message sent while a Stop's hold is on: queued, unwritten. */
   async function held(body: string): Promise<string> {
     if (!drv.starts.length) {
-      await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
+      await call(or, "POST", "/api/messages", {
+        to: [s.seededRef("dev")],
+        body: "work",
+        urgent: false,
+      });
       drv.last.emit(ev.session(), ev.turn());
       await settled();
       expect(
         (await call(or, "POST", `/api/agents/${await s.refOf("dev")}/interrupt`)).statusCode,
       ).toBe(202);
     }
-    const res = await call(or, "POST", "/api/messages", { to: ["dev"], body, urgent: false });
+    const res = await call(or, "POST", "/api/messages", {
+      to: [s.seededRef("dev")],
+      body,
+      urgent: false,
+    });
     expect(res.json().results[0].item).toMatchObject({ body, waitReason: "stopping" });
     return res.json().results[0].item.id;
   }
@@ -771,7 +783,7 @@ describe("U3 §6.4: cancel and restore a held message", () => {
     const res = await call(or, "DELETE", `/api/agents/${await s.refOf("dev")}/queue/${id}`);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      item: expect.objectContaining({ id, body: "hold me", from: "@or6" }),
+      item: expect.objectContaining({ id, body: "hold me", from: `<@${await s.refOf("or6")}>` }),
     });
     // A second DELETE (another tab, a retry) is idempotent: 200 with the same item, never "already delivered".
     const again = await call(or, "DELETE", `/api/agents/${await s.refOf("dev")}/queue/${id}`);
@@ -865,7 +877,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["dev"], urgent: false, ...payload },
+      payload: { to: [s.seededRef("dev")], urgent: false, ...payload },
     });
   const rows = async (cid: string) =>
     s.sql`select id, from_id from messages where client_message_id = ${cid}`;
@@ -897,7 +909,11 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
           method: "POST",
           url: "/api/messages",
           headers: { cookie: c2 },
-          payload: { to: ["dev", "ops"], body: "twice", clientMessageId: cid },
+          payload: {
+            to: [t2.seededRef("dev"), t2.seededRef("ops")],
+            body: "twice",
+            clientMessageId: cid,
+          },
         });
       const cid = randomUUID();
       const first = await send();
@@ -934,7 +950,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     expect(b.json().results[0].item.id).not.toBe(a.json().results[0].item.id);
     expect(b.json().results[0].item).toMatchObject({
       body: "theirs",
-      from: "@sam8",
+      from: `<@${await s.refOf("sam8")}>`,
       clientMessageId: cid,
     });
     expect(await rows(cid)).toHaveLength(2);
@@ -1031,7 +1047,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:ref/commands", () => {
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["dev"], body: "hi", urgent: false },
+      payload: { to: [s.seededRef("dev")], body: "hi", urgent: false },
     });
     expect(sent.statusCode).toBe(202);
     await expect.poll(async () => (await get()).json().source, { timeout: 5000 }).toBe("session");
@@ -1129,7 +1145,7 @@ describe("U3 §13.5: attachments on POST /messages", () => {
       method: "POST",
       url: `/api/messages`,
       headers: { cookie },
-      payload: { to: [handle], urgent: false, ...payload },
+      payload: { to: [s.seededRef(handle)], urgent: false, ...payload },
     });
   const uploadRow = async (id: string) =>
     (await s.db.select().from(schema.uploads)).find((r) => r.id === id);

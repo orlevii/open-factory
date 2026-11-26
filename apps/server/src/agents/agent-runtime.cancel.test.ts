@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
@@ -63,7 +63,7 @@ test("the sender cancels a held message; another user can't", async () => {
     id: b.id,
     kind: "message",
     body: "B",
-    from: "@or",
+    from: `<@${testRef("u1")}>`,
     fromKind: "human",
   });
   expect(bodies()).toEqual(["A"]);

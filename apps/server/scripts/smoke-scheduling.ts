@@ -341,6 +341,8 @@ function writeTemplate(name: string, files: Record<string, string>) {
 }
 
 /** S10 §9.3: sign-up is invite-only once a user exists, so a later user signs up with an invite the inviter creates. */
+let orRef = "";
+
 async function signUp(handle: string, name: string, inviter?: { cookie: string }) {
   let invite: string | undefined;
   if (inviter) {
@@ -374,8 +376,9 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
     .join("; ");
   const me = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json() as {
     id: string;
+    ref: string;
   };
-  return { cookie, userId: me.id };
+  return { cookie, userId: me.id, ref: me.ref };
 }
 
 /** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
@@ -477,6 +480,7 @@ try {
     return { or, sam: await signUp("sam", "Sam", or) };
   });
   orCookie = users.or.cookie;
+  orRef = users.or.ref;
   await step("1. factory settings: member update debounce 180 s", () =>
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
   );
@@ -535,7 +539,7 @@ try {
           reportsTo: "or",
           credential: "smoke",
         },
-        { kind: "human", ref: "k7x2m9qd", handle: "or" },
+        { kind: "human", ref: orRef, handle: "or" },
       ),
     );
     ids.set(

@@ -246,7 +246,7 @@ describe("I1 §6.3: the chat thread", () => {
         method: "POST",
         url: "/api/messages",
         headers: { cookie: or.cookie },
-        payload: { to: ["dev"], body: "please", urgent: false },
+        payload: { to: [s.seededRef("dev")], body: "please", urgent: false },
       });
       expect(sent.statusCode).toBeLessThan(300);
       const rt = await runtimeOf(s.app, "dev");

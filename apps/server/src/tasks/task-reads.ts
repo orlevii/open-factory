@@ -397,7 +397,7 @@ export class TaskReads {
     if (r.kind !== "principal" || !a)
       throw new TaskError(
         "not_found",
-        `No agent @${raw.trim().replace(/^@/, "")}.`,
+        `No agent @${r.kind === "principal" ? r.p.handle : "name" in r ? r.name : raw.trim().replace(/^@/, "")}.`,
         400,
         "assignee",
       );

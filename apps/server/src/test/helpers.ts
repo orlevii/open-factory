@@ -224,7 +224,7 @@ export async function seedTestAgent(
   const workdir = agentWorkdir(app.config.factoryHome, principal.ref);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  return { ...row, handle };
+  return { ...row, handle, ref: principal.ref };
 }
 
 /**

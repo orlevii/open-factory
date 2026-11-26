@@ -10,7 +10,7 @@ import { isHandleTaken } from "../principals/principal-store.ts";
 export const meRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/api/me",
-    { preHandler: requireUser, schema: { response: { 200: meSchema } } },
+    { onRequest: requireUser, schema: { response: { 200: meSchema } } },
     async (req) => {
       if (!req.user) throw new Error("requireUser did not set request.user");
       return req.user;
@@ -20,7 +20,7 @@ export const meRoutes: FastifyPluginAsyncZod = async (app) => {
   // The person's own name (users.name) and handle (principals.handle), written together or not at all.
   app.patch(
     "/api/me",
-    { preHandler: requireUser, schema: { body: patchMeBodySchema, response: { 200: meSchema } } },
+    { onRequest: requireUser, schema: { body: patchMeBodySchema, response: { 200: meSchema } } },
     async (req) => {
       if (!req.user) throw new Error("requireUser did not set request.user");
       const { id } = req.user;

@@ -17,6 +17,7 @@ import {
   type skillSourcePreviewBodySchema,
   type sourceDetailSchema,
 } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { ApiError, FieldError } from "../errors.ts";
@@ -345,7 +346,7 @@ export class SourcesService {
     try {
       await this.d.onLibraryChanged?.({
         skills,
-        by: `<@${by.ref}>`,
+        by: tagOf(by.ref),
         ...(before ? { before } : {}),
       });
     } catch (e) {

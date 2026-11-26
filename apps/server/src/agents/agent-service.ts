@@ -928,7 +928,7 @@ export class AgentService {
       after: async () => {
         // After a rename the loaded runtime's cached handle is stale (it names the agent in refusals and logs).
         await runtimes.refresh(row.id);
-        if (renamed !== undefined || set.displayName !== undefined)
+        if (renamed !== undefined || set.displayName !== undefined || set.color !== undefined)
           await this.d.publishPrincipal(row.id);
         await this.applyToChildren(children);
         if (moved && before)

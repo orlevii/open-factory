@@ -30,7 +30,7 @@ import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { dockerodeClient } from "../src/runtime/docker/client.ts";
 import { containerName, LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
-import { principalSql } from "../src/test/principals.ts";
+import { principalSql, testRef } from "../src/test/principals.ts";
 import { agentWorkdir } from "../src/workspace/paths.ts";
 import { byHandle } from "./by-handle.ts";
 
@@ -381,7 +381,7 @@ try {
         reportsTo: "smoke",
         credential: "smoke",
       },
-      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      { kind: "human", ref: testRef("smoke"), handle: "smoke" },
     ),
   );
   agentId = String(

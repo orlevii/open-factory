@@ -103,18 +103,21 @@ export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): 
       headers,
       body: fields ? JSON.stringify(fields) : body === undefined ? undefined : JSON.stringify(body),
     });
+    // Cleanup must not replace the sign-up's own error or response.
+    const dropFailed = (err: unknown) =>
+      d.log.error({ err, userId: principal.id }, "dropping the unused principal failed");
     let res: Response;
     try {
       res = await signUpContext.run({ allowed: true, userId: principal.id }, () =>
         d.auth.handler(forwarded),
       );
     } catch (err) {
-      await dropUnusedPrincipal(d.db, principal.id);
+      await dropUnusedPrincipal(d.db, principal.id).catch(dropFailed);
       throw err;
     }
 
     if (!res.ok) {
-      await dropUnusedPrincipal(d.db, principal.id);
+      await dropUnusedPrincipal(d.db, principal.id).catch(dropFailed);
       return res;
     }
     if (inviteId && !(await d.invites.markUsed(inviteId, principal.id))) {

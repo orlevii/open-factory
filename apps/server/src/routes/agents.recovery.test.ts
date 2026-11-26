@@ -34,7 +34,7 @@ async function agent(): Promise<{ handle: string; rt: AgentRuntime }> {
   return { handle, rt };
 }
 const send = async (handle: string, body: string) => {
-  const r = await post(`/api/messages`, { to: [handle], body, urgent: false });
+  const r = await post(`/api/messages`, { to: [t.seededRef(handle)], body, urgent: false });
   expect(r.statusCode).toBe(202);
 };
 const procsOf = (rt: AgentRuntime): FakeProcess[] =>

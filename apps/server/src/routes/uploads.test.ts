@@ -310,7 +310,7 @@ test("DELETE by the uploader while unsent removes row and file; a sent upload ca
     method: "POST",
     url: "/api/messages",
     headers: { cookie: or },
-    payload: { to: ["dev"], body: "see attached", attachments: [b.uploadId] },
+    payload: { to: [t.seededRef("dev")], body: "see attached", attachments: [b.uploadId] },
   });
   expect(sent.statusCode).toBe(202);
   const [claimed] = await t.db
@@ -334,7 +334,7 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
     method: "POST",
     url: "/api/messages",
     headers: { cookie: or },
-    payload: { to: ["ops"], body: "x" },
+    payload: { to: [t.seededRef("ops")], body: "x" },
   });
   await t.db
     .update(schema.uploads)

@@ -22,7 +22,7 @@ import type { AnyEvent } from "@open-factory/shared";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
-import { principalSql } from "../src/test/principals.ts";
+import { principalSql, testRef } from "../src/test/principals.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
 import { byHandle } from "./by-handle.ts";
 
@@ -321,7 +321,7 @@ try {
         reportsTo: "smoke",
         credential: "smoke-a",
       },
-      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      { kind: "human", ref: testRef("smoke"), handle: "smoke" },
     ),
   );
   await step("4. agent smoke-beta created from beta with smoke-b", () =>
@@ -334,7 +334,7 @@ try {
         reportsTo: "smoke-alpha",
         credential: "smoke-b",
       },
-      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      { kind: "human", ref: testRef("smoke"), handle: "smoke" },
     ),
   );
   check(

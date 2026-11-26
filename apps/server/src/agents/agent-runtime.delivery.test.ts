@@ -432,7 +432,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await rt.postNotice("crash", "it crashed"); // no process: nothing is written
   expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([
     ["notice", "@factory", "it crashed"],
-    ["message", "@or", "old"],
+    ["message", `<@${testRef("u1")}>`, "old"],
   ]);
   await send("new"); // starts the process
   expect(driver.last.sent[0]).toMatchObject([

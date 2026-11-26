@@ -7,7 +7,7 @@ export const FIELD_MSG = {
   projectRemoved: "A chosen project was removed.",
   handleInvalid: "Invalid handle.",
   handleTaken: "Another agent or person has this handle",
-  handleFolderExists: "That handle's folder already exists.",
+  handleFolderExists: "This agent's folder already exists.",
   reportsCycle: "That would create a reporting loop.",
   invalidTime: "Not a valid time.",
   tokenRejected: "Claude rejected this token.",

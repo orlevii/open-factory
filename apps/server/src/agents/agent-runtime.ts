@@ -199,7 +199,7 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human or an agent, `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@factory`, `@scheduler`, else the sender's tag); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
@@ -338,7 +338,7 @@ function entryOf(r: PendingRow): MessageEntry {
     fromKind = senderKind;
   } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
-  const groupKey = (senderKind === "agent" ? fromHandle : null) ?? subjectHandle ?? undefined;
+  const groupKey = (senderKind === "agent" ? fromRef : null) ?? subjectRef ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
@@ -2411,7 +2411,7 @@ export class AgentRuntime {
           kind: e.row.kind === "system" || isPeer(e) ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: e.from,
+          from: e.fromTag ?? e.from,
           fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),

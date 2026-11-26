@@ -60,11 +60,9 @@ export function inheritFrom(
       ok: false,
       refusal: `Template ${t} runs without permission checks, which you don't have, so you can't spawn it.`,
     };
-  const held = new Map(spawner.grants.map((g) => [g.name, g]));
-  const grants = child.projects.flatMap((n) => {
-    const g = held.get(n);
-    return g ? [g] : [];
-  });
+  // A child works on its spawner's projects: it gets all of them, whatever its template lists.
+  const held = new Set(spawner.grants.map((g) => g.name));
+  const grants = spawner.grants;
   const secrets = child.secrets.filter((s) => spawner.secrets.includes(s));
   return {
     ok: true,

@@ -554,7 +554,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
   return row;
 }
 
-test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants ∩ spawner's current", async () => {
+test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants = spawner's current", async () => {
   const child = await seedChild();
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBe("gh-1");

@@ -138,7 +138,7 @@ async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?:
   });
 }
 
-test("spawn: child row, grants ∩, brief, spawned event, peer rows (spawner excluded), note", async () => {
+test("spawn: child row, all the spawner's grants, brief, spawned event, peer rows (spawner excluded), note", async () => {
   const { t, lead, pm } = await setup();
   const r = await t.app.spawner.spawn(lead.id, args({ suffix: "x1" }), "toolu_1");
   expect(r).toMatchObject({
@@ -159,7 +159,8 @@ test("spawn: child row, grants ∩, brief, spawned event, peer rows (spawner exc
     runtime: "local",
   });
   if (!child) throw new Error("no child");
-  expect(await grantNames(t, child.id)).toEqual(["app"]);
+  // Every project the spawner holds, including web, which the child's template doesn't list.
+  expect(await grantNames(t, child.id)).toEqual(["app", "web"]);
   // The brief is a message from the spawner (it may already be delivered: the hand-off is not awaited).
   expect(await messagesTo(t, child.id)).toEqual([
     expect.objectContaining({
@@ -385,7 +386,7 @@ test("a spawn racing a grant change: the child gets the spawner's post-change gr
     note: "Not passed on, because you don't hold them: secrets NPM_TOKEN; projects app, docs.",
   });
   const child = await t.app.store.agentBySlug("tech-lead-gr");
-  expect(await grantNames(t, child?.id ?? "")).toEqual([]);
+  expect(await grantNames(t, child?.id ?? "")).toEqual(["web"]);
 });
 
 test("folder_exists: a random suffix retries, an explicit one is reported taken", async () => {

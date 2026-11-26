@@ -109,7 +109,7 @@ export function spawnerHolds(
  * spawner counts as the stricter of what its running process started with (`loaded`) and its current effective config:
  * secrets intersected, deny rules unioned. A spawner with no running process (no `started`) counts as its current
  * config alone.
- * Grants = the spawner's current grants ∩ the child's projects, and the §6.2 refusals are re-checked. Anything about
+ * Grants = the spawner's current grants (all of them), and the §6.2 refusals are re-checked. Anything about
  * the spawner that can't be read fails the start closed: a child never runs with more than its spawner holds.
  */
 export async function deriveInheritance(

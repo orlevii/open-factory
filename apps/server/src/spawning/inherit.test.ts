@@ -31,7 +31,7 @@ const spawner = (o: Partial<SpawnerState> = {}): SpawnerState => ({
 });
 const env = { localRuntimeAllowed: true };
 
-test("credential, projects ∩, secrets ∩, deny ∪", () => {
+test("credential, every project the spawner holds, secrets ∩, deny ∪", () => {
   const r = inheritFrom(
     spawner(),
     tpl({ projects: ["app", "docs"], secrets: ["GH_TOKEN", "NPM_TOKEN"] }),
@@ -41,11 +41,19 @@ test("credential, projects ∩, secrets ∩, deny ∪", () => {
   expect(r).toEqual({
     ok: true,
     credentialId: "c1",
-    grants: [{ id: "p1", name: "app", hostPath: "/r/app" }],
+    grants: [
+      { id: "p1", name: "app", hostPath: "/r/app" },
+      { id: "p2", name: "web", hostPath: "/r/web" },
+    ],
     secrets: ["GH_TOKEN"],
     deny: { permissionsDeny: ["Read(.env)", "Bash(rm:*)"], softDeny: ["x"], hardDeny: ["no prod"] },
     dropped: { secrets: ["NPM_TOKEN"], projects: ["docs"] },
   });
+});
+test("a template that lists no projects still gets every project its spawner holds", () => {
+  const r = inheritFrom(spawner(), tpl({ projects: [] }), none, env);
+  expect(r.ok && r.grants.map((g) => g.name)).toEqual(["app", "web"]);
+  expect(r.ok && r.dropped.projects).toEqual([]);
 });
 test.each([
   [

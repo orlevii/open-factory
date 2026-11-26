@@ -156,8 +156,12 @@ export const postUndoReadAll = (readAt: string) =>
     schema: undoReadAllResponseSchema,
   });
 
+/** The sender's handle as the row copy writes it; `factory` for the factory's own items. */
+export const senderHandle = (from: InboxItem["from"]): string =>
+  from.kind === "factory" ? "factory" : from.handle;
+
 const fromAgent = (i: InboxItem) =>
-  i.kind === "notice" && i.from.kind === "agent" ? i.from.name : null;
+  i.kind === "notice" && i.from.kind === "agent" ? i.from.handle : null;
 
 /** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. With `items`,
  *  each agent-sender's count moves too; without them `byAgent` is left for the refetch. */

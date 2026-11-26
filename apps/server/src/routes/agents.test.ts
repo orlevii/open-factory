@@ -746,7 +746,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
       payload: { to: ["dev"], urgent: false, ...payload },
     });
   const rows = async (cid: string) =>
-    s.sql`select id, from_user_id from messages where client_message_id = ${cid}`;
+    s.sql`select id, from_id from messages where client_message_id = ${cid}`;
   const sends = () => drv.starts.flatMap((p) => p.writes.filter((w) => w.kind === "send"));
   const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
 
@@ -784,7 +784,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
       expect(again.statusCode).toBe(202);
       expect(again.json()).toEqual(first.json());
       expect(
-        await t2.sql`select to_agent_id from messages where client_message_id = ${cid}`,
+        await t2.sql`select to_id from messages where client_message_id = ${cid}`,
       ).toHaveLength(2);
     } finally {
       await t2.close();

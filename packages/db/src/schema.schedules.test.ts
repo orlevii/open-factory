@@ -40,60 +40,44 @@ test("keys come from a sequence", async () => {
 test("wrong scheduled shapes are rejected", async () => {
   const base = (cols: string, vals: string) =>
     sql.unsafe(
-      `insert into messages (id,kind,to_agent_id,${cols},body) values ('bad','scheduled','a2',${vals},'x')`,
+      `insert into messages (id,kind,to_id,${cols},body) values ('bad','scheduled','a2',${vals},'x')`,
     );
   const full = "'s1','u1',now(),1,false";
-  const cols = "schedule_id,author_user_id,due_at,firings,late";
+  const cols = "schedule_id,author_id,due_at,firings,late";
   await ok(
     base(cols, full)
       .then(() => sql`delete from messages where id = 'bad'`)
       .then(() => [1]),
   );
-  await bad(base("schedule_id,author_user_id,due_at,late", "'s1','u1',now(),false"));
+  await bad(base("schedule_id,author_id,due_at,late", "'s1','u1',now(),false"));
   await bad(base(cols, "'s1','u1',now(),0,false"));
-  await bad(
-    base(
-      "schedule_id,author_user_id,author_agent_id,due_at,firings,late",
-      "'s1','u1','a1',now(),1,false",
-    ),
-  );
   await bad(base("schedule_id,due_at,firings,late", "'s1',now(),1,false"));
-  await bad(base("author_user_id,due_at,firings,late", "'u1',now(),1,false"));
-  await bad(base("schedule_id,author_user_id,due_at,firings", "'s1','u1',now(),1"));
-  await bad(base("schedule_id,author_user_id,firings,late", "'s1','u1',1,false"));
+  await bad(base("author_id,due_at,firings,late", "'u1',now(),1,false"));
+  await bad(base("schedule_id,author_id,due_at,firings", "'s1','u1',now(),1"));
+  await bad(base("schedule_id,author_id,firings,late", "'s1','u1',1,false"));
   await bad(
-    base(
-      "schedule_id,author_user_id,due_at,firings,late,from_agent_id",
-      "'s1','u1',now(),1,false,'a1'",
-    ),
+    base("schedule_id,author_id,due_at,firings,late,from_id", "'s1','u1',now(),1,false,'a1'"),
   );
   await bad(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,schedule_id,body,recipients) values ('bad2','message','u1','a1','s1','x','{@test}')`,
+    sql`insert into messages (id,kind,from_id,to_id,schedule_id,body,recipient_ids) values ('bad2','message','u1','a1','s1','x','{a1}')`,
   );
   await bad(
-    sql`insert into messages (id,kind,notice,task_id,firings,to_agent_id,body) values ('bad3','task_update','done','t1',1,'a1','x')`,
+    sql`insert into messages (id,kind,notice,task_id,firings,to_id,body) values ('bad3','task_update','done','t1',1,'a1','x')`,
   );
   await bad(
-    sql`insert into messages (id,kind,notice,to_agent_id,late,body) values ('bad4','system','crash_recovered','a1',false,'x')`,
-  );
-});
-
-test("a scheduled row has no human recipient", async () => {
-  await bad(
-    sql`insert into messages (id,kind,to_agent_id,to_user_id,schedule_id,author_user_id,due_at,firings,late,body)
-        values ('tu','scheduled','a1','u1','s1','u1',now(),1,false,'x')`,
+    sql`insert into messages (id,kind,notice,to_id,late,body) values ('bad4','system','crash_recovered','a1',false,'x')`,
   );
 });
 
 test("at most one pending row per schedule and target", async () => {
-  await ok(sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
+  await ok(sql`insert into messages (id,kind,to_id,schedule_id,author_id,due_at,firings,late,body)
     values ('p1','scheduled','a2','s1','u1',now(),1,false,'x') returning id`);
   await expect(
-    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
+    sql`insert into messages (id,kind,to_id,schedule_id,author_id,due_at,firings,late,body)
       values ('p2','scheduled','a2','s1','u1',now(),1,false,'x')`,
   ).rejects.toThrow(/duplicate|unique/i);
   await sql`update messages set state = 'delivered' where id = 'p1'`;
-  await ok(sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
+  await ok(sql`insert into messages (id,kind,to_id,schedule_id,author_id,due_at,firings,late,body)
     values ('p3','scheduled','a2','s1','u1',now(),1,false,'x') returning id`);
 });
 

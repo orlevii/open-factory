@@ -273,7 +273,7 @@ test("a committed latch drops what was queued and cancels a pending apply-restar
   // Dropped from memory and rejected in the DB (a row committed after the transaction's update still says so).
   const [queued] = await h.t.sql<
     { state: string }[]
-  >`select state from messages where to_agent_id = ${h.agentId}`;
+  >`select state from messages where to_id = ${h.agentId}`;
   expect(queued?.state).toBe("rejected");
   h.rt.unmarkTerminated(); // a committed latch is never undone
   expect(h.rt.isTerminated()).toBe(true);
@@ -544,21 +544,21 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
       (
         await h.t.sql<
           { id: string }[]
-        >`select id from messages where to_agent_id = ${id} and state = 'pending'`
+        >`select id from messages where to_id = ${id} and state = 'pending'`
       ).map((r) => r.id),
     /** Anything the child sent after its termination committed: member updates (forwards) included. */
     sentAfterTermination: async () =>
       (
         await h.t.sql<{ kind: string; body: string }[]>`select m.kind, m.body from messages m
-          join agents a on a.id = m.from_agent_id
-          where m.from_agent_id = ${id} and m.created_at >= a.terminated_at`
+          join agents a on a.id = m.from_id
+          where m.from_id = ${id} and m.created_at >= a.terminated_at`
       ).map((r) => `${r.kind}: ${r.body}`),
     /** Every member update the child sent (its forwards to the spawner). */
     updatesFromChild: async () =>
       (
         await h.t.sql<
           { body: string }[]
-        >`select body from messages where from_agent_id = ${id} and kind = 'member_update' order by created_at`
+        >`select body from messages where from_id = ${id} and kind = 'member_update' order by created_at`
       ).map((r) => r.body),
     events: async () => (await h.store.after(id, 0, 1000)).map((e) => e.event),
     /** A started, idle child (its first turn ended). */
@@ -825,7 +825,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
-    recipients: ["@test"],
+    recipientIds: [w.id],
     body: "mid-batch",
     urgent: false,
   });
@@ -960,7 +960,7 @@ test("last_activity_at is written after the batch commits, as its own statement 
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
-    recipients: ["@test"],
+    recipientIds: [w.id],
     body: "mid-batch",
     urgent: false,
   });

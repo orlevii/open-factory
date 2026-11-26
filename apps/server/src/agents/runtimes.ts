@@ -108,7 +108,6 @@ export function dockerCleanup(
 /** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */
 function senderLabel(row: PendingRow): string {
   if (row.fromHandle) return `@${row.fromHandle}`;
-  if (row.fromSlug) return `@${row.fromSlug}`;
   if (row.kind === "scheduled") return "@scheduler";
   // S8: `task_assigned` and `task_update` have no sender columns; they are from the factory (spec §7.4).
   if (row.kind !== "message") return "@factory";
@@ -308,7 +307,7 @@ export class AgentRuntimes {
       rt = await this.recipientOf(row);
     } catch (err) {
       this.d.log.error(
-        { err, agentId: row.toAgentId, message: row.id },
+        { err, agentId: row.toId, message: row.id },
         "loading the recipient failed; the message stays pending",
       );
       return undefined;
@@ -330,15 +329,15 @@ export class AgentRuntimes {
   }
 
   private async recipientOf(row: PendingRow): Promise<AgentRuntime> {
-    if (!row.toAgentId) throw new Error(`message ${row.id} has no agent recipient`);
-    const rt = await this.load(row.toAgentId);
-    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toAgentId} not found`);
+    if (!row.toId) throw new Error(`message ${row.id} has no agent recipient`);
+    const rt = await this.load(row.toId);
+    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toId} not found`);
     return rt;
   }
 
   /** S6 §8: hands a committed member update or peer event to its recipient; never awaited, never throws. */
   receive(row: PendingRow): void {
-    const to = row.toAgentId;
+    const to = row.toId;
     if (!to) {
       this.d.log.error({ message: row.id }, "a member update or peer event has no agent recipient");
       return;

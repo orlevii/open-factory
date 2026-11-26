@@ -21,7 +21,7 @@ export function humanRow(
   return store.createMessage({
     from: { userId: m.fromUserId },
     toAgentId: rt.agent.id,
-    recipients: [`@${rt.agent.slug}`],
+    recipientIds: [rt.agent.id],
     body: m.body,
     urgent: m.urgent,
   });

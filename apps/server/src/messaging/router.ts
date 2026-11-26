@@ -128,7 +128,7 @@ export class Router {
   /**
    * One message to a list of handles (spec §4.4), from an agent (`send_message`) or a human (the REST route, which
    * addresses agents only). Each target is resolved and de-duplicated by principal and succeeds or is refused alone;
-   * every accepted row is written in one transaction with the same `recipients` (the accepted list, in order). After
+   * every accepted row is written in one transaction with the same `recipient_ids` (the accepted list, in order). After
    * the commit an agent row is handed over (awaited for a human sender, whose start failure then is that recipient's
    * `start_failed`; enqueued for an agent sender), and a human recipient's inbox is told. Results follow the input.
    */
@@ -204,7 +204,9 @@ export class Router {
         ),
       };
 
-    const recipients = accepted.map((t) => t.to);
+    const recipientIds = accepted.flatMap((t) =>
+      t.agent ? [t.agent.id] : t.user ? [t.user.userId] : [],
+    );
     type Written = {
       target: Target;
       row?: PendingRow;
@@ -229,7 +231,7 @@ export class Router {
                 kind: "message",
                 fromAgentId: (from as { agentId: string }).agentId,
                 to: { userId: target.user.userId },
-                recipients,
+                recipientIds,
                 body: fullBody,
                 urgent,
                 fromToolUseId: (from as { toolUseId?: string | null }).toolUseId ?? null,
@@ -246,7 +248,7 @@ export class Router {
                   {
                     fromUserId: from.userId,
                     toAgentId: agent.id,
-                    recipients,
+                    recipientIds,
                     body: fullBody,
                     urgent,
                     clientMessageId,
@@ -259,7 +261,7 @@ export class Router {
                     {
                       from: { userId: from.userId },
                       toAgentId: agent.id,
-                      recipients,
+                      recipientIds,
                       body: fullBody,
                       urgent,
                       attachments,
@@ -281,7 +283,7 @@ export class Router {
               {
                 from: { agentId: from.agentId },
                 toAgentId: agent.id,
-                recipients,
+                recipientIds,
                 body: fullBody,
                 urgent,
                 fromToolUseId: from.toolUseId ?? null,
@@ -555,7 +557,7 @@ export class Router {
   /** U3 §13.2: one earlier row's original result; nothing is queued or delivered again. */
   private async repeated(row: PendingRow): Promise<RecipientResult> {
     await this.booted;
-    const agent = row.toAgentId ? await this.d.store.agentById(row.toAgentId) : undefined;
+    const agent = row.toId ? await this.d.store.agentById(row.toId) : undefined;
     if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
     const rt = await this.d.runtimes.load(agent.id);
     return {

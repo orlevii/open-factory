@@ -10,16 +10,22 @@ describe("I1 §6.3: the chat thread", () => {
   let or: { cookie: string; id: string };
   let ann: { cookie: string; id: string };
   let agentId: string;
+  let opsId: string;
+  let refOf: (id: string) => string;
   let base = Date.parse("2026-03-01T10:00:00.000Z");
 
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
     agentId = (await s.seedAgent({ slug: "dev" })).id;
-    await s.seedAgent({ slug: "ops" });
+    opsId = (await s.seedAgent({ slug: "ops" })).id;
     const o = await s.signUpUser({ handle: "orc" });
     or = { cookie: o.cookie, id: o.user.id };
     const a = await s.signUpUser({ handle: "ann" });
     ann = { cookie: a.cookie, id: a.user.id };
+    const refs = new Map(
+      (await s.sql`select id, ref from principals`).map((r) => [r.id as string, r.ref as string]),
+    );
+    refOf = (id) => refs.get(id) ?? "";
   });
   afterAll(() => s.close());
   beforeEach(async () => {
@@ -38,11 +44,10 @@ describe("I1 §6.3: the chat thread", () => {
   ) {
     const id = randomUUID();
     const who = o.who ?? or;
-    await s.sql`insert into messages (id, kind, from_user_id, from_agent_id, to_agent_id, to_user_id, recipients,
+    await s.sql`insert into messages (id, kind, from_id, to_id, recipient_ids,
         body, state, delivered_turn_id, created_at)
-      values (${id}, 'message', ${from === "user" ? who.id : null}, ${from === "agent" ? agentId : null},
-        ${from === "user" ? agentId : null}, ${from === "agent" ? who.id : null},
-        ${o.to ?? (from === "user" ? ["@dev"] : ["@orc"])}, ${body}, ${o.state ?? "delivered"},
+      values (${id}, 'message', ${from === "user" ? who.id : agentId}, ${from === "user" ? agentId : who.id},
+        ${o.to ?? (from === "user" ? [agentId] : [who.id])}, ${body}, ${o.state ?? "delivered"},
         ${o.turnId ?? null}, ${at(min)})`;
     return id;
   }
@@ -78,18 +83,20 @@ describe("I1 §6.3: the chat thread", () => {
 
   test("both directions, oldest first, with sender, recipients and state", async () => {
     await msg("agent", "second", 2);
-    await msg("user", "first", 1, { to: ["@dev", "@ops"] });
+    await msg("user", "first", 1, { to: [agentId, opsId] });
     const p = await page();
     expect(bodies(p)).toEqual(["first", "second"]);
     expect(p.entries[0]).toMatchObject({
       kind: "message",
-      from: "@orc",
-      fromKind: "human",
-      recipients: ["@dev", "@ops"],
+      from: { kind: "human", ref: refOf(or.id) },
+      recipients: [{ ref: refOf(agentId) }, { ref: refOf(opsId) }],
       state: "delivered",
       urgent: false,
     });
-    expect(p.entries[1]).toMatchObject({ from: "@dev", fromKind: "agent", recipients: ["@orc"] });
+    expect(p.entries[1]).toMatchObject({
+      from: { kind: "agent", ref: refOf(agentId) },
+      recipients: [{ ref: refOf(or.id) }],
+    });
     expect(p.nextCursor).toBeNull();
     expect(p.newerCursor).toBeNull();
     expect(p.working).toBeNull();
@@ -109,7 +116,7 @@ describe("I1 §6.3: the chat thread", () => {
 
   test("another human's thread with the agent is excluded, and so is the agent's talk with others", async () => {
     await msg("user", "mine", 1);
-    await msg("user", "hers", 2, { who: ann, to: ["@dev"] });
+    await msg("user", "hers", 2, { who: ann });
     await msg("agent", "to ann", 3, { who: ann });
     expect(bodies(await page())).toEqual(["mine"]);
     const r = await get("", ann);

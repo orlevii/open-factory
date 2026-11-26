@@ -28,11 +28,11 @@ const settle = async (...slugs: string[]) => {
 };
 const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
 const inbox = (userId: string) =>
-  h.sql`select i.kind, i.read_at, m.body, m.from_agent_id, m.from_user_id, m.comment_id
+  h.sql`select i.kind, i.read_at, m.body, m.from_id, m.from_id, m.comment_id
     from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${userId} order by i.created_at`;
 const taskRowsTo = (slug: string, kind: string) =>
-  h.sql`select m.id, m.body, m.from_user_id, m.from_agent_id, m.comment_id, m.state from messages m
-    join agents a on a.id = m.to_agent_id where a.slug = ${slug} and m.kind = ${kind}`;
+  h.sql`select m.id, m.body, m.from_id, m.from_id, m.comment_id, m.state from messages m
+    join agents a on a.id = m.to_id where a.slug = ${slug} and m.kind = ${kind}`;
 
 test("AC 2 (server side): an agent mentions a human: one unread mention item, nothing to the author", async () => {
   const r = await h.app.tasks.comment(agent("dev"), "T-1", "@or can you confirm?");

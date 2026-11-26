@@ -116,7 +116,6 @@ export function ChatBody({
           slug={slug}
           agentName={agent?.displayName ?? slug}
           userId={userId}
-          self={session}
           working={turn.key !== undefined}
           workingKey={turn.key}
           turnOpen={agent?.turnOpen === true}
@@ -154,7 +153,7 @@ function Thread({
   const newestAgentAt = useMemo(() => {
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i] as ChatEntry;
-      if (e.kind === "message" && e.fromKind === "agent") return e.createdAt;
+      if (e.kind === "message" && e.from.kind === "agent") return e.createdAt;
     }
     return undefined;
   }, [entries]);
@@ -171,7 +170,7 @@ function Thread({
   if (loaded && pane && unreadKey === undefined && (pane.unread === 0 || latestAt >= 0)) {
     const theirs = entries
       .slice(0, latestAt + 1)
-      .filter((e) => e.kind === "message" && e.fromKind === "agent");
+      .filter((e) => e.kind === "message" && e.from.kind === "agent");
     const first = pane.unread > 0 ? theirs[theirs.length - pane.unread] : undefined;
     setUnreadKey(first ? entryKey(first) : null);
   }
@@ -383,7 +382,7 @@ function Thread({
       const e = entries[i] as ChatEntry;
       if (!live.has(entryKey(e))) continue;
       if (e.kind === "turn_outcome") return `${outcomeSentence(agentName, e.outcome)}.`;
-      if (e.fromKind === "agent") return `${agentName}: ${e.body.split("\n", 1)[0]}`;
+      if (e.from.kind === "agent") return `${agentName}: ${e.body.split("\n", 1)[0]}`;
     }
     return "";
   }, [entries, live, agentName]);
@@ -396,7 +395,7 @@ function Thread({
     const next = new Map<string, string>();
     let note = "";
     for (const e of entries) {
-      if (e.kind !== "message" || e.fromKind !== "human") continue;
+      if (e.kind !== "message" || e.from.kind !== "human") continue;
       const state = isSending(e) ? "sending" : e.state;
       next.set(entryKey(e), state);
       const was = before.get(entryKey(e));

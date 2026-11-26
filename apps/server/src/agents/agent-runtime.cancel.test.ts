@@ -78,7 +78,7 @@ test("the sender cancels a held message; another user can't", async () => {
 test("a written message can't be cancelled (already_delivered); cancelling a cancelled one again is a no-op", async () => {
   await stopped();
   const [work] = (await h.t
-    .sql`select id from messages where body = 'work' and to_agent_id = ${h.agentId}`) as unknown as {
+    .sql`select id from messages where body = 'work' and to_id = ${h.agentId}`) as unknown as {
     id: string;
   }[];
   if (!work) throw new Error("no row");

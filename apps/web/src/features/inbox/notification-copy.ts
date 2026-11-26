@@ -1,4 +1,5 @@
 import type { ChatRow, InboxItem } from "@open-factory/shared";
+import { senderHandle } from "./api";
 
 /** The hold a `loop_held` notice is about (I8 PR 3, spec §6.4). */
 export type LoopHold = {
@@ -125,8 +126,8 @@ function itemBurst(key: string, kind: Kind, sorted: NotifiableItem[]): Burst | u
     case "task": {
       const taskKey = oldest.task?.key;
       if (!taskKey) return undefined;
-      const handles = new Set(sorted.map((i) => i.from.name));
-      const title = handles.size === 1 ? `@${oldest.from.name}` : taskKey;
+      const handles = new Set(sorted.map((i) => senderHandle(i.from)));
+      const title = handles.size === 1 ? `@${senderHandle(oldest.from)}` : taskKey;
       const comment = oldest.link.kind === "task" ? oldest.link.commentId : undefined;
       return {
         key,

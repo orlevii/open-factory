@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { chatMsg, json, mine, page, stubChatApi } from "@/test/chat-fixtures";
+import { chatMsg, DEV_REF, json, mine, page, stubChatApi } from "@/test/chat-fixtures";
 import { installFakeXhr } from "@/test/fake-xhr";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
@@ -328,7 +328,12 @@ test("your send is one node: the optimistic block and the server's row are the s
   // The server's row, same clientMessageId, arrives through the chat query.
   thread = [
     ...thread,
-    mine(3, { body: "hello there", clientMessageId: id, recipients: ["@dev"], state: "delivered" }),
+    mine(3, {
+      body: "hello there",
+      clientMessageId: id,
+      recipients: [{ ref: DEV_REF }],
+      state: "delivered",
+    }),
   ];
   release();
   act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));

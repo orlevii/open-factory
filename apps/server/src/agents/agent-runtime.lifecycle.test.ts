@@ -48,7 +48,7 @@ const events = async () =>
   }));
 const types = async () => (await events()).map((e) => e.type);
 const msgRows = () =>
-  t.sql`select id, state, delivered_turn_id from messages where to_agent_id = ${agentId} order by created_at`;
+  t.sql`select id, state, delivered_turn_id from messages where to_id = ${agentId} order by created_at`;
 
 beforeEach(async () => {
   await makeRuntime();
@@ -249,7 +249,7 @@ test("archived: send, compact and interrupt refuse inside the job; a message han
   await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
   await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
   // The Router committed the row before the hand-off (S6 §7.3): its state tells the truth.
-  expect(await t.sql`select state from messages where to_agent_id = ${agentId}`).toEqual([
+  expect(await t.sql`select state from messages where to_id = ${agentId}`).toEqual([
     { state: "rejected" },
   ]);
   expect(rt.queueItems()).toEqual([]);

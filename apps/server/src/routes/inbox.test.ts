@@ -253,12 +253,12 @@ test("a mention item: from the agent or the human author, with the task and a de
   expect(mentions[1]).toMatchObject({
     kind: "mention",
     read: false,
-    from: { kind: "agent", name: "ada" },
+    from: { kind: "agent", ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "ada" },
     task: { key: "T-1", title: "Plan the migration" },
     link: { kind: "task", key: "T-1", commentId: c1.id },
   });
   expect(mentions[0]).toMatchObject({
-    from: { kind: "human", name: "sam" },
+    from: { kind: "human", ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "sam" },
     link: { kind: "task", key: "T-1", commentId: c2.id },
   });
 });
@@ -273,7 +273,7 @@ test("a task event: done from an agent reaches the human creator with fact and a
   expect(item).toMatchObject({
     kind: "task_event",
     fact: "done",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     task: { key: "T-1", title: "Plan" },
     link: { kind: "task", key: "T-1" },
   });

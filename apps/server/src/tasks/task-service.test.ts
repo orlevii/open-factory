@@ -36,7 +36,7 @@ const settle = async (...slugs: string[]) => {
 const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
 const sentTo = (slug: string) => (proc(slug)?.sent ?? []).flat();
 const rowsTo = (slug: string) =>
-  h.sql`select m.kind, m.notice, m.body, m.state from messages m join agents a on a.id = m.to_agent_id
+  h.sql`select m.kind, m.notice, m.body, m.state from messages m join agents a on a.id = m.to_id
     where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
 const fails = async (p: Promise<unknown>) => {
   try {
@@ -218,8 +218,8 @@ test("a human creator hears about done as an inbox task_event, the actor does no
   expect(items).toEqual([{ user_id: ids.sam, kind: "task_event" }]);
   expect(frames).toContainEqual({ type: "inbox_changed" });
   const done =
-    await h.sql`select notice, to_user_id, state from messages where kind = 'task_update' and to_user_id is not null`;
-  expect(done).toEqual([{ notice: "done", to_user_id: ids.sam, state: "delivered" }]);
+    await h.sql`select notice, to_id, state from messages where kind = 'task_update' and to_id in (select id from users)`;
+  expect(done).toEqual([{ notice: "done", to_id: ids.sam, state: "delivered" }]);
 });
 
 test("removing the last blocking dependency unblocks the task's assignee", async () => {

@@ -31,7 +31,7 @@ const reasons = async (slug: string) => {
     .flatMap((e) => (e.type === "process_started" ? [e.reason] : []));
 };
 const rows = (slug: string) =>
-  h.sql`select m.id, m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_agent_id
+  h.sql`select m.id, m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_id
     where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
 const makeErrored = (slug = "dev") =>
   h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = ${slug}`;

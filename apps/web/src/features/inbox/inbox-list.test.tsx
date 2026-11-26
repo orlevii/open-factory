@@ -36,7 +36,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: true,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
@@ -64,7 +64,7 @@ test("a factory item names what it is about; a row without seq links to the chat
         chats: [],
         items: [
           item(1, {
-            from: { kind: "factory", name: "factory" },
+            from: { kind: "factory" },
             about: "ops",
             link: { kind: "session", agentSlug: "ops" },
           }),
@@ -482,7 +482,7 @@ const credItem = (c: { name: string; expiresAt: string | null; current: boolean 
   item(1, {
     kind: "credential",
     read: false,
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     to: "@alice",
     credential: c,
     link: { kind: "credential", name: c.name },

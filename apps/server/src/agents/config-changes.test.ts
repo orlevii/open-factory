@@ -118,7 +118,7 @@ function world(
     const row = await h.store.createMessage({
       from: { userId: "u1" },
       toAgentId: agentId,
-      recipients: ["@x"],
+      recipientIds: [agentId],
       body: "hi",
       urgent: false,
     });
@@ -147,7 +147,7 @@ const events = (agentId: string) =>
     select type, payload from session_events where agent_id = ${agentId} and type = 'config_changed'`;
 const noticeLines = async (agentId: string) => {
   const rows = await h.t.sql<{ body: string }[]>`
-    select body from messages where to_agent_id = ${agentId} and notice = 'config_changed' and state = 'pending'`;
+    select body from messages where to_id = ${agentId} and notice = 'config_changed' and state = 'pending'`;
   return rows.map((r) => parseConfigNotice(r.body));
 };
 

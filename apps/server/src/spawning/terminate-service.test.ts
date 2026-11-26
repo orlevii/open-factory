@@ -77,7 +77,7 @@ const rowsTo = (app: T, agentId: string, kind: "peer_left" | "peer_joined" | "me
   app.db
     .select()
     .from(schema.messages)
-    .where(and(eq(schema.messages.toAgentId, agentId), eq(schema.messages.kind, kind)));
+    .where(and(eq(schema.messages.toId, agentId), eq(schema.messages.kind, kind)));
 const grantsOf = (app: T, agentId: string) =>
   app.db
     .select()
@@ -209,7 +209,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   const direct = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: a.id,
-    recipients: ["@test"],
+    recipientIds: [a.id],
     body: "are you there?",
     urgent: false,
   });
@@ -217,7 +217,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   a.proc.emit(ev.turn(), ev.text("done with it"), ev.end());
   await a.rt.settled();
   const [update] = await rowsTo(t, lead.id, "member_update");
-  expect(update).toMatchObject({ fromAgentId: a.id, state: "pending" });
+  expect(update).toMatchObject({ fromId: a.id, state: "pending" });
 
   await t.app.terminator.terminate(a.id, await seedTestUser(t.db, "or"));
   expect(await stateOf(t, peerRow?.id ?? "")).toBe("rejected");
@@ -284,7 +284,7 @@ test("rows handed over during the provisional window are rejected once it commit
     const direct = await t.app.store.createMessage({
       from: { userId: user.id },
       toAgentId: child.id,
-      recipients: ["@test"],
+      recipientIds: [child.id],
       body: "late",
       urgent: false,
     });
@@ -310,7 +310,7 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
   const row = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: child.id,
-    recipients: ["@test"],
+    recipientIds: [child.id],
     body: "meanwhile",
     urgent: false,
   });
@@ -362,10 +362,7 @@ test("a termination during app.close(): no factory-restarted notice for it, and 
       .select()
       .from(schema.messages)
       .where(
-        and(
-          eq(schema.messages.toAgentId, child.id),
-          eq(schema.messages.notice, "factory_restarted"),
-        ),
+        and(eq(schema.messages.toId, child.id), eq(schema.messages.notice, "factory_restarted")),
       );
   expect(await notices()).toEqual([]);
   const terminatedEvents = async () =>
@@ -401,7 +398,7 @@ const heldRow = (app: T, loopHoldId: string, fromId: string, toId: string, body:
   app.app.store.createMessage({
     from: { agentId: fromId },
     toAgentId: toId,
-    recipients: ["@x"],
+    recipientIds: [toId],
     body,
     urgent: false,
     state: "loop_held",

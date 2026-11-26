@@ -41,7 +41,7 @@ const item = (over: Partial<ItemFixture> = {}): ItemFixture => {
     messageId: `msg-${seq}`,
     kind: "notice",
     read: false,
-    from: { kind: "agent", name: "dev" },
+    from: { kind: "agent", ref: "dev00000", handle: "dev" },
     to: "me",
     preview: PREVIEW,
     urgent: false,
@@ -54,7 +54,7 @@ const item = (over: Partial<ItemFixture> = {}): ItemFixture => {
 const mention = (over: Partial<ItemFixture> = {}) =>
   item({
     kind: "mention",
-    from: { kind: "agent", name: "dev" },
+    from: { kind: "agent", ref: "dev00000", handle: "dev" },
     task: { key: "T-42", title: "Ship it" },
     link: { kind: "task", key: "T-42", commentId: "c-1" },
     ...over,
@@ -65,14 +65,14 @@ const errored = (about: string, over: Partial<ItemFixture> = {}) =>
     kind: "notice",
     notice: "agent_errored",
     about,
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     ...over,
   });
 
 const credential = (name: string, expiresAt: string | null, over: Partial<ItemFixture> = {}) =>
   item({
     kind: "credential",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     credential: { name, expiresAt, current: true },
     link: { kind: "credential", name },
     ...over,
@@ -86,7 +86,7 @@ const loopItem = (
   item({
     kind: "notice",
     notice: "loop_held",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     link: { kind: "session", agentSlug: "a" },
     loopHold: {
       id: holdId,
@@ -175,8 +175,8 @@ describe("mention bursts", () => {
     const [b] = burstsOf({
       chats: [],
       items: [
-        mention({ from: { kind: "agent", name: "dev" } }),
-        mention({ from: { kind: "agent", name: "qa" } }),
+        mention({ from: { kind: "agent", ref: "dev00000", handle: "dev" } }),
+        mention({ from: { kind: "agent", ref: "qa00000", handle: "qa" } }),
       ],
     });
     expect(b?.title).toBe("T-42");

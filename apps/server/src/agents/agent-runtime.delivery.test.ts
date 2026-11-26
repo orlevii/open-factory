@@ -90,7 +90,7 @@ const events = async () =>
   }));
 const types = async () => (await events()).map((e) => e.type);
 const msgRows = () =>
-  t.sql`select id, state, delivered_turn_id from messages where to_agent_id = ${agentId} order by created_at`;
+  t.sql`select id, state, delivered_turn_id from messages where to_id = ${agentId} order by created_at`;
 
 beforeEach(async () => {
   await makeRuntime();
@@ -338,7 +338,7 @@ test("a hand-off of a row this runtime already wrote (boot wakes got it first) n
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "STOP",
     urgent: true,
   });
@@ -423,7 +423,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "old",
     urgent: false,
   });
@@ -471,7 +471,7 @@ test("a second notice of the same type replaces a pending one; an in-flight one 
   expect(sentBodies).toEqual(["second", "x"]);
   await rt.postNotice("restart", "third"); // the earlier restart was written: a new row
   const rows =
-    await t.sql`select body, state from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+    await t.sql`select body, state from messages where notice = 'restart' and to_id = ${agentId} order by created_at`;
   expect(rows.map((r) => r.body)).toEqual(["second", "third"]);
 });
 
@@ -481,7 +481,7 @@ test("a notice written but not yet confirmed (no session_started) is never repla
   await rt.postNotice("restart", "second");
   expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["first"], ["second"]]);
   const rows =
-    await t.sql`select body from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+    await t.sql`select body from messages where notice = 'restart' and to_id = ${agentId} order by created_at`;
   expect(rows.map((r) => r.body)).toEqual(["first", "second"]);
 });
 
@@ -509,7 +509,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "with an id",
     urgent: false,
     clientMessageId: cid,

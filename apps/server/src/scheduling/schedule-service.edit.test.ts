@@ -112,13 +112,12 @@ test("edits leave a pending firing exactly as fired and clear the firing backoff
   });
   await t.sql`update schedules set fail_count = 3, retry_at = now() where id = ${row.id as string}`;
   await svc.edit(or, s.key, { body: "new", target: "dev" });
-  const [m] =
-    await t.sql`select body, to_agent_id, state, author_user_id from messages where id = 'pm'`;
+  const [m] = await t.sql`select body, to_id, state, author_id from messages where id = 'pm'`;
   expect(m).toEqual({
     body: "old body",
-    to_agent_id: "ceo",
+    to_id: "ceo",
     state: "pending",
-    author_user_id: "u1",
+    author_id: "u1",
   });
   const after = await dbRow(s.key);
   expect([after.fail_count, after.retry_at]).toEqual([0, null]);

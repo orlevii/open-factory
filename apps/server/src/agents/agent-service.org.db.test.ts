@@ -353,7 +353,7 @@ test("an archive that changes nothing and a refused create publish no org_action
 
 const heldBy = async (slug: string) =>
   (
-    await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
+    await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
                 where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
@@ -429,7 +429,7 @@ test("recordReportNotice: an archived manager gets no notice; an unloaded one ge
   const [live, gone, rep] = await Promise.all(["mgr-live", "mgr-gone", "rep-n"].map(rowOf));
   await svc.archive("mgr-gone", human);
   const pending = (id?: string) =>
-    t.sql`select subject_agent_id from messages where to_agent_id = ${id ?? ""} and notice = 'report_config_changed' and state = 'pending'`;
+    t.sql`select subject_agent_id from messages where to_id = ${id ?? ""} and notice = 'report_config_changed' and state = 'pending'`;
   await runtimes.recordReportNotice(gone?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);
   expect(await pending(gone?.id)).toHaveLength(0);
   await runtimes.recordReportNotice(live?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);

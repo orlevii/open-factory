@@ -114,7 +114,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     return h.db
       .select()
       .from(schema.messages)
-      .where(eq(schema.messages.toAgentId, row?.id ?? ""))
+      .where(eq(schema.messages.toId, row?.id ?? ""))
       .then((r) => r.filter((m) => m.kind === kind));
   };
 

@@ -169,7 +169,7 @@ export class TaskService {
         ...new Set(
           out.agentRows
             .filter((r) => r.wake === "task_message")
-            .flatMap((r) => (r.row.toAgentId ? [r.row.toAgentId] : [])),
+            .flatMap((r) => (r.row.toId ? [r.row.toId] : [])),
         ),
       ],
     );
@@ -220,7 +220,7 @@ export class TaskService {
       out,
       out.agentRows
         .filter((r) => r.wake === "task_message")
-        .flatMap((r) => (r.row.toAgentId ? [r.row.toAgentId] : [])),
+        .flatMap((r) => (r.row.toId ? [r.row.toId] : [])),
     );
     this.d.loopGuard.afterCommit(out.guards);
     return { ...out.result, ...(notes.length ? { note: notes.join(" ") } : {}) };
@@ -347,7 +347,7 @@ export class TaskService {
     const written = await this.write(tx, actor, planned);
     const deliveredTo: string[] = [];
     for (const r of written.agentRows) {
-      const slug = await this.slugOf(r.row.toAgentId as string, tx);
+      const slug = await this.slugOf(r.row.toId as string, tx);
       if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
     }
     const mentionedHumans = userIds

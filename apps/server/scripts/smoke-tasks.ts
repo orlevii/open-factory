@@ -624,7 +624,7 @@ try {
   check("4. the comment reached dev", c.deliveredTo.includes("dev"), JSON.stringify(c.deliveredTo));
   const commentRow = String(
     (
-      await conn.sql`select id from messages where kind = 'task_comment' and from_user_id = ${orUser.userId}`
+      await conn.sql`select id from messages where kind = 'task_comment' and from_id = ${orUser.userId}`
     )[0]?.id ?? "",
   );
   const turn2 = await step("4. dev's turn for the comment ends", () =>

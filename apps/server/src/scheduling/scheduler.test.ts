@@ -89,7 +89,7 @@ const sched1 = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
 const asDate = (v: unknown) => (v === null || v === undefined ? null : new Date(v as string));
 const rows = async () =>
   (
-    await t.sql`select kind, to_agent_id, firings, late, due_at, state, body, author_user_id from messages order by created_at`
+    await t.sql`select kind, to_id, firings, late, due_at, state, body, author_id from messages order by created_at`
   ).map((r) => ({ ...r, due_at: asDate(r.due_at) }));
 const schedRow = async (id = "s1") => {
   const r = (
@@ -131,13 +131,13 @@ test("fires at the time: one row, next run advanced, last fired set, handed over
   expect(await rows()).toEqual([
     {
       kind: "scheduled",
-      to_agent_id: "ceo",
+      to_id: "ceo",
       firings: 1,
       late: false,
       due_at: new Date("2026-11-23T08:00:00Z"),
       state: "pending",
       body: "Review",
-      author_user_id: "u1",
+      author_id: "u1",
     },
   ]);
   const s = await schedRow();
@@ -303,7 +303,7 @@ test("retargeted between the unlocked read and the lock: skipped now, fires to t
   await sched.tick();
   expect(await rows()).toHaveLength(0);
   await sched.tick();
-  expect(await rows()).toMatchObject([{ to_agent_id: "dev" }]);
+  expect(await rows()).toMatchObject([{ to_id: "dev" }]);
 });
 
 test("rearm before start and after stop does nothing; stop during a tick finishes its transaction and skips the hand-off", async () => {
@@ -404,8 +404,8 @@ describe("loop guard on agent-authored schedules", () => {
       ["ceo", "dev", 3],
     ] as const)
       for (let i = 0; i < n; i++)
-        await t.sql`insert into messages (id, kind, from_agent_id, to_agent_id, recipients, body, state, created_at)
-          values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[`@${to}`]}::text[], 'x', 'delivered', ${at})`;
+        await t.sql`insert into messages (id, kind, from_id, to_id, recipient_ids, body, state, created_at)
+          values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[to]}::text[], 'x', 'delivered', ${at})`;
   }
   const devSchedule = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
     sched1({ createdByAgentId: "dev", ...over });

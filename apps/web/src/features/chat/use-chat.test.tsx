@@ -10,10 +10,9 @@ const at = (i: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, i)).toISOString(
 const msg = (i: number): ChatEntry => ({
   kind: "message",
   id: `m${i}`,
-  from: "@ada",
-  fromKind: "agent",
+  from: { kind: "agent", ref: "ada00000" },
   body: `body ${i}`,
-  recipients: ["@or"],
+  recipients: [{ ref: "0r000000" }],
   urgent: false,
   createdAt: at(i),
   state: "delivered",

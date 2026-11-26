@@ -36,6 +36,7 @@ import {
   taskKey,
   type WaitingOn,
 } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
@@ -205,6 +206,10 @@ type MessageEntry = {
   row: MessageRow;
   from: string;
   fromKind: "human" | "agent" | "factory";
+  /** The sender's `<@ref>` tag, what a member update's `re` stores (absent for the factory and the scheduler). */
+  fromTag?: string;
+  /** A `message` row's recipients as `@handle`s (the envelope's `to`). */
+  recipientLabels?: string[];
   groupKey?: string;
   about?: string;
   subject?: Subject;
@@ -226,10 +231,11 @@ type WrittenBatch = {
 function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
   const senders = new Map<string, string | null>();
   const firstIdBySender = new Map<string, string>();
-  for (const { row } of batch) {
-    senders.set(row.id, row.fromUserId);
-    if (row.kind === "message" && row.fromUserId && !firstIdBySender.has(row.fromUserId))
-      firstIdBySender.set(row.fromUserId, row.id);
+  for (const { row, fromKind } of batch) {
+    const human = fromKind === "human" ? row.fromId : null;
+    senders.set(row.id, human);
+    if (row.kind === "message" && human && !firstIdBySender.has(human))
+      firstIdBySender.set(human, row.id);
   }
   return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender, entries: batch };
 }
@@ -310,26 +316,33 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
 
 /** The entry for a joined row (spec §7.3, §8.4); one shape for `init()`, `receive` and the deliveries. */
 function entryOf(r: PendingRow): MessageEntry {
-  const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
+  const {
+    fromHandle,
+    fromRef,
+    fromKind: senderKind,
+    recipientLabels,
+    subjectSlug,
+    subjectDisplayName,
+    ...row
+  } = r;
   let from: string;
   let fromKind: MessageEntry["fromKind"] = "factory";
   if (row.kind === "system") from = "@factory";
   // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
   else if (row.kind === "scheduled") from = "@scheduler";
-  else if (fromHandle) {
+  else if (fromHandle && senderKind) {
     from = `@${fromHandle}`;
-    fromKind = "human";
-  } else if (fromSlug) {
-    from = `@${fromSlug}`;
-    fromKind = "agent";
+    fromKind = senderKind;
   } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
-  const groupKey = fromSlug ?? subjectSlug ?? undefined;
+  const groupKey = (senderKind === "agent" ? fromHandle : null) ?? subjectSlug ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
     from,
     fromKind,
+    ...(fromRef && senderKind ? { fromTag: tagOf(fromRef) } : {}),
+    ...(recipientLabels ? { recipientLabels } : {}),
     ...(groupKey ? { groupKey } : {}),
     ...(subjectSlug ? { about: `@${subjectSlug}` } : {}),
   };
@@ -387,14 +400,14 @@ const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
 const requestsOf = (entries: MessageEntry[]): RequestRef[] =>
   entries
     .filter((e) => REQUEST_KINDS.has(kindOf(e.row)))
-    .map((e) => ({ id: e.row.id, from: e.from }));
+    .map((e) => ({ id: e.row.id, from: e.fromTag ?? e.from }));
 
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
   from: e.from,
   fromKind: e.fromKind,
-  ...(e.row.recipients ? { to: e.row.recipients } : {}),
+  ...(e.recipientLabels ? { to: e.recipientLabels } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -3132,7 +3145,11 @@ export class AgentRuntime {
         const flight = this.inFlight.splice(0);
         for (const batch of flight) await this.d.store.markDelivered(batch.map((m) => m.row.id));
         // A batch written before session_started was pending until now (I1 §6.5): its sender's chat changed.
-        this.chatChanged(flight.flatMap((batch) => batch.map((m) => m.row.fromUserId)));
+        this.chatChanged(
+          flight.flatMap((batch) =>
+            batch.map((m) => (m.fromKind === "human" ? m.row.fromId : null)),
+          ),
+        );
         break;
       }
       case "turn_started":

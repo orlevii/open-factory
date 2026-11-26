@@ -1,9 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, Clock } from "lucide-react";
 import { memo, type TransitionEvent, useEffect, useId, useMemo, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Markdown } from "@/components/markdown/markdown";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { principalsQueryOptions } from "@/features/principals/api";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { formatTime } from "@/features/session/format";
 import { InLongPressRow } from "@/features/session/long-press-region";
 import { AttachmentList, ClampedMarkdown, UrgentBadge } from "@/features/session/message-block";
@@ -28,12 +31,35 @@ export type CancelNote = {
 export const rowGap = (first: boolean, statusLine = false) =>
   first ? "" : statusLine ? "mt-2" : "mt-6";
 
-/** Everyone a message went to but you and the agent whose chat this is, as `@handle`s. */
-function othersOf(recipients: readonly string[], slug: string, self: string | undefined) {
-  // Until your handle is known "you" can't be told from another recipient: show nothing rather than "@you".
-  if (self === undefined) return [];
-  const skip = new Set([`@${slug}`, `@${self}`].map((h) => h.toLowerCase()));
-  return recipients.filter((r) => !skip.has(r.toLowerCase()));
+/** What a row shows of its recipients: the refs of everyone but you and the agent whose chat this is, and
+ *  every recipient's handle for the menu's Recipients item. */
+type RecipientsView = { others: readonly string[]; text: string };
+const NO_RECIPIENTS: RecipientsView = { others: [], text: "" };
+
+/** Read from the principals cache by `select`, so a row re-renders only when its own view changes. Until
+ *  the cache has loaded, or your handle is known, "you" can't be told from another recipient: nothing shows. */
+function useRecipientsView(
+  recipients: MessageEntry["recipients"],
+  slug: string,
+  self: string | undefined,
+): RecipientsView {
+  const { data } = useQuery({
+    ...principalsQueryOptions,
+    select: (cache): RecipientsView => {
+      const handleOf = (ref: string) => cache.byRef.get(ref)?.handle;
+      const skip = new Set([slug, self ?? ""].map((h) => h.toLowerCase()));
+      return {
+        others:
+          self === undefined
+            ? []
+            : recipients
+                .filter((r) => !skip.has(handleOf(r.ref)?.toLowerCase() ?? ""))
+                .map((r) => r.ref),
+        text: recipients.map((r) => `@${handleOf(r.ref) ?? "unknown"}`).join(", "),
+      };
+    },
+  });
+  return data ?? NO_RECIPIENTS;
 }
 
 export type ChatRowProps = {
@@ -69,17 +95,19 @@ export type ChatRowProps = {
 export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
   const { entry, slug, self } = p;
   const key = entryKey(entry);
-  const mine = entry.fromKind === "human";
+  const mine = entry.from.kind === "human";
+  // The sender's handle is the principals cache's, so a rename shows here without a refetch of the thread.
+  // While the cache doesn't know the ref yet, the thread's own two parties stand in.
+  const sender = usePrincipal(entry.from.ref);
+  const fromHandle =
+    sender.status === "found" ? sender.principal.handle : mine ? (self ?? "") : slug;
   // Your send before the server's row: the delivered row's shape, its body muted; "Sending…" only when slow.
   const sending = isSending(entry);
   const { slow } = useSendPhase(sending);
   const { menu, press } = useRowLongPress();
   const statusId = useId();
   const rejectedId = useId();
-  const others = useMemo(
-    () => othersOf(entry.recipients, slug, self),
-    [entry.recipients, slug, self],
-  );
+  const { others, text: recipientsText } = useRecipientsView(entry.recipients, slug, self);
   const chips = entry.attachments?.length ? entry.attachments : undefined;
   const shown = useMemo(() => stripAttachedLines(entry.body, chips), [entry.body, chips]);
   const queued = entry.state === "pending" && !sending;
@@ -135,8 +163,8 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
         <div {...rowProps}>
           {!p.grouped && (
             <SpeakerLine
-              from={entry.from}
-              fromKind={entry.fromKind}
+              from={fromHandle}
+              fromKind={entry.from.kind}
               self={!mine}
               status={
                 <TimeSlot
@@ -207,7 +235,15 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
           <InlineOutcome tone="error">Couldn't cancel: {p.note.error}</InlineOutcome>
         </div>
       )}
-      <ChatRowMenu entry={entry} slug={slug} others={others} tabbable={p.tabbable} menuRef={menu} />
+      <ChatRowMenu
+        entry={entry}
+        slug={slug}
+        others={others}
+        recipientsText={recipientsText}
+        sender={fromHandle}
+        tabbable={p.tabbable}
+        menuRef={menu}
+      />
     </div>
   );
 });

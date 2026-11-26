@@ -304,7 +304,7 @@ async function startAndStop(slug: string, start: boolean) {
 /** The pending `config_changed` notice lines of an agent. */
 async function pendingConfigLines(slug: string): Promise<string[]> {
   const rows = await t.sql`
-    select body from messages where to_agent_id = ${await idOf(slug)} and notice = 'config_changed' and state = 'pending'`;
+    select body from messages where to_id = ${await idOf(slug)} and notice = 'config_changed' and state = 'pending'`;
   return rows.flatMap((r) =>
     String(r.body)
       .split("\n")
@@ -712,9 +712,9 @@ test("two concurrent archives: the second sees the first's commit under the lock
   await lock.done;
   for (const a of await both) expect(a.archivedAt).not.toBeNull();
   const rows =
-    await t.sql`select to_agent_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
+    await t.sql`select to_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
   expect(rows.length).toBeGreaterThan(0);
-  expect(new Set(rows.map((r) => r.to_agent_id)).size).toBe(rows.length);
+  expect(new Set(rows.map((r) => r.to_id)).size).toBe(rows.length);
 });
 
 test("archive counts only live reports: a terminated spawned agent doesn't block it", async () => {

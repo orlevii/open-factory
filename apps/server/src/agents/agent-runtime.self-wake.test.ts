@@ -45,7 +45,7 @@ const hibernatedReasons = async () =>
 const noticeRows = () =>
   h.t.sql<{ notice: string; state: string }[]>`
     select notice, state from messages
-    where to_agent_id = ${agentId} and kind = 'system' order by created_at`;
+    where to_id = ${agentId} and kind = 'system' order by created_at`;
 
 async function idle() {
   await h.send("hi", false);

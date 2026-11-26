@@ -54,7 +54,7 @@ const spawned = async (slug: string) => {
   return a.id;
 };
 const kinds = (slug: string) =>
-  h.sql`select m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_agent_id
+  h.sql`select m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_id
     where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
 
 test("termination first: the assignment is refused", async () => {

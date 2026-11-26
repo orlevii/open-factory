@@ -109,8 +109,8 @@ export async function insertScheduledMessage(
 ): Promise<void> {
   const byAgent = m.authorAgentId ?? null;
   const byUser = byAgent ? null : (m.authorUserId ?? "u1");
-  await sql`insert into messages (id, kind, to_agent_id, schedule_id, author_agent_id, author_user_id, due_at, firings, late, body, state, created_at)
-            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${byAgent}, ${byUser},
+  await sql`insert into messages (id, kind, to_id, schedule_id, author_id, due_at, firings, late, body, state, created_at)
+            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${byAgent ?? byUser},
                     ${iso(m.dueAt ?? new Date("2026-11-23T08:00:00Z"))}, ${m.firings ?? 1}, ${m.late ?? false},
                     ${m.body ?? "Review"}, ${m.state ?? "pending"}, ${iso(m.createdAt ?? new Date())})`;
 }

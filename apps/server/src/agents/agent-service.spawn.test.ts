@@ -197,7 +197,7 @@ test("a child's forward holding its own row lock doesn't deadlock with a spawner
     await tx`select id from agents where id = ${child.id} for no key update`;
     locked();
     await released;
-    await tx`insert into messages (id, from_agent_id, to_agent_id, body, kind, state)
+    await tx`insert into messages (id, from_id, to_id, body, kind, state)
              values (${randomUUID()}, ${child.id}, ${lead.id}, 'done', 'member_update', 'pending')`;
   });
   await childLocked;

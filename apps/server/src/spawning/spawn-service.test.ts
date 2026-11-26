@@ -108,13 +108,13 @@ async function peerRowsTo(app: T, agentId: string) {
   return app.db
     .select()
     .from(schema.messages)
-    .where(and(eq(schema.messages.toAgentId, agentId), eq(schema.messages.kind, "peer_joined")));
+    .where(and(eq(schema.messages.toId, agentId), eq(schema.messages.kind, "peer_joined")));
 }
 async function messagesTo(app: T, agentId: string) {
   return app.db
     .select()
     .from(schema.messages)
-    .where(and(eq(schema.messages.toAgentId, agentId), eq(schema.messages.kind, "message")));
+    .where(and(eq(schema.messages.toId, agentId), eq(schema.messages.kind, "message")));
 }
 const folders = (app: T) => readdirSync(path.join(app.factoryHome, "agents")).sort();
 const agentCount = async (app: T) => (await app.db.select().from(schema.agents)).length;
@@ -162,7 +162,7 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
   // The brief is a message from the spawner (it may already be delivered: the hand-off is not awaited).
   expect(await messagesTo(t, child.id)).toEqual([
     expect.objectContaining({
-      fromAgentId: lead.id,
+      fromId: lead.id,
       body: "Write a plan",
       fromToolUseId: "toolu_1",
     }),

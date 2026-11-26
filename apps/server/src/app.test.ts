@@ -241,15 +241,18 @@ test("a report's text reaches its manager naming the request it answers", async 
     });
     expect(res.statusCode).toBeLessThan(300);
     const [asked] = await t.sql<{ id: string }[]>`
-      select id from messages where to_agent_id = ${dev.id} and kind = 'message'`;
+      select id from messages where to_id = ${dev.id} and kind = 'message'`;
     const devProc = driver.starts.filter((s) => s.spec.slug === "dev").at(-1);
     devProc?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
     await (await t.app.runtimes.bySlug("dev"))?.settled();
+    const [asker] = await t.sql<
+      { ref: string }[]
+    >`select ref from principals where handle = 'asker'`;
     await vi.waitFor(() =>
       expect(
         leadProc.sent.flat().find((m) => m.kind === "member_update" && m.body === "README updated")
           ?.re,
-      ).toEqual([{ id: asked?.id, from: "@asker" }]),
+      ).toEqual([{ id: asked?.id, from: `<@${asker?.ref}>` }]),
     );
   } finally {
     await t.close();

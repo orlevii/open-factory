@@ -35,7 +35,7 @@ const report = (
 const pendingReports = (toAgentId: string) =>
   t.sql<{ id: string; body: string; subject_agent_id: string | null }[]>`
     select id, body, subject_agent_id from messages
-    where to_agent_id = ${toAgentId} and notice = 'report_config_changed' and state = 'pending'
+    where to_id = ${toAgentId} and notice = 'report_config_changed' and state = 'pending'
     order by created_at`;
 
 test("two notices for the same manager and report make one row with the sorted union of lines", async () => {

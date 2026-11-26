@@ -179,9 +179,9 @@ export const messages = pgTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind").notNull().default("message"),
-    fromUserId: text("from_user_id").references(() => users.id),
+    // The sender principal (an agent or a human); null = the factory, a notice or a scheduled firing.
+    fromId: text("from_id").references(() => principals.id),
     notice: text("notice"),
-    fromAgentId: text("from_agent_id").references((): AnyPgColumn => agents.id),
     subjectAgentId: text("subject_agent_id").references((): AnyPgColumn => agents.id),
     // I3: the credential a `system` notice is about; deleting the credential deletes its notices.
     subjectCredentialId: text("subject_credential_id").references(
@@ -190,13 +190,13 @@ export const messages = pgTable(
         onDelete: "cascade",
       },
     ),
-    toAgentId: text("to_agent_id").references(() => agents.id, { onDelete: "cascade" }),
-    toUserId: text("to_user_id").references(() => users.id),
+    // The recipient principal; an agent for the agent-only kinds, a human or an agent for messages.
+    toId: text("to_id").references(() => principals.id, { onDelete: "cascade" }),
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
-    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
-    recipients: text("recipients").array(),
+    // I1: the full recipient list of a `kind='message'` row, as principal ids (a fan-out writes one row per recipient).
+    recipientIds: text("recipient_ids").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -208,8 +208,7 @@ export const messages = pgTable(
     commentId: text("comment_id"),
     // S9: scheduled rows. They carry their author (the schedule's body author can change after the firing).
     scheduleId: text("schedule_id").references((): AnyPgColumn => schedules.id),
-    authorAgentId: text("author_agent_id").references((): AnyPgColumn => agents.id),
-    authorUserId: text("author_user_id").references(() => users.id),
+    authorId: text("author_id").references(() => principals.id),
     dueAt: timestamp("due_at", { withTimezone: true }),
     firings: integer("firings"),
     late: boolean("late"),
@@ -223,29 +222,26 @@ export const messages = pgTable(
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
   (t) => [
-    index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
+    index("messages_to_state_idx").on(t.toId, t.state, t.createdAt),
     // Loop guard: a schedule holds at most one undelivered row per agent, whether it is pending or loop_held.
     uniqueIndex("messages_schedule_pending_idx")
-      .on(t.scheduleId, t.toAgentId)
+      .on(t.scheduleId, t.toId)
       .where(sql`${t.state} IN ('pending','loop_held') AND ${t.scheduleId} IS NOT NULL`),
-    index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
+    index("messages_from_idx").on(t.fromId, t.createdAt),
     // S10: turn attribution reads a closing turn's delivered messages.
     index("messages_delivered_turn_idx")
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
+      .on(t.fromId, t.clientMessageId, t.toId)
       .where(sql`${t.clientMessageId} is not null`),
-    // I1 §6.3: the chat thread, both directions, newest first by (created_at, id).
+    // I1 §6.3: the chat thread, one direction per scan (to, from), newest first by (created_at, id).
     index("messages_chat_in_idx")
-      .on(t.toAgentId, t.fromUserId, t.createdAt)
-      .where(sql`${t.kind} = 'message'`),
-    index("messages_chat_out_idx")
-      .on(t.toUserId, t.fromAgentId, t.createdAt)
+      .on(t.toId, t.fromId, t.createdAt)
       .where(sql`${t.kind} = 'message'`),
     // I8: Resume's flip and the inbox's hold counts look rows up by hold.
     index("messages_loop_hold_idx").on(t.loopHoldId).where(sql`${t.loopHoldId} is not null`),
-    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipientIds} IS NOT NULL`),
   ],
 );
 

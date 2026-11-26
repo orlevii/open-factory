@@ -35,29 +35,26 @@ test("keys come from a sequence", async () => {
 
 test("wrong shapes are rejected", async () => {
   await bad(
-    sql`insert into messages (id,kind,task_id,to_agent_id,body,recipients) values ('b1','message','t1','a1','x','{@test}')`,
+    sql`insert into messages (id,kind,task_id,to_id,body,recipient_ids) values ('b1','message','t1','a1','x','{a1}')`,
   );
   await bad(
-    sql`insert into messages (id,kind,from_agent_id,task_id,to_agent_id,body) values ('b2','task_assigned','a2','t1','a1','x')`,
+    sql`insert into messages (id,kind,from_id,task_id,to_id,body) values ('b2','task_assigned','a2','t1','a1','x')`,
   );
   await bad(
-    sql`insert into messages (id,kind,task_id,to_agent_id,body) values ('b3','task_comment','t1','a1','x')`,
+    sql`insert into messages (id,kind,task_id,to_id,body) values ('b3','task_comment','t1','a1','x')`,
   );
   await bad(
-    sql`insert into messages (id,kind,notice,task_id,to_agent_id,body) values ('b4','task_update','bogus','t1','a1','x')`,
+    sql`insert into messages (id,kind,notice,task_id,to_id,body) values ('b4','task_update','bogus','t1','a1','x')`,
   );
   await bad(
     sql`insert into messages (id,kind,notice,task_id,to_all_humans,body) values ('b5','task_update','done','t1',true,'x')`,
-  );
-  await bad(
-    sql`insert into messages (id,kind,task_id,to_user_id,body) values ('b6','task_assigned','t1','u1','x')`,
   );
   await bad(sql`insert into tasks (id,title) values ('bt','no creator')`);
   await bad(
     sql`insert into task_links (id,task_id,position,kind,target,agent_id) values ('bl','t1',0,'agent','x','a1')`,
   );
   await bad(sql`insert into task_dependencies (task_id,depends_on_task_id) values ('t1','t1')`);
-  await sql`insert into messages (id,kind,notice,task_id,to_user_id,body,state) values ('n6','task_update','done','t1','u1','x','delivered')`;
+  await sql`insert into messages (id,kind,notice,task_id,to_id,body,state) values ('n6','task_update','done','t1','u1','x','delivered')`;
   await bad(
     sql`insert into inbox_items (id,user_id,kind,message_id) values ('bi','u1','bogus','n6')`,
   );
@@ -65,7 +62,7 @@ test("wrong shapes are rejected", async () => {
 
 test("a message's comment must belong to its task (composite FK)", async () => {
   await expect(
-    sql`insert into messages (id,kind,from_agent_id,task_id,comment_id,to_agent_id,body) values ('f1','task_comment','a2','t2','k1','a1','x')`,
+    sql`insert into messages (id,kind,from_id,task_id,comment_id,to_id,body) values ('f1','task_comment','a2','t2','k1','a1','x')`,
   ).rejects.toThrow(/foreign key/i);
 });
 

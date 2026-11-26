@@ -46,7 +46,7 @@ async function request(body: string) {
   const row = await h.row(body);
   await deliverHuman(h.rt, row);
   await h.rt.settled();
-  return { id: row.id, from: `@${row.fromHandle}` };
+  return { id: row.id, from: `<@${row.fromRef}>` };
 }
 
 /** A top-level tool call and its result: the boundary where Claude reads what was written mid-turn. */
@@ -283,7 +283,7 @@ test("Start a new session still makes its attempt when forwarding recovered fail
       await h.store.createMessage({
         from: { userId: "u1" },
         toAgentId: id,
-        recipients: ["@test"],
+        recipientIds: [id],
         body: "pending",
         urgent: false,
       });

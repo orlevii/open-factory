@@ -46,6 +46,14 @@ export function mergePrincipals(
   });
 }
 
+/** The ref of the principal with this handle, from the loaded cache (a send's optimistic entry names refs). */
+export function refOfHandle(qc: QueryClient, handle: string): string | undefined {
+  const cache = qc.getQueryData<PrincipalsCache>(principalsQueryOptions.queryKey);
+  if (!cache) return undefined;
+  for (const p of cache.byRef.values()) if (p.handle === handle) return p.ref;
+  return undefined;
+}
+
 interface Batch {
   queued: Set<string>;
   /** Asked for already: not asked again while the answer is pending or after it came back. */

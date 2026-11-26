@@ -126,7 +126,7 @@ test("a second notice of the type replaces the first: one pending row", async ()
   await notice();
   await store.createNotice({ toAgentId: id, notice: "crons_stopped", body: "newer" });
   const rows =
-    await t.sql`select body from messages where to_agent_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
+    await t.sql`select body from messages where to_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
   expect(rows).toEqual([{ body: "newer" }]);
 });
 

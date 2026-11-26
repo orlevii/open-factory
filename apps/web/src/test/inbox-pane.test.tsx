@@ -30,7 +30,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,

@@ -415,7 +415,7 @@ const inboxItem = (id: string, messageId: string) => ({
   messageId,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@alice",
   preview: "need a human",
   urgent: false,

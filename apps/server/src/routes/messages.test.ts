@@ -29,7 +29,7 @@ const post = (payload: object, cookie: string | null = or) =>
     payload,
   });
 const rowsOf = (body: string) =>
-  s.sql`select to_agent_id, recipients from messages where body = ${body} and kind = 'message' order by to_agent_id`;
+  s.sql`select to_id, recipient_ids from messages where body = ${body} and kind = 'message' order by to_id`;
 
 test("two agent recipients make two rows, one per agent, with both recipients", async () => {
   const res = await post({ to: ["dev", "ops"], body: "both" });
@@ -49,8 +49,8 @@ test("two agent recipients make two rows, one per agent, with both recipients", 
     }),
   ]);
   const rows = await rowsOf("both");
-  expect(rows.map((r) => r.to_agent_id).sort()).toEqual([agentIds.dev, agentIds.ops].sort());
-  for (const r of rows) expect(r.recipients).toEqual(["@dev", "@ops"]);
+  expect(rows.map((r) => r.to_id).sort()).toEqual([agentIds.dev, agentIds.ops].sort());
+  for (const r of rows) expect(r.recipient_ids).toEqual([agentIds.dev, agentIds.ops]);
 });
 
 test("a human recipient is refused", async () => {
@@ -117,13 +117,13 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
   ]);
   const rows = await rowsOf("mixed");
   expect(rows).toHaveLength(1);
-  expect(rows[0]?.recipients).toEqual(["@dev"]);
+  expect(rows[0]?.recipient_ids).toEqual([agentIds.dev]);
 });
 
 test("a hand-off that throws for one recipient is that recipient's start_failed, not the call's", async () => {
   const real = s.app.runtimes.deliver.bind(s.app.runtimes);
   const spy = vi.spyOn(s.app.runtimes, "deliver").mockImplementation(async (row, ...rest) => {
-    if (row.toAgentId === agentIds.dev) throw new Error("boom");
+    if (row.toId === agentIds.dev) throw new Error("boom");
     return real(row, ...rest);
   });
   try {

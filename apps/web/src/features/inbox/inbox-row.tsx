@@ -9,7 +9,7 @@ import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
-import { type InboxItem, isFullWidthNotice } from "./api";
+import { type InboxItem, isFullWidthNotice, senderHandle } from "./api";
 import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
@@ -32,8 +32,8 @@ function Sender({ item }: { item: InboxItem }) {
         )}
       </>
     );
-  if (item.from.kind === "agent") return <AgentChip slug={item.from.name} size={16} />;
-  return <span className="truncate font-mono">@{item.from.name}</span>;
+  if (item.from.kind === "agent") return <AgentChip slug={item.from.handle} size={16} />;
+  return <span className="truncate font-mono">@{item.from.handle}</span>;
 }
 
 /** Line one, left of the time: the sender and the kind word (what happened). It never wraps. */
@@ -120,14 +120,14 @@ function labelOf(item: InboxItem, time: string, now: number): string {
   }
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
-    return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
+    return `${unread}@${senderHandle(item.from)} mentioned you on ${task}, ${time}`;
   }
   if (item.kind === "task_event")
     return `${unread}Factory, ${item.fact === "cancelled" ? "cancelled" : "done"}, ${task}, ${time}`;
   const who =
     item.from.kind === "factory"
       ? `Factory${item.about ? ` about @${item.about}` : ""}`
-      : `@${item.from.name}`;
+      : `@${item.from.handle}`;
   const hold = item.loopHold ? `, ${item.loopHold.resumedAt ? "resumed" : "held"}` : "";
   return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}${hold}, ${time}`;
 }

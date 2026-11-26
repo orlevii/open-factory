@@ -30,7 +30,7 @@ const item = {
   messageId: "m1",
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@alice",
   preview: "preview one",
   urgent: false,

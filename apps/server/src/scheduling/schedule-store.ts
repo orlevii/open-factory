@@ -301,7 +301,7 @@ export class ScheduleStore {
       .where(
         and(
           eq(messages.scheduleId, s.id),
-          eq(messages.toAgentId, s.targetAgentId),
+          eq(messages.toId, s.targetAgentId),
           inArray(messages.state, ["pending", "loop_held"]),
         ),
       )
@@ -312,8 +312,7 @@ export class ScheduleStore {
         .update(messages)
         .set({
           body: s.body,
-          authorAgentId: s.bodyAuthorAgentId,
-          authorUserId: s.bodyAuthorUserId,
+          authorId: s.bodyAuthorAgentId ?? s.bodyAuthorUserId,
           dueAt: f.due,
           firings: (pending.firings ?? 0) + f.missed,
           late: f.late,
@@ -327,10 +326,9 @@ export class ScheduleStore {
     await tx.insert(messages).values({
       id,
       kind: "scheduled",
-      toAgentId: s.targetAgentId,
+      toId: s.targetAgentId,
       scheduleId: s.id,
-      authorAgentId: s.bodyAuthorAgentId,
-      authorUserId: s.bodyAuthorUserId,
+      authorId: s.bodyAuthorAgentId ?? s.bodyAuthorUserId,
       dueAt: f.due,
       firings: f.missed,
       late: f.late,

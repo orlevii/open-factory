@@ -50,7 +50,7 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 
 /**
  * A request a report had received in its current turn when it wrote a forwarded text: the message's id and its
- * envelope sender (`@handle`, `@scheduler`, `@factory`). A `member_update`'s `re` lists them, so its manager can tell
+ * envelope sender (the sender's `<@ref>` tag, or `@scheduler` / `@factory`). A `member_update`'s `re` lists them, so its manager can tell
  * whose request the text answers.
  */
 export const requestRefSchema = z.object({ id: z.string(), from: z.string() });
@@ -119,7 +119,11 @@ export const inboxItemSchema = z.object({
   messageId: z.string(),
   kind: z.enum(INBOX_KINDS),
   read: z.boolean(),
-  from: z.object({ kind: z.enum(["agent", "human", "factory"]), name: z.string() }),
+  /** An agent or a human by principal; `factory` for the factory's own items. */
+  from: z.discriminatedUnion("kind", [
+    z.object({ kind: z.enum(["agent", "human"]), ref: z.string(), handle: z.string() }),
+    z.object({ kind: z.literal("factory") }),
+  ]),
   about: z.string().optional(),
   to: z.string(),
   preview: z.string(),

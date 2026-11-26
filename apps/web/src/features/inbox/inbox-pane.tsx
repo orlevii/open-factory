@@ -51,7 +51,7 @@ function ExcerptSkeleton() {
 /** The sender as the pane's header shows it: a 20px chip for an agent, otherwise the name. */
 function Sender({ item }: { item: InboxItem }) {
   const about = aboutOf(item);
-  if (item.from.kind === "agent") return <AgentChip slug={item.from.name} size={20} />;
+  if (item.from.kind === "agent") return <AgentChip slug={item.from.handle} size={20} />;
   if (item.from.kind === "factory")
     return (
       <span className="truncate">
@@ -64,7 +64,7 @@ function Sender({ item }: { item: InboxItem }) {
         )}
       </span>
     );
-  return <span className="truncate font-mono">@{item.from.name}</span>;
+  return <span className="truncate font-mono">@{item.from.handle}</span>;
 }
 
 /** The exact target, as the row links it. */
@@ -294,7 +294,7 @@ function MentionReply({
   replyRef: RefObject<CommentComposerHandle | null>;
 }) {
   const replied = useMarkReplied(item);
-  const mention = item.from.kind === "agent" ? `@${item.from.name}` : undefined;
+  const mention = item.from.kind === "agent" ? `@${item.from.handle}` : undefined;
   // Once per item (the pane remounts this per item): only into an empty draft, as the task page does.
   useEffect(() => {
     if (mention) replyRef.current?.prefill(mention);
@@ -330,9 +330,9 @@ function TaskFact({ item, task }: { item: InboxItem; task: TaskDetail }) {
     change?.type === "event"
       ? change.actor
       : item.from.kind === "agent"
-        ? { kind: "agent" as const, slug: item.from.name }
+        ? { kind: "agent" as const, slug: item.from.handle }
         : item.from.kind === "human"
-          ? { kind: "user" as const, handle: item.from.name }
+          ? { kind: "user" as const, handle: item.from.handle }
           : undefined;
   const when = change?.at ?? item.createdAt;
   return (

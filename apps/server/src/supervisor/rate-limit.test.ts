@@ -310,7 +310,7 @@ test("the cut-off agent gets exactly one notice at reset, batched first with pen
     { type: "rate_limit_reset", credential: name },
   ]);
   const rows =
-    await t.sql`select id from messages where to_agent_id = ${a.agent.id} and notice = 'rate_limit_reset'`;
+    await t.sql`select id from messages where to_id = ${a.agent.id} and notice = 'rate_limit_reset'`;
   expect(rows).toHaveLength(1);
 });
 

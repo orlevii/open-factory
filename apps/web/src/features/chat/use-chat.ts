@@ -144,7 +144,7 @@ export function lastSentText(qc: QueryClient, slug: string): string | undefined 
   const entries = flattenPages(data).entries;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i] as ChatEntry;
-    if (e.kind === "message" && e.fromKind === "human")
+    if (e.kind === "message" && e.from.kind === "human")
       return stripAttachedLines(e.body, e.attachments);
   }
   return undefined;

@@ -279,7 +279,7 @@ export class SpawnService {
           {
             from: { agentId: spawner.id },
             toAgentId: id,
-            recipients: [`@${slug}`],
+            recipientIds: [id],
             body: prompt,
             urgent: false,
             fromToolUseId: toolUseId,

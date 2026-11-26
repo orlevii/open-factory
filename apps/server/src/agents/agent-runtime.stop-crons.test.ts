@@ -88,7 +88,7 @@ async function idleWithCrons() {
   await rt.settled();
 }
 const pendingNotice = () =>
-  t.sql`select body from messages where to_agent_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
+  t.sql`select body from messages where to_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
 
 test("no process, no crons: no_crons; archived and terminated agents are refused", async () => {
   await expect(rt.stopCrons("or")).rejects.toMatchObject({
@@ -194,7 +194,7 @@ test("a spawned agent behaves the same", async () => {
 // ---------- 22b: apply-restart, crons reaching 0, exits ----------
 
 const noticesOf = () =>
-  t.sql`select notice, state from messages where to_agent_id = ${id} and kind = 'system' order by created_at`;
+  t.sql`select notice, state from messages where to_id = ${id} and kind = 'system' order by created_at`;
 const reasons = async () =>
   (await events())
     .filter((e) => e.type === "hibernated")

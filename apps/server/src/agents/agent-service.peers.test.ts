@@ -31,7 +31,7 @@ afterEach(() => h.close());
 
 const held = async (slug: string) =>
   (
-    await h.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
+    await h.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
                 where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 function create(slug: string, displayName: string, reportsTo: string) {

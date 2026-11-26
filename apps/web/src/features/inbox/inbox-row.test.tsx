@@ -38,7 +38,7 @@ const item = (resumedAt: string | null) => ({
   messageId: "m1",
   kind: "notice",
   read: true,
-  from: { kind: "factory", name: "factory" },
+  from: { kind: "factory" },
   about: "a",
   to: "@alice",
   preview: "@a and @b exchanged 22 messages in 3 minutes; further messages between them are held.",

@@ -36,6 +36,6 @@ export function assertSender(
   row: MessageRow | undefined,
   o: { agentId: string; userId: string },
 ): asserts row is MessageRow {
-  if (row?.kind !== "message" || row.toAgentId !== o.agentId || row.fromUserId !== o.userId)
+  if (row?.kind !== "message" || row.toId !== o.agentId || row.fromId !== o.userId)
     throw new NotSenderError();
 }

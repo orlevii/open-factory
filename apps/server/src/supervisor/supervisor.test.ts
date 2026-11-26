@@ -64,7 +64,7 @@ class World {
       await store.createMessage({
         from: { userId: "u1" },
         toAgentId: id,
-        recipients: ["@test"],
+        recipientIds: [id],
         body,
         urgent: false,
       });

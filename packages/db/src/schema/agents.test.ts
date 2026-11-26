@@ -41,12 +41,12 @@ test("system rows need no user and a notice; user rows need a user and no notice
   await sql`insert into principals (id, kind, handle, ref) values ('a3', 'agent', 'third', substr(md5('a3'::text), 1, 8))`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
     values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2', 'u1')`;
-  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body, notice) values ('n1','system',null,'a3','x','crash')`;
+  await sql`insert into messages (id, kind, from_id, to_id, body, notice) values ('n1','system',null,'a3','x','crash')`;
   await expect(
-    sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n2','system',null,'a3','x')`,
+    sql`insert into messages (id, kind, from_id, to_id, body) values ('n2','system',null,'a3','x')`,
   ).rejects.toThrow(/check/i);
   await expect(
-    sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('n3','message',null,'a3','x','{@test}')`,
+    sql`insert into messages (id, kind, from_id, to_id, body,recipient_ids) values ('n3','message',null,'a3','x','{a3}')`,
   ).rejects.toThrow(/check/i);
-  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('m2','message','u2','a3','x','{@test}')`;
+  await sql`insert into messages (id, kind, from_id, to_id, body,recipient_ids) values ('m2','message','u2','a3','x','{a3}')`;
 });

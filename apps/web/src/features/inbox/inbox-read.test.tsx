@@ -31,7 +31,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
@@ -47,7 +47,7 @@ const mention = item(1, {
 });
 const taskEvent = item(2, {
   kind: "task_event",
-  from: { kind: "factory", name: "factory" },
+  from: { kind: "factory" },
   fact: "done",
   to: "@or",
   task: { key: "T-40", title: "Add usage export" },
@@ -55,7 +55,7 @@ const taskEvent = item(2, {
 });
 const humanMention = item(3, {
   kind: "mention",
-  from: { kind: "human", name: "sam" },
+  from: { kind: "human", ref: "sam00000", handle: "sam" },
   to: "@bob",
   task: { key: "T-1", title: "One" },
   link: { kind: "task", key: "T-1", commentId: "c1" },
@@ -345,9 +345,9 @@ describe("per-agent unread in the cache", () => {
       pages: [
         {
           items: [
-            item(1, { from: { kind: "agent", name: "ada" } }),
-            item(2, { from: { kind: "agent", name: "ada" } }),
-            item(3, { from: { kind: "agent", name: "bob" } }),
+            item(1, { from: { kind: "agent", ref: "ada00000", handle: "ada" } }),
+            item(2, { from: { kind: "agent", ref: "ada00000", handle: "ada" } }),
+            item(3, { from: { kind: "agent", ref: "bob00000", handle: "bob" } }),
           ],
           nextCursor: null,
         },
@@ -363,7 +363,7 @@ describe("per-agent unread in the cache", () => {
   test("opening a row keeps byAgent and decrements its sender", () => {
     const { qc, cache } = mk();
     cache.setRead(new Set(["i1"]), true, -1, [
-      item(1, { from: { kind: "agent", name: "ada" } }) as never,
+      item(1, { from: { kind: "agent", ref: "ada00000", handle: "ada" } }) as never,
     ]);
     expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { ada: 1 } });
   });

@@ -43,7 +43,7 @@ const item = (n: number, o: Over = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: "dev00000", handle: "dev" },
   to: "@alice",
   preview: `preview ${n}`,
   urgent: false,
@@ -152,7 +152,7 @@ const mention = (n: number, commentId: string, from: Over) =>
   });
 
 test("a mention shows the task header, the 3 comments before it and the comment, and a composer prefilled with the agent author", async () => {
-  setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
+  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
   api.on(
     "POST /api/tasks/T-7/comments",
     validBody(taskCommentBodySchema, (b) =>
@@ -198,7 +198,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
 });
 
 test("a mention brings the mentioned comment to the top of the body", async () => {
-  setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
+  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment c4")).toBeInTheDocument());
@@ -219,7 +219,7 @@ test("a mention brings the mentioned comment to the top of the body", async () =
 });
 
 test("a mention by a human leaves the composer empty", async () => {
-  setup([mention(1, "h1", { kind: "human", name: "bob" })]);
+  setup([mention(1, "h1", { kind: "human", ref: "b0b00000", handle: "bob" })]);
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment h1")).toBeInTheDocument());
@@ -230,7 +230,7 @@ test("a task event shows the fact and Open task, with no composer", async () => 
   setup([
     item(1, {
       kind: "task_event",
-      from: { kind: "agent", name: "dev" },
+      from: { kind: "agent", ref: "dev00000", handle: "dev" },
       task: { key: "T-7", title: "Seven" },
       fact: "done",
       link: { kind: "task", key: "T-7" },
@@ -266,7 +266,7 @@ test("a task event shows the fact and Open task, with no composer", async () => 
 });
 
 test("switching items shows skeletons, never the previous body", async () => {
-  setup([item(1), mention(2, "c4", { kind: "agent", name: "ada" })]);
+  setup([item(1), mention(2, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
   let release: () => void = () => {};
   const held = new Promise<void>((r) => {
     release = r;
@@ -289,7 +289,7 @@ test("switching items shows skeletons, never the previous body", async () => {
 test("a notice shows its text and a link to the session, and has no composer", async () => {
   setup([
     item(1, {
-      from: { kind: "factory", name: "factory" },
+      from: { kind: "factory" },
       about: "dev",
       preview: "Dev hit an error",
     }),
@@ -308,7 +308,7 @@ test("a notice shows its text and a link to the session, and has no composer", a
 test("?item= outside the loaded pages fetches the item and shows it", async () => {
   setup([item(1)]);
   api.on("GET /api/inbox/far", () =>
-    json({ item: item(9, { id: "far", from: { kind: "agent", name: "dev" } }) }),
+    json({ item: item(9, { id: "far", from: { kind: "agent", ref: "dev00000", handle: "dev" } }) }),
   );
   await visit("/inbox?item=far");
   const p = pane();
@@ -352,7 +352,7 @@ test("the selected row dropping out of the loaded pages keeps its header", async
 });
 
 test("a half-typed comment reply survives switching items; a posted one is cleared", async () => {
-  setup([mention(1, "c4", { kind: "agent", name: "ada" }), item(2)]);
+  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" }), item(2)]);
   api.on(
     "POST /api/tasks/T-7/comments",
     validBody(taskCommentBodySchema, (b) =>
@@ -391,14 +391,14 @@ test("a half-typed comment reply survives switching items; a posted one is clear
 }, 20_000);
 
 test("a mention whose comment is gone says so", async () => {
-  setup([mention(1, "c-gone", { kind: "agent", name: "ada" })]);
+  setup([mention(1, "c-gone", { kind: "agent", ref: "ada00000", handle: "ada" })]);
   await visit("/inbox?item=i1");
   expect(await within(pane()).findByText("This comment no longer exists.")).toBeInTheDocument();
   expect(within(pane()).getByRole("heading", { name: "Seven" })).toBeInTheDocument();
 });
 
 test("moving on cancels the request for the item passed over", async () => {
-  setup([mention(1, "c4", { kind: "agent", name: "ada" }), item(2)]);
+  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" }), item(2)]);
   // The task never answers: it is still in flight when the selection moves on.
   api.on("GET /api/tasks/T-7", () => new Promise<Response>(() => {}));
   const app = await visit("/inbox?item=i1");
@@ -415,7 +415,7 @@ test("moving on cancels the request for the item passed over", async () => {
 const credential = (name: string, expiresAt: string, current: boolean, o: Over = {}) =>
   item(1, {
     kind: "credential",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     credential: { name, expiresAt, current },
     link: { kind: "credential", name },
     preview: "stale stored body",

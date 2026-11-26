@@ -91,7 +91,7 @@ const item = (o: Record<string, unknown> = {}): InboxItem => {
     messageId: `m${n}`,
     kind: "mention",
     read: false,
-    from: { kind: "human", name: "alice" },
+    from: { kind: "human", ref: "abcd2345", handle: "alice" },
     to: "@or",
     preview: PREVIEW,
     urgent: false,
@@ -106,14 +106,14 @@ const errored = (about: string) =>
     kind: "notice",
     notice: "agent_errored",
     about,
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     task: undefined,
     link: { kind: "session", agentSlug: about },
   });
 const credential = (name: string) =>
   item({
     kind: "credential",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     task: undefined,
     credential: { name, expiresAt: "2099-01-01T00:00:00Z", current: true },
     link: { kind: "credential", name },
@@ -235,7 +235,7 @@ test("a resolved hold closes its notification", () => {
     item({
       kind: "notice",
       notice: "loop_held",
-      from: { kind: "factory", name: "factory" },
+      from: { kind: "factory" },
       task: undefined,
       link: { kind: "session", agentSlug: "a" },
       loopHold: {
@@ -342,7 +342,7 @@ test("task events and other facts never notify", async () => {
       item({
         kind: "notice",
         notice: "factory_restarted",
-        from: { kind: "factory", name: "factory" },
+        from: { kind: "factory" },
         task: undefined,
         link: { kind: "session", agentSlug: "dev" },
       }),

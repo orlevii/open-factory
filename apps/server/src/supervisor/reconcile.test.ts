@@ -144,7 +144,7 @@ const pending = (id: string, body: string) =>
   store.createMessage({
     from: { userId: "u1" },
     toAgentId: id,
-    recipients: ["@test"],
+    recipientIds: [id],
     body,
     urgent: false,
   });
@@ -159,7 +159,7 @@ const row = async (id: string) => {
   return r;
 };
 const notices = (id: string) =>
-  t.sql`select notice, body, state from messages where to_agent_id = ${id} and kind = 'system' order by created_at`;
+  t.sql`select notice, body, state from messages where to_id = ${id} and kind = 'system' order by created_at`;
 
 /** A real `sleep` child and its start time as `ps` reports it (the journal's format). */
 function sleeper(): { pid: number; start: string } {
@@ -530,7 +530,7 @@ test("S7 §12: a terminated agent's leftovers are removed and reaped; it is neve
   expect(await notices(id)).toEqual([]);
   // The rows that raced in are rejected, not left pending.
   expect(
-    await t.sql`select kind, state from messages where to_agent_id = ${id} order by created_at`,
+    await t.sql`select kind, state from messages where to_id = ${id} order by created_at`,
   ).toEqual([
     { kind: "message", state: "rejected" },
     { kind: "member_update", state: "rejected" },
@@ -663,7 +663,7 @@ test("S7 §8: a runtime loaded for a terminated agent rejects rows still pending
   await pending(id, "late");
   const rt = await boot.runtimes.load(id);
   expect(rt?.queueItems()).toEqual([]);
-  expect(await t.sql`select state from messages where to_agent_id = ${id}`).toEqual([
+  expect(await t.sql`select state from messages where to_id = ${id}`).toEqual([
     { state: "rejected" },
   ]);
   await rt?.settled();

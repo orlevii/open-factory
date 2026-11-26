@@ -79,11 +79,11 @@ async function row(r: Row) {
     scheduleId = `s${seq}`;
     await insertSchedule(t.sql, { id: scheduleId, targetAgentId: r.to });
   }
-  await t.sql`insert into messages (id, kind, from_user_id, from_agent_id, to_agent_id, author_agent_id, author_user_id,
-                                   recipients, body, state, created_at, task_id, comment_id, schedule_id, due_at, firings, late)
-              values (${id}, ${kind}, ${r.fromUser ?? null}, ${r.from ?? null}, ${r.to},
-                      ${r.authorAgent ?? null}, ${r.authorUser ?? null},
-                      ${kind === "message" ? `{"@${r.to}"}` : null}::text[], 'x', ${r.state ?? "delivered"}, ${r.at.toISOString()},
+  await t.sql`insert into messages (id, kind, from_id, to_id, author_id,
+                                   recipient_ids, body, state, created_at, task_id, comment_id, schedule_id, due_at, firings, late)
+              values (${id}, ${kind}, ${r.fromUser ?? r.from ?? null}, ${r.to},
+                      ${r.authorAgent ?? r.authorUser ?? null},
+                      ${kind === "message" ? `{"${r.to}"}` : null}::text[], 'x', ${r.state ?? "delivered"}, ${r.at.toISOString()},
                       ${taskId}, ${commentId}, ${scheduleId},
                       ${scheduleId ? r.at.toISOString() : null}, ${scheduleId ? 1 : null}, ${scheduleId ? false : null})`;
 }
@@ -314,7 +314,7 @@ describe("notices on open", () => {
     return r;
   };
   const notices = (toAgent: string) =>
-    t.sql`select * from messages where to_agent_id = ${toAgent} and notice = 'loop_held'`;
+    t.sql`select * from messages where to_id = ${toAgent} and notice = 'loop_held'`;
   const nextAgent = (() => {
     let n = 0;
     return async (
@@ -335,7 +335,7 @@ describe("notices on open", () => {
       expect(msgs).toHaveLength(1);
       expect(msgs[0]).toMatchObject({
         kind: "system",
-        from_agent_id: null,
+        from_id: null,
         subject_agent_id: "a1",
         loop_hold_id: r.holdId,
         body: `@a1 and @a2 exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
@@ -365,7 +365,7 @@ describe("notices on open", () => {
     expect(n?.body).toBe(
       `@${x} and @${y} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
     );
-    expect(r.managerRows.map((row) => [row.id, row.toAgentId])).toEqual([[n?.id, m]]);
+    expect(r.managerRows.map((row) => [row.id, row.toId])).toEqual([[n?.id, m]]);
   });
 
   test("a manager who is the other agent of the pair gets nothing", async () => {
@@ -414,7 +414,7 @@ describe("afterCommit", () => {
     holdId: "h",
     opened: true,
     counts: { ab: 4, ba: 4, minutes: 1 },
-    managerRows: [{ id: "n1", toAgentId: "a3" } as never],
+    managerRows: [{ id: "n1", toId: "a3" } as never],
   };
 
   test("an opened hold refreshes inboxes and hands the manager notices over", async () => {
@@ -465,8 +465,8 @@ describe("concurrency", () => {
     to: string,
     held: boolean,
   ) =>
-    tx.execute(sql`insert into messages (id, kind, from_agent_id, to_agent_id, recipients, body, state, created_at)
-                   values (${`m${++seq}`}, 'message', ${from}, ${to}, ${`{"@${to}"}`}::text[], 'x',
+    tx.execute(sql`insert into messages (id, kind, from_id, to_id, recipient_ids, body, state, created_at)
+                   values (${`m${++seq}`}, 'message', ${from}, ${to}, ${`{"${to}"}`}::text[], 'x',
                            ${held ? "loop_held" : "pending"}, ${new Date(NOW.getTime() - 1000).toISOString()})`);
 
   test("transactions locking overlapping pairs in opposite orders all commit without a deadlock", async () => {

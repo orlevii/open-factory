@@ -293,8 +293,8 @@ test("assembled: a listen that fails after the boot woke an agent closes the app
     const agent = await w.seedAgent();
     const { user } = await w.signUpUser({ handle: "or" });
     await w.app.close();
-    await w.sql`insert into messages (id, from_user_id, to_agent_id, body, urgent, recipients)
-                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false, '{@test}')`;
+    await w.sql`insert into messages (id, from_id, to_id, body, urgent, recipient_ids)
+                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false, ${[agent.id]})`;
     const next = await w.reopen({ env });
     await until(() => startsOf(f).length === 1); // the boot woke it before any listen
     const pid = startsOf(f)[0]?.pid ?? 0;

@@ -32,7 +32,7 @@ const fireAt = async (iso: string) => {
   await h.app.scheduler.idle();
 };
 const pending = () =>
-  h.sql`select id, firings, body, late, author_user_id, author_agent_id, created_at, delivered_event_seq from messages where kind = 'scheduled' and state = 'pending'`;
+  h.sql`select id, firings, body, late, author_id, created_at, delivered_event_seq from messages where kind = 'scheduled' and state = 'pending'`;
 const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin" };
 
 test("AC 3: three firings while the target is errored leave one pending row with the current body, and start nothing", async () => {
@@ -43,7 +43,7 @@ test("AC 3: three firings while the target is errored leave one pending row with
   );
   await fireAt("2026-11-23T08:00:00Z");
   const [first] = await pending();
-  expect(first).toMatchObject({ firings: 1, body: "v1", author_agent_id: dev });
+  expect(first).toMatchObject({ firings: 1, body: "v1", author_id: dev });
   await h.app.schedules.edit({ userId }, item.key, { body: "v2" });
   await fireAt("2026-11-24T08:00:00Z");
   await fireAt("2026-11-25T08:00:00Z");
@@ -53,8 +53,7 @@ test("AC 3: three firings while the target is errored leave one pending row with
     id: first?.id,
     firings: 3,
     body: "v2",
-    author_user_id: userId,
-    author_agent_id: null,
+    author_id: userId,
     late: false,
   });
   expect(new Date(rows[0]?.created_at as string).getTime()).toBe(

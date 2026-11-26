@@ -59,7 +59,7 @@ async function startIdle(slug: string) {
 }
 const text = (r: { content: { text: string }[] }) => r.content[0]?.text ?? "";
 const pendingOf = (slug: string) =>
-  h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_agent_id where a.slug = ${slug} and m.kind = 'message' order by m.created_at`;
+  h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_id where a.slug = ${slug} and m.kind = 'message' order by m.created_at`;
 
 test("AC 1: send_message to a hibernated agent wakes it with agent_message; the result names its status; the tool-use id is stored", async () => {
   const tokA = await startIdle("ada");
@@ -101,8 +101,8 @@ test("an agent id smuggled in the tool arguments is ignored: the caller is the t
   });
   const out = JSON.parse(text(r)).results[0];
   const a = await h.app.store.agentBySlug("ada");
-  expect((await h.sql`select from_agent_id from messages where id = ${out.id}`)[0]).toEqual({
-    from_agent_id: a?.id,
+  expect((await h.sql`select from_id from messages where id = ${out.id}`)[0]).toEqual({
+    from_id: a?.id,
   });
 });
 
@@ -146,7 +146,7 @@ test("a row loaded by init() and handed over again is written once and still wak
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
-    recipients: ["@test"],
+    recipientIds: [b.id],
     body: "once",
     urgent: false,
   });
@@ -219,7 +219,7 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
   expect(proc("bob")).toBeUndefined();
   expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
   expect(
-    await h.sql`select state from messages where to_agent_id = ${lead.id} and kind = 'member_update'`,
+    await h.sql`select state from messages where to_id = ${lead.id} and kind = 'member_update'`,
   ).toEqual([{ state: "pending" }]);
 });
 
@@ -252,7 +252,7 @@ test("archive between resolve and hand-off marks the row rejected", async () => 
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
-    recipients: ["@test"],
+    recipientIds: [b.id],
     body: "late",
     urgent: false,
   });
@@ -308,8 +308,8 @@ test("Router.forward: a report's text and facts go to its manager agent as membe
   await h.app.router.forward({ agentId: a.id, fact: "denied", body: "Bash was denied for @ada." });
   await h.app.router.forward({ agentId: a.id, fact: "errored", body: "@ada is errored." });
   const rows =
-    await h.sql`select kind, from_agent_id, subject_agent_id, notice, body, state from messages where to_agent_id = ${lead.id} order by created_at`;
-  expect(rows.map((r) => [r.kind, r.from_agent_id === a.id, r.notice, r.body, r.state])).toEqual([
+    await h.sql`select kind, from_id, subject_agent_id, notice, body, state from messages where to_id = ${lead.id} order by created_at`;
+  expect(rows.map((r) => [r.kind, r.from_id === a.id, r.notice, r.body, r.state])).toEqual([
     ["member_update", true, null, "progress", "pending"],
     ["member_update", false, "denied", "Bash was denied for @ada.", "pending"],
     ["member_update", false, "errored", "@ada is errored.", "pending"],
@@ -328,7 +328,7 @@ test("Router.forward: a human manager gets their report's text and facts in thei
   h.app.bus.subscribeUser(or.user.id, (m) => seen.or.push(m));
   h.app.bus.subscribeUser(sam.user.id, (m) => seen.sam.push(m));
   const inboxOf = (userId: string) =>
-    h.sql`select i.kind as inbox_kind, m.kind, m.notice, m.from_agent_id, m.subject_agent_id, m.to_user_id, m.to_all_humans
+    h.sql`select i.kind as inbox_kind, m.kind, m.notice, m.from_id, m.subject_agent_id, m.to_id, m.to_all_humans
           from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${userId} order by m.created_at`;
 
   await h.app.router.forward({ agentId: lead.id, body: "top-level text" });
@@ -338,18 +338,18 @@ test("Router.forward: a human manager gets their report's text and facts in thei
       inbox_kind: "member_update",
       kind: "member_update",
       notice: null,
-      from_agent_id: lead.id,
+      from_id: lead.id,
       subject_agent_id: null,
-      to_user_id: or.user.id,
+      to_id: or.user.id,
       to_all_humans: false,
     },
     {
       inbox_kind: "member_update",
       kind: "member_update",
       notice: "recovered",
-      from_agent_id: null,
+      from_id: null,
       subject_agent_id: lead.id,
-      to_user_id: or.user.id,
+      to_id: or.user.id,
       to_all_humans: false,
     },
   ]);
@@ -447,14 +447,14 @@ test("a report's top-level text is persisted for its manager and handed over to 
   await settle("ada", "lead");
   const lead = await h.app.store.agentBySlug("lead");
   const rows =
-    await h.sql`select id, from_agent_id, body from messages where to_agent_id = ${lead?.id ?? ""} and kind = 'member_update'`;
+    await h.sql`select id, from_id, body from messages where to_id = ${lead?.id ?? ""} and kind = 'member_update'`;
   const ada = await h.app.store.agentBySlug("ada");
-  expect(rows).toEqual([{ id: expect.any(String), from_agent_id: ada?.id, body: "halfway there" }]);
+  expect(rows).toEqual([{ id: expect.any(String), from_id: ada?.id, body: "halfway there" }]);
   expect(handed).toHaveBeenCalledTimes(1);
   expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
 });
 
-test("a report's text to a human manager keeps the request it answers on the inbox row", async () => {
+test("a member update's re stores the sender's tag: a report's text to a human manager keeps the request it answers on the inbox row", async () => {
   const { user: manager } = await signUp(h.app, { handle: "boss" });
   const ada = await h.app.store.agentBySlug("ada");
   await h.sql`update agents set reports_to = ${manager.id} where id = ${ada?.id ?? ""}`;
@@ -466,12 +466,15 @@ test("a report's text to a human manager keeps the request it answers on the inb
     payload: { to: ["ada"], body: "update the README" },
   });
   const [asked] = await h.sql<{ id: string }[]>`
-    select id from messages where to_agent_id = ${ada?.id ?? ""} and kind = 'message'`;
+    select id from messages where to_id = ${ada?.id ?? ""} and kind = 'message'`;
   proc("ada")?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
   await settle("ada");
   const rows = await h.sql`
-    select body, re from messages where to_user_id = ${manager.id} and kind = 'member_update'`;
-  expect(rows).toEqual([{ body: "README updated", re: [{ id: asked?.id, from: "@asker" }] }]);
+    select body, re from messages where to_id = ${manager.id} and kind = 'member_update'`;
+  const [asker] = await h.sql<{ ref: string }[]>`select ref from principals where handle = 'asker'`;
+  expect(rows).toEqual([
+    { body: "README updated", re: [{ id: asked?.id, from: `<@${asker?.ref}>` }] },
+  ]);
 });
 
 test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
@@ -493,7 +496,7 @@ test("receive: a recipient that fails to load is logged, never thrown or unhandl
   const unhandled = vi.fn();
   process.on("unhandledRejection", unhandled);
   try {
-    const row = { id: "m1", toAgentId: "ag1" } as unknown as Parameters<
+    const row = { id: "m1", toId: "ag1" } as unknown as Parameters<
       typeof h.app.runtimes.receive
     >[0];
     expect(() => h.app.runtimes.receive(row)).not.toThrow();
@@ -523,7 +526,7 @@ test("reconcile forwards factory_restarted lost work to the manager", async () =
   await h.app.close();
   await h.reopen({ harnessDriver: new FakeDriver(), env: { FACTORY_AGENT_PORT: "0" } });
   const rows =
-    await h.sql`select notice, subject_agent_id, body from messages where to_agent_id = ${lead.id} and kind = 'member_update'`;
+    await h.sql`select notice, subject_agent_id, body from messages where to_id = ${lead.id} and kind = 'member_update'`;
   expect(rows).toEqual([
     {
       notice: "work_lost",
@@ -639,7 +642,7 @@ async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {})
   return row;
 }
 const heldRows = () =>
-  h.sql`select a.slug as "to", m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
+  h.sql`select a.slug as "to", m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
         where m.kind in ('peer_joined','peer_left') order by a.slug`;
 const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
 
@@ -655,7 +658,7 @@ test("persistPeerEvents runs in the caller's transaction: it sees a child insert
         { kind: "spawned" },
         { managerId: null, peerIds: [] },
       );
-      seen = rows.map((r) => ({ to: r.toAgentId, kind: r.kind, notice: r.notice, body: r.body }));
+      seen = rows.map((r) => ({ to: r.toId, kind: r.kind, notice: r.notice, body: r.body }));
       throw rollback;
     }),
   ).rejects.toBe(rollback);
@@ -736,7 +739,7 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   const row = await h.app.store.createMessage({
     from: { agentId: ada },
     toAgentId: bob,
-    recipients: ["@test"],
+    recipientIds: [bob],
     body: "your brief",
     urgent: false,
   });
@@ -755,7 +758,18 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     return h.app.router.send({ agentId: a?.id ?? "" }, to, body, false);
   };
   const rowsOf = (body: string) =>
-    h.sql`select id, recipients, to_agent_id, to_user_id from messages where body = ${body} and kind = 'message' order by created_at, id`;
+    h.sql`select id, recipient_ids, to_id from messages where body = ${body} and kind = 'message' order by created_at, id`;
+  const idOf = async (handle: string) =>
+    (await h.sql`select id from principals where handle = ${handle}`)[0]?.id as string;
+
+  test("a message reaches only its to_id: two agents get two rows, each listing both recipients", async () => {
+    const [bob, lead] = [await idOf("bob"), await idOf("lead")];
+    const r = await sendAs("ada", ["bob", "lead"], "fan-out");
+    expect(r.results.map((x) => x.status)).toEqual(["queued", "queued"]);
+    const rows = await rowsOf("fan-out");
+    expect(rows.map((row) => row.to_id).sort()).toEqual([bob, lead].sort());
+    for (const row of rows) expect(row.recipient_ids).toEqual([bob, lead]);
+  });
 
   test("duplicates collapse by principal: one row, one result", async () => {
     const r = await sendAs("ada", ["bob", "@bob", " bob "], "dup");
@@ -773,7 +787,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect(mixed.results.map((x) => x.status)).toEqual(["refused", "queued"]);
     const rows = await rowsOf("me-and-bob");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.recipients).toEqual(["@bob"]);
+    expect(rows[0]?.recipient_ids).toEqual([await idOf("bob")]);
   });
 
   test("a terminated recipient is refused alone while the others get rows with the accepted list only", async () => {
@@ -788,10 +802,11 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect(r.results[1]).toMatchObject({ code: "terminated" });
     const rows = await rowsOf("partial");
     expect(rows).toHaveLength(2);
-    for (const row of rows) expect(row.recipients).toEqual(["@or", "@lead"]);
+    for (const row of rows)
+      expect(row.recipient_ids).toEqual([await idOf("or"), await idOf("lead")]);
     // The row order is the input order.
-    expect(rows[0]?.to_user_id).not.toBeNull();
-    expect(rows[1]?.to_agent_id).not.toBeNull();
+    expect(rows[0]?.to_id).not.toBeNull();
+    expect(rows[1]?.to_id).not.toBeNull();
   });
 
   test("all refused: nothing is written", async () => {
@@ -848,7 +863,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     );
     expect(r.results.map((x) => x.status)).toEqual(["refused", "queued"]);
     expect(r.results[0]).toMatchObject({ code: "human" });
-    expect((await rowsOf("to-mixed"))[0]?.recipients).toEqual(["@bob"]);
+    expect((await rowsOf("to-mixed"))[0]?.recipient_ids).toEqual([await idOf("bob")]);
   });
 
   test("chat_changed goes to the human party of each row only", async () => {

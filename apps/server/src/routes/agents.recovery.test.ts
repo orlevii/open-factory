@@ -218,7 +218,7 @@ test("reset-session: clears session_id, appends session_reset, deletes pending n
     resumed: false,
   });
   const pendingNotices = await t.sql`
-    select id from messages where to_agent_id = ${rt.agent.id} and kind = 'system' and state = 'pending'`;
+    select id from messages where to_id = ${rt.agent.id} and kind = 'system' and state = 'pending'`;
   expect(pendingNotices).toHaveLength(0);
   p.emit(...ev.fullTurn("sess-B"));
   await rt.settled();

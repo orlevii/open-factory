@@ -96,12 +96,12 @@ test("only a persistent agent can manage the org", async () => {
   expect(l?.manage_org).toBe(true);
 });
 test("a kind='message' row needs its recipients; other kinds don't", async () => {
-  await expect(sql`insert into messages (id, kind, from_agent_id, to_agent_id, body)
+  await expect(sql`insert into messages (id, kind, from_id, to_id, body)
                    values ('r1','message','lead','lead','x')`).rejects.toMatchObject({
     code: "23514",
   });
-  await sql`insert into messages (id, kind, from_agent_id, to_agent_id, body, recipients)
-            values ('r2','message','lead','lead','x', ${["@lead"]})`;
-  await sql`insert into messages (id, kind, subject_agent_id, notice, to_agent_id, body)
+  await sql`insert into messages (id, kind, from_id, to_id, body, recipient_ids)
+            values ('r2','message','lead','lead','x', ${["lead"]})`;
+  await sql`insert into messages (id, kind, subject_agent_id, notice, to_id, body)
             values ('r3','peer_joined','lead','peer','lead','x')`;
 });

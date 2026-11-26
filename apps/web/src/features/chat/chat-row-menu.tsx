@@ -17,6 +17,7 @@ export function chatMenuItems(
   entry: MessageEntry,
   slug: string,
   others: readonly string[],
+  recipientsText: string,
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [
     { kind: "copy", label: "Copy text", text: entry.body },
@@ -29,7 +30,7 @@ export function chatMenuItems(
   if (entry.state === "delivered")
     items.push({ kind: "session", label: "View in session", to: slug, messageId: entry.id });
   if (others.length > 0)
-    items.push({ kind: "recipients", label: "Recipients", text: entry.recipients.join(", ") });
+    items.push({ kind: "recipients", label: "Recipients", text: recipientsText });
   items.push({ kind: "time", label: `Sent ${clock(entry.createdAt)}` });
   return items;
 }
@@ -39,19 +40,29 @@ export function ChatRowMenu({
   entry,
   slug,
   others,
+  recipientsText,
+  sender,
   tabbable,
   menuRef,
 }: {
   entry: MessageEntry;
   slug: string;
+  /** The refs of everyone else the message went to. */
   others: readonly string[];
+  /** Every recipient's handle, for Copy of the Recipients item. */
+  recipientsText: string;
+  /** The sender's current handle. */
+  sender: string;
   tabbable: boolean;
   menuRef: Ref<RowMenuHandle>;
 }) {
-  const items = useCallback(() => chatMenuItems(entry, slug, others), [entry, slug, others]);
+  const items = useCallback(
+    () => chatMenuItems(entry, slug, others, recipientsText),
+    [entry, slug, others, recipientsText],
+  );
   const title = useCallback(
-    () => `Message from ${entry.from} · ${formatTime(entry.createdAt)}`,
-    [entry.from, entry.createdAt],
+    () => `Message from @${sender} · ${formatTime(entry.createdAt)}`,
+    [sender, entry.createdAt],
   );
   return <RowMenu ref={menuRef} items={items} title={title} focusable={tabbable} />;
 }

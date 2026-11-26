@@ -105,7 +105,12 @@ test("recent agent senders come from the cached inbox", () => {
   qc.setQueryData(["inbox"], {
     pages: [
       {
-        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        items: [
+          {
+            from: { kind: "agent", ref: "z00000", handle: "z" },
+            createdAt: "2026-11-19T10:00:00Z",
+          },
+        ],
         nextCursor: null,
       },
     ],
@@ -122,7 +127,12 @@ test("an agent whose unread chat is newer than the inbox items ranks first", () 
     pages: [
       {
         chats: [{ agent: { slug: "m" }, latest: { createdAt: "2026-11-19T12:00:00Z" } }],
-        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        items: [
+          {
+            from: { kind: "agent", ref: "z00000", handle: "z" },
+            createdAt: "2026-11-19T10:00:00Z",
+          },
+        ],
         nextCursor: null,
       },
     ],

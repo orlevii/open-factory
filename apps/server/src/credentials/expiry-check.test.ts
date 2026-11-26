@@ -67,7 +67,7 @@ test("notifies once per user within 14 days, never for null expires_at", async (
     expect(got[0]).toMatchObject({
       kind: "credential",
       preview: "work expires on 2027-11-12.",
-      from: { kind: "factory", name: "factory" },
+      from: { kind: "factory" },
       link: { kind: "credential", name: "work" },
       credential: { name: "work", current: true, expiresAt: "2027-11-12T00:00:00.000Z" },
     });

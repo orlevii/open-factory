@@ -1,6 +1,16 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { chatMsg, json, mine, page, stubChatApi } from "@/test/chat-fixtures";
+import { mergePrincipals } from "@/features/principals/api";
+import {
+  ALICE_REF,
+  chatMsg,
+  DEV_REF,
+  json,
+  mine,
+  page,
+  principal,
+  stubChatApi,
+} from "@/test/chat-fixtures";
 import { alice, renderApp } from "@/test/render-app";
 import { onChatChanged } from "./use-chat";
 
@@ -22,6 +32,7 @@ beforeEach(() => {
   });
 });
 
+const QA_REF = "0qa00000";
 const paragraphs = (n: number) =>
   Array.from({ length: n }, (_, i) => `Paragraph ${i + 1}`).join("\n\n");
 const row = (key: string) => document.querySelector<HTMLElement>(`[data-row="${key}"]`);
@@ -52,11 +63,12 @@ test("your message is unboxed under its speaker line 'You' and clamped at 40 lin
 
 test("a human message keeps its urgent badge, attachments and Also-to", async () => {
   stubChatApi({
+    principals: [principal(QA_REF, "qa")],
     chat: () =>
       page([
         mine(1, {
           urgent: true,
-          recipients: ["@dev", "@qa"],
+          recipients: [{ ref: DEV_REF }, { ref: QA_REF }],
           body: "see this\n\n[attached: .factory/uploads/20261123-0a1b2c3d-0000-4000-8000-000000000001-notes.txt]",
           attachments: [
             {
@@ -76,7 +88,7 @@ test("a human message keeps its urgent badge, attachments and Also-to", async ()
     return el;
   })) as HTMLElement;
   expect(within(r).getByText("Urgent")).toBeInTheDocument();
-  expect(within(r).getByRole("group", { name: "Also to @qa" })).toBeInTheDocument();
+  expect(await within(r).findByRole("group", { name: "Also to @qa" })).toBeInTheDocument();
   const files = within(r).getByRole("list", { name: "Attached files" });
   expect(within(files).getByRole("link", { name: /notes\.txt/ })).toHaveAttribute(
     "href",
@@ -121,6 +133,19 @@ test.each([
   );
 });
 
+test("after principal_updated, a chat speaker line shows the new handle", async () => {
+  stubChatApi({ chat: () => page([chatMsg(1)]) });
+  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  await screen.findByText("Reply 1");
+  const line = () => row("m1")?.querySelector("[data-speaker-line]") as HTMLElement;
+  await waitFor(() => expect(queryClient.getQueryData(["principals"])).toBeDefined());
+  expect(within(line()).getByText("@dev")).toBeInTheDocument();
+  // Task 5.4 wires the frame; its handler merges the renamed principal like this.
+  act(() => mergePrincipals(queryClient, [principal(DEV_REF, "builder")]));
+  expect(await within(line()).findByText("@builder")).toBeInTheDocument();
+  expect(within(line()).queryByText("@dev")).toBeNull();
+});
+
 test("the agent's reply is unboxed prose and never clamped", async () => {
   stubChatApi({ chat: () => page([chatMsg(1, { body: paragraphs(60) })]) });
   renderApp("/agents/dev/chat", alice);
@@ -131,8 +156,14 @@ test("the agent's reply is unboxed prose and never clamped", async () => {
 });
 
 test("'also to' counts the rest, and the full list is the accessible name and the menu's Recipients", async () => {
-  const others = ["@qa", "@x1", "@x2", "@x3", "@x4", "@x5", "@x6", "@x7", "@x8"];
-  stubChatApi({ chat: () => page([chatMsg(1, { recipients: ["@alice", ...others] })]) });
+  const handles = ["qa", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"];
+  const others = handles.map((h) => `@${h}`);
+  const refs = handles.map((_, i) => `0ther00${i}`);
+  stubChatApi({
+    principals: handles.map((h, i) => principal(refs[i] as string, h)),
+    chat: () =>
+      page([chatMsg(1, { recipients: [{ ref: ALICE_REF }, ...refs.map((ref) => ({ ref }))] })]),
+  });
   renderApp("/agents/dev/chat", alice);
   const group = await screen.findByRole("group", { name: `Also to ${others.join(", ")}` });
   expect(group).toHaveTextContent("also to");
@@ -143,7 +174,10 @@ test("'also to' counts the rest, and the full list is the accessible name and th
 });
 
 test("one other recipient reads 'also to @qa', with no count", async () => {
-  stubChatApi({ chat: () => page([mine(1, { recipients: ["@dev", "@qa"] })]) });
+  stubChatApi({
+    principals: [principal(QA_REF, "qa")],
+    chat: () => page([mine(1, { recipients: [{ ref: DEV_REF }, { ref: QA_REF }] })]),
+  });
   renderApp("/agents/dev/chat", alice);
   const group = await screen.findByRole("group", { name: "Also to @qa" });
   expect(group).toHaveTextContent("also to");

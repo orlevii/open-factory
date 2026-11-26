@@ -20,6 +20,7 @@ import {
   type SubmitOptions,
   UNCONFIRMED,
 } from "@/components/composer/composer";
+import { refOfHandle } from "@/features/principals/api";
 import { postInterrupt } from "@/features/session/api";
 import { commandsQueryOptions, knownCommand } from "@/features/session/commands";
 import { SEND_TIMEOUT_MS } from "@/features/session/composer";
@@ -35,6 +36,7 @@ import {
   writeRecipients,
 } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
+import { sessionQueryOptions } from "@/lib/session";
 import { recipientSource } from "./recipient-source";
 import { refusedBecause, sendMessages, slugOf } from "./send";
 import { addSending, dropSending, lastSentText, refreshChat } from "./use-chat";
@@ -53,8 +55,6 @@ type Props = {
   agentName: string;
   /** Your user id: the uploads are yours. */
   userId: string | undefined;
-  /** Your handle, without `@`. */
-  self: string | undefined;
   /** The turn that read your message is running: Stop shows, Esc stops it. */
   working: boolean;
   /** The key of that turn (Stop resets when it changes). */
@@ -81,7 +81,6 @@ export const ChatComposer = memo(function ChatComposer({
   slug,
   agentName,
   userId,
-  self,
   working,
   workingKey,
   turnOpen,
@@ -143,10 +142,10 @@ export const ChatComposer = memo(function ChatComposer({
         kind: "message",
         id: clientMessageId,
         clientMessageId,
-        from: `@${self ?? ""}`,
-        fromKind: "human",
+        from: { kind: "human", ref: qc.getQueryData(sessionQueryOptions.queryKey)?.user.ref ?? "" },
         body,
-        recipients: to.map((s) => `@${s}`),
+        // Refs come from the principals cache; the server's row replaces this entry.
+        recipients: to.map((s) => ({ ref: refOfHandle(qc, s) ?? "" })),
         urgent,
         createdAt: new Date().toISOString(),
         state: "pending",
@@ -193,7 +192,7 @@ export const ChatComposer = memo(function ChatComposer({
         clearTimeout(timer);
       }
     },
-    [qc, slug, self, agentName, store, onSend],
+    [qc, slug, agentName, store, onSend],
   );
   const recall = useCallback(() => lastSentText(qc, slug), [qc, slug]);
   const onStop = useCallback(() => postInterrupt(slug), [slug]);

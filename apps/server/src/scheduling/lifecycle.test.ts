@@ -30,7 +30,7 @@ const fireAt = async (iso: string) => {
   await h.app.scheduler.idle();
 };
 const rows = () =>
-  h.sql`select id, state, firings, late, to_agent_id from messages where kind = 'scheduled' order by created_at`;
+  h.sql`select id, state, firings, late, to_id from messages where kind = 'scheduled' order by created_at`;
 const make = (target: string, body = "Review", over: Record<string, unknown> = {}) =>
   h.app.schedules.create({ userId }, { target, ...weekday, body, ...over });
 const settle = async (slug: string) => (await h.app.runtimes.bySlug(slug))?.settled();
@@ -112,7 +112,7 @@ test("a mid-turn target gets the row written at once", async () => {
   const row = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("ceo"),
-    recipients: ["@test"],
+    recipientIds: [await idOf("ceo")],
     body: "go",
     urgent: false,
   });

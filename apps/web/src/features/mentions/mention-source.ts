@@ -39,7 +39,7 @@ function recentSenders(qc: QueryClient): string[] {
   const found: { slug: string; at: string }[] = [];
   for (const p of pages) {
     for (const i of p.items)
-      if (i.from.kind === "agent") found.push({ slug: i.from.name, at: i.createdAt });
+      if (i.from.kind === "agent") found.push({ slug: i.from.handle, at: i.createdAt });
     for (const c of p.chats ?? []) found.push({ slug: c.agent.slug, at: c.latest.createdAt });
   }
   return found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((f) => f.slug);

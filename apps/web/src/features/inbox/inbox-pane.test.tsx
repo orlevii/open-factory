@@ -34,10 +34,9 @@ const at = (s: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, s)).toISOString(
 const msg = (slug: string, i: number, over: Record<string, unknown> = {}) => ({
   kind: "message",
   id: `${slug}-m${i}`,
-  from: `@${slug}`,
-  fromKind: "agent",
+  from: { kind: "agent", ref: `${slug}`.padEnd(8, "0") },
   body: `${slug} says ${i}`,
-  recipients: ["@alice"],
+  recipients: [{ ref: "abcd2345" }],
   urgent: false,
   createdAt: at(i),
   state: "delivered",

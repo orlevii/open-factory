@@ -44,7 +44,9 @@ export class TerminateService implements TerminatePort {
         message: `@${found.kind === "agent" ? found.handle : found.name} isn't an agent you spawned.`,
       };
     try {
-      await this.terminate(a.id, (await principalById(this.d.db, callerId)) ?? null);
+      const caller = await principalById(this.d.db, callerId);
+      if (!caller) throw new Error(`caller ${callerId} is not a principal`);
+      await this.terminate(a.id, caller);
     } catch (err) {
       this.d.log.error({ err, agent: a.slug }, "terminating a spawned agent failed");
       return { ok: false, message: `@${a.slug} couldn't be terminated; try again.` };

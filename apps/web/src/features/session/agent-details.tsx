@@ -21,6 +21,7 @@ import { AgentChip } from "@/components/agent-chip";
 import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
 import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
+import { Tag } from "@/components/tag/tag";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -44,7 +45,6 @@ import { canPin, PinButton } from "./live-line";
 import { LINK_CLASS } from "./message-block";
 import { RestartNowButton } from "./restart-now-button";
 import { registerAgentDetailsOpener } from "./session-commands";
-import { Actor } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
 import type { StopCrons } from "./stop-crons";
 import type { TimelineHandle } from "./timeline";
@@ -70,7 +70,7 @@ export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
   if (by === null) return `Terminated ${when} after 3 days without activity.`;
   return (
     <>
-      Terminated by <Actor by={`@${by.handle}`} /> {when}.
+      Terminated by <Tag tagRef={by.ref} /> {when}.
     </>
   );
 }

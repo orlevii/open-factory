@@ -78,6 +78,29 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
         running: { count: 1 },
       }),
     "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p-lead",
+            ref: "aaaaaaaa",
+            kind: "agent",
+            handle: "lead",
+            name: "Lead",
+            state: "live",
+            avatar: null,
+          },
+          {
+            id: "p-or",
+            ref: "hhhhhhhh",
+            kind: "human",
+            handle: "or",
+            name: "Or",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
     ...extra,
   });
   const app = renderApp(`/agents/${SLUG}/session`, alice);
@@ -224,30 +247,38 @@ test("Agent details: in the grace period, with Pin workspace; credential omitted
   await open(terminated({ credential: null }));
   const panel = await details();
   expect(sentence()).toBe(
-    "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
+    "Terminated by @lead, Lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
   expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(panel.textContent).not.toContain("Credential");
   expect(panel.textContent).toContain("Spawned by");
 });
 
+test("Agent details: an agent that terminated it is a link to that agent's chat", async () => {
+  await open(terminated());
+  const panel = await details();
+  const link = await within(panel).findByRole("link", { name: /@lead/ });
+  expect(link).toHaveAttribute("href", expect.stringContaining("/agents/lead/chat"));
+  expect(link.closest("[data-terminated-text]")).not.toBeNull();
+});
+
 test.each([
   [
     "due for deletion",
     {},
-    "Terminated by @lead on 14 Nov at 14:32. Workspace due for deletion since 17 Nov at 14:32 unless you pin it.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace due for deletion since 17 Nov at 14:32 unless you pin it.",
     "Pin workspace",
   ],
   [
     "pinned",
     { workspacePinned: true },
-    "Terminated by @lead on 14 Nov at 14:32. Workspace pinned.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
   [
     "deleted",
     { workspaceDeletedAt: local(17, 14, 40) },
-    "Terminated by @lead on 14 Nov at 14:32. Workspace deleted on 17 Nov at 14:40.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace deleted on 17 Nov at 14:40.",
     undefined,
   ],
   [
@@ -259,7 +290,7 @@ test.each([
   [
     "by a human",
     { terminatedBy: { ref: "hhhhhhhh", handle: "or" }, workspacePinned: true },
-    "Terminated by @or on 14 Nov at 14:32. Workspace pinned.",
+    "Terminated by O@or, Or on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
 ] as const)("Agent details: %s", async (_, over, text, button) => {
@@ -280,9 +311,9 @@ test.each([
     within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
       undefined,
   ).toBe(button);
-  // Who ended it is plain text, never a link.
-  if (text.includes("Terminated by @or"))
-    expect(within(panel).getByText("@or").closest("a")).toBeNull();
+  // A person is a chip without a link; only an agent links to its chat.
+  if (text.includes("Terminated by O@or"))
+    expect(within(panel).queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
 test("Agent details: What's kept? explains in a popover", async () => {

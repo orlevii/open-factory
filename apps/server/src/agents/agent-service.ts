@@ -67,7 +67,9 @@ type Managers = Map<string, Principal>;
 /** The row's manager as the DTO says it (a spawned agent's is its spawner). */
 function reportsToOf(r: AgentRow, m: Managers): ReportsTo {
   const p = m.get(r.reportsTo);
-  return { kind: p?.kind ?? "agent", ref: p?.ref ?? "", handle: p?.handle ?? "" };
+  // The FK makes a miss impossible.
+  if (!p) throw new Error(`agent ${r.id} reports to unknown principal ${r.reportsTo}`);
+  return { kind: p.kind, ref: p.ref, handle: p.handle };
 }
 
 /** A resolved manager: an active persistent agent, or an enabled user. */

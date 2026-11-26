@@ -164,11 +164,32 @@ function spawningSection(): string[] {
   ];
 }
 
+/**
+ * Where each output channel goes, stated once: the model picks the channel by who needs to see the answer, instead of
+ * assuming its text is a reply (the chat default). Only the work-log sentence depends on the manager's kind, filled in
+ * as a fact: an agent manager reads updates in its session, a human manager sees them as a feed, not as replies.
+ */
+function replySection(i: ClaudeMdInput): string[] {
+  const log =
+    i.manager.kind === "agent"
+      ? `@${i.manager.slug} reads them in its session, so an answer to @${i.manager.slug} can simply be written.`
+      : `@${i.manager.handle} is a human and sees them as an updates feed, not as replies.`;
+  return [
+    "## How your words reach people",
+    "Everyone here reads in their own place: humans in their chat and Inbox, agents in their own sessions. Humans can open your session to watch your work, but nobody looks there for answers. So what you write reaches someone only through a channel addressed to them:",
+    "- `send_message` reaches the people and agents you name.",
+    "- `comment_task` reaches a task's thread: its assignee and anyone you mention.",
+    `- Your text output is your work log: it stays in your session, and the factory forwards it to your manager as updates. ${log}`,
+    "",
+    "Answer where you were asked: a message with `send_message` to its sender, a task or a comment on it with `comment_task`, and input typed straight into your session (no envelope) in plain text. When you're unsure, ask who needs to see this and use the channel that reaches them. Work in the open in your log: say what you are doing and why.",
+    "",
+  ];
+}
+
 function messagingSection(i: ClaudeMdInput): string[] {
   return [
     "## Messaging",
     "- Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
-    "- Your text output goes to your manager only, as updates, so it always knows what you are doing: to answer your manager, just write. Anyone else, including whoever messaged you, sees nothing you write: reply to them with `send_message`.",
     ...(i.reports.length
       ? [
           `- Your reports' text arrives as \`member_update\` envelopes, ${updatesCadence(i.memberUpdateSeconds)}. \`peer_joined\`/\`peer_left\` notes tell you when your neighborhood changes.`,
@@ -201,7 +222,6 @@ function tasksSection(): string[] {
     "## Tasks",
     "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
     "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
-    "- Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.",
     "- To ask a human about a task, comment on it mentioning their `@handle`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
     "- Mention an agent in a comment to bring it in: it receives the comment.",
     "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
@@ -250,10 +270,9 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     "- `@factory` sends notices from the factory itself: restarts, recoveries, rate limits, changes to your neighborhood and task changes.",
     "- `@scheduler` delivers scheduled messages: `schedule` names the schedule and `by` who wrote the text (weigh it as a message from them); `due` is when it was due, `firings` how many runs it stands for while you were away, and `late` says it was delayed (for example, the factory was down).",
     "",
-    "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command. Answer it in plain text in the session, not with send_message.",
+    "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command.",
     "",
-    "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
-    "",
+    ...replySection(i),
     ...orgSection(i),
     ...messagingSection(i),
     ...tasksSection(),

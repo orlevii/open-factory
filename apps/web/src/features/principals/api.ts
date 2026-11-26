@@ -1,4 +1,10 @@
-import { apiFetch, type PrincipalItem, principalsResponseSchema } from "@open-factory/shared";
+import {
+  apiFetch,
+  MAX_PRINCIPAL_REFS,
+  normaliseRef,
+  type PrincipalItem,
+  principalsResponseSchema,
+} from "@open-factory/shared";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
 export interface PrincipalsCache {
@@ -10,9 +16,13 @@ export interface PrincipalsCache {
 /** Everyone, fetched once; tags that name someone newer join through `requestPrincipal`'s batches. */
 export const principalsQueryOptions = queryOptions({
   queryKey: ["principals"],
-  queryFn: async (): Promise<PrincipalsCache> => {
+  queryFn: async ({ client }): Promise<PrincipalsCache> => {
     const { principals } = await apiFetch("/api/principals", { schema: principalsResponseSchema });
-    return { byRef: new Map(principals.map((p) => [p.ref, p])), unknown: new Set() };
+    const byRef = new Map(principals.map((p) => [p.ref, p]));
+    // A refetch keeps what was learned to be nobody (the batch won't ask again), unless the list has them now.
+    const previous = client.getQueryData<PrincipalsCache>(["principals"]);
+    const unknown = new Set([...(previous?.unknown ?? [])].filter((r) => !byRef.has(r)));
+    return { byRef, unknown };
   },
   staleTime: Number.POSITIVE_INFINITY,
 });
@@ -48,7 +58,9 @@ const batches = new WeakMap<QueryClient, Batch>();
  * Asks the server for a ref the loaded cache lacks. Refs requested in the same animation frame go out as one
  * `?refs=` request; the answer is merged, and a ref the server left out becomes unknown.
  */
-export function requestPrincipal(qc: QueryClient, ref: string): void {
+export function requestPrincipal(qc: QueryClient, rawRef: string): void {
+  const ref = normaliseRef(rawRef);
+  if (!ref) return;
   const b = batches.get(qc) ?? { queued: new Set(), asked: new Set(), scheduled: false };
   batches.set(qc, b);
   if (b.asked.has(ref)) return;
@@ -59,20 +71,23 @@ export function requestPrincipal(qc: QueryClient, ref: string): void {
   const batch = b;
   requestAnimationFrame(() => {
     batch.scheduled = false;
-    const refs = [...batch.queued];
+    const all = [...batch.queued];
     batch.queued.clear();
-    void apiFetch(`/api/principals?refs=${refs.join(",")}`, { schema: principalsResponseSchema })
-      .then(({ principals }) => {
-        const found = new Set(principals.map((p) => p.ref));
-        mergePrincipals(
-          qc,
-          principals,
-          refs.filter((r) => !found.has(r)),
-        );
-      })
-      .catch(() => {
-        // Still pending: a later mount asks again.
-        for (const r of refs) batch.asked.delete(r);
-      });
+    for (let i = 0; i < all.length; i += MAX_PRINCIPAL_REFS) {
+      const refs = all.slice(i, i + MAX_PRINCIPAL_REFS);
+      void apiFetch(`/api/principals?refs=${refs.join(",")}`, { schema: principalsResponseSchema })
+        .then(({ principals }) => {
+          const found = new Set(principals.map((p) => p.ref));
+          mergePrincipals(
+            qc,
+            principals,
+            refs.filter((r) => !found.has(r)),
+          );
+        })
+        .catch(() => {
+          // Still pending: a later mount asks again.
+          for (const r of refs) batch.asked.delete(r);
+        });
+    }
   });
 }

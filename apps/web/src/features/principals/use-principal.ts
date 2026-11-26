@@ -1,4 +1,4 @@
-import type { PrincipalItem } from "@open-factory/shared";
+import { normaliseRef, type PrincipalItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
 import { principalsQueryOptions, requestPrincipal } from "./api";
@@ -9,14 +9,16 @@ export type PrincipalLookup =
   | { status: "found"; principal: PrincipalItem };
 
 /** One principal by ref; re-renders only when that entry changes. A ref the cache lacks is fetched in a batch. */
-export function usePrincipal(ref: string): PrincipalLookup {
+export function usePrincipal(rawRef: string): PrincipalLookup {
+  // The cache is keyed by canonical refs; a ref that can't be one is nobody.
+  const ref = normaliseRef(rawRef) ?? rawRef;
   const qc = useQueryClient();
   const { data } = useQuery({
     ...principalsQueryOptions,
     select: (c): PrincipalLookup => {
       const principal = c.byRef.get(ref);
       if (principal) return { status: "found", principal };
-      return { status: c.unknown.has(ref) ? "unknown" : "pending" };
+      return { status: c.unknown.has(ref) || !normaliseRef(ref) ? "unknown" : "pending" };
     },
   });
   const status = data?.status;

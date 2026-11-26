@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "@/lib/query-client";
 import { json, mockApi } from "@/test/mock-api";
+import type { PrincipalsCache } from "./api";
 import { usePrincipal } from "./use-principal";
 
 const person = (ref: string, handle: string): PrincipalItem => ({
@@ -44,7 +45,7 @@ function setup() {
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
   const batchCalls = () => api.calls.filter((c) => c.url.includes("?refs="));
-  return { wrapper, batchCalls };
+  return { wrapper, batchCalls, qc };
 }
 
 test("a ref in the loaded cache is found without a second request", async () => {
@@ -77,4 +78,46 @@ test("a ref the server doesn't know becomes unknown, never before the fetch answ
   await runFrame();
   await waitFor(() => expect(result.current.status).toBe("unknown"));
   expect(batchCalls()).toHaveLength(1);
+});
+
+test("two refs asked in one frame go out as one request", async () => {
+  const { wrapper, batchCalls } = setup();
+  const { result } = renderHook(() => ({ a: usePrincipal(BOB.ref), b: usePrincipal("ccccccc3") }), {
+    wrapper,
+  });
+  await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+  await runFrame();
+  await waitFor(() => expect(result.current.b.status).toBe("unknown"));
+  expect(result.current.a.principal).toEqual(BOB);
+  expect(batchCalls().map((c) => c.url)).toEqual([`/api/principals?refs=${BOB.ref},ccccccc3`]);
+});
+
+test("a ref typed in capitals is found under its canonical ref", async () => {
+  const { wrapper } = setup();
+  const { result } = renderHook(() => usePrincipal(BOB.ref.toUpperCase()), { wrapper });
+  await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+  await runFrame();
+  await waitFor(() => expect(result.current.principal).toEqual(BOB));
+});
+
+test("more refs than one request may carry are all answered, none stuck pending", async () => {
+  const { wrapper, batchCalls } = setup();
+  const refs = Array.from({ length: 101 }, (_, i) => `dddd${String(i).padStart(4, "0")}`);
+  const { result } = renderHook(() => refs.map((r) => usePrincipal(r).status), { wrapper });
+  await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+  await runFrame();
+  await waitFor(() => expect(result.current.every((s) => s === "unknown")).toBe(true));
+  expect(batchCalls()).toHaveLength(2);
+});
+
+test("a ref learned to be nobody stays unknown after the list refetches", async () => {
+  const { wrapper, qc } = setup();
+  const { result } = renderHook(() => usePrincipal("ccccccc3"), { wrapper });
+  await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+  await runFrame();
+  await waitFor(() => expect(result.current.status).toBe("unknown"));
+  await act(() => qc.refetchQueries({ queryKey: ["principals"] }));
+  await waitFor(() => expect(result.current.status).toBe("unknown"));
+  // Rendered state lags the cache by a tick, so check the cache itself too.
+  expect(qc.getQueryData<PrincipalsCache>(["principals"])?.unknown.has("ccccccc3")).toBe(true);
 });

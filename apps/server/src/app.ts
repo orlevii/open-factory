@@ -64,6 +64,7 @@ import { libraryRoutes } from "./routes/library.ts";
 import { loopHoldsRoutes } from "./routes/loop-holds.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
+import { principalsRoutes } from "./routes/principals.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { schedulesRoutes } from "./routes/schedules.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
@@ -579,6 +580,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(statusRoutes, { sql: deps.sql });
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
+  await app.register(principalsRoutes);
   await app.register(hostRoutes);
   await app.register(libraryRoutes);
   await app.register(wsRoutes);

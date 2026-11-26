@@ -1,0 +1,36 @@
+import { z } from "zod";
+import { avatarColorSchema } from "./avatar.ts";
+
+export const principalStateSchema = z.enum(["live", "archived", "terminated", "disabled"]);
+export type PrincipalState = z.infer<typeof principalStateSchema>;
+
+/** What a tag chip needs to draw one principal; `avatar` is what `AgentAvatar` takes, null for a human. */
+export const principalItemSchema = z.object({
+  id: z.string(),
+  ref: z.string(),
+  kind: z.enum(["agent", "human"]),
+  handle: z.string(),
+  name: z.string(),
+  state: principalStateSchema,
+  avatar: z
+    .object({
+      template: z.string(),
+      avatarVersion: z.string().nullable(),
+      color: avatarColorSchema.nullable(),
+    })
+    .nullable(),
+});
+export type PrincipalItem = z.infer<typeof principalItemSchema>;
+
+export const principalsResponseSchema = z.object({ principals: z.array(principalItemSchema) });
+export type PrincipalsResponse = z.infer<typeof principalsResponseSchema>;
+
+export const MAX_PRINCIPAL_REFS = 100;
+/** `?refs=a,b`: the refs to list; absent lists everyone. */
+export const principalsQuerySchema = z.object({
+  refs: z
+    .string()
+    .transform((s) => s.split(",").filter(Boolean))
+    .pipe(z.array(z.string()).max(MAX_PRINCIPAL_REFS))
+    .optional(),
+});

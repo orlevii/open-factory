@@ -1,7 +1,7 @@
 import type { ClipboardEvent } from "react";
 
 const CHIP = "[data-of-tag]";
-const BLOCKS = new Set([
+export const BLOCKS = new Set([
   "P",
   "LI",
   "DIV",

@@ -1,5 +1,6 @@
 import { normaliseRef } from "@open-factory/shared";
 import { scanTags, tagOf } from "@open-factory/shared/tags";
+import { BLOCKS } from "@/components/tag/copy-tags";
 
 /** One tag in the text: `[start, end)` covers its `@handle`, `ref` is the principal it stands for. */
 export type TagRange = { start: number; end: number; ref: string };
@@ -47,15 +48,45 @@ export function serialise(t: Tagged): string {
 /**
  * The text after an edit, with the ranges that survive it. The edit is the span between the common prefix and
  * suffix of the two texts, so an insertion at a range's start shifts it and one at its end leaves it alone.
+ * The common prefix is greedy, so an edit that repeats a range's first character (typing `@` before `@ada`) would
+ * read as an edit inside the range. Given `caret`, the selection end after the edit, the edit instead ends there:
+ * the suffix is what follows the caret, clamped to what really matches, and the prefix takes what is left.
  */
-export function rebase(prev: Tagged, nextText: string): Tagged {
+export function rebase(prev: Tagged, nextText: string, caret?: number): Tagged {
   const a = prev.text;
-  const max = Math.min(a.length, nextText.length);
-  let p = 0;
-  while (p < max && a[p] === nextText[p]) p++;
+  const b = nextText;
+  const max = Math.min(a.length, b.length);
   let s = 0;
-  while (s < max - p && a[a.length - 1 - s] === nextText[nextText.length - 1 - s]) s++;
-  return splice(prev, p, a.length - s, nextText.slice(p, nextText.length - s));
+  if (caret === undefined) {
+    let p = 0;
+    while (p < max && a[p] === b[p]) p++;
+    while (s < max - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+    return splice(prev, p, a.length - s, b.slice(p, b.length - s));
+  }
+  let common = 0;
+  while (common < max && a[a.length - 1 - common] === b[b.length - 1 - common]) common++;
+  s = Math.min(Math.max(b.length - caret, 0), common);
+  let p = 0;
+  while (p < max - s && a[p] === b[p]) p++;
+  return splice(prev, p, a.length - s, b.slice(p, b.length - s));
+}
+
+/**
+ * Replaces `[from, to)` with a fragment (typed or pasted text with its own tags): the existing ranges keep or
+ * shift as `splice` decides, the fragment's ranges land offset by `from`, and the caret goes after the fragment.
+ */
+export function insertTagged(
+  t: Tagged,
+  from: number,
+  to: number,
+  fragment: Tagged,
+): { tagged: Tagged; caret: number } {
+  const edited = splice(t, from, to, fragment.text);
+  const landed = fragment.ranges.map((r) => ({ ...r, start: r.start + from, end: r.end + from }));
+  return {
+    tagged: { text: edited.text, ranges: [...edited.ranges, ...landed].sort(byStart) },
+    caret: from + fragment.text.length,
+  };
 }
 
 /** Replaces the typed `@query` at `[from, to)` with `@handle ` and ranges the new tag; the caret goes after the space. */
@@ -67,18 +98,15 @@ export function insertTag(
   handle: string,
 ): { tagged: Tagged; caret: number } {
   const label = `@${handle}`;
-  const edited = splice(t, from, to, `${label} `);
-  const range: TagRange = { start: from, end: from + label.length, ref };
-  return {
-    tagged: { text: edited.text, ranges: [...edited.ranges, range].sort(byStart) },
-    caret: from + label.length + 1,
-  };
+  const fragment: Tagged = { text: `${label} `, ranges: [{ start: 0, end: label.length, ref }] };
+  return insertTagged(t, from, to, fragment);
 }
 
 /**
- * Where a collapsed caret lands. `at` is the position after the native move: `left` and `right` move it to the
- * far edge of a range it has entered in that direction, and a click moves a caret strictly inside to the nearer
- * edge (a tie goes to the end).
+ * Where a collapsed caret lands, given its position after the native move. Only a caret strictly inside a range
+ * snaps: `left` goes to the range's start, `right` to its end, and a click to the nearer edge (a tie goes to the
+ * end). A caret on an edge never snaps. So ← from right after a tag moves natively to `end - 1`, which is inside,
+ * and snaps to the start.
  */
 export function snapCaret(
   ranges: readonly TagRange[],
@@ -86,11 +114,10 @@ export function snapCaret(
   how: "click" | "left" | "right",
 ): number {
   for (const r of ranges) {
-    if (how === "left" && r.start < at && at <= r.end) return r.start;
-    if (how === "right" && r.start <= at && at < r.end) return r.end;
-    if (how === "click" && r.start < at && at < r.end) {
-      return at - r.start < r.end - at ? r.start : r.end;
-    }
+    if (!(r.start < at && at < r.end)) continue;
+    if (how === "left") return r.start;
+    if (how === "right") return r.end;
+    return at - r.start < r.end - at ? r.start : r.end;
   }
   return at;
 }
@@ -121,21 +148,6 @@ export function deleteTagAt(
   const to = t.text[r.end] === " " ? r.end + 1 : r.end;
   return { tagged: splice(t, r.start, to, ""), caret: r.start };
 }
-
-const BLOCKS = new Set([
-  "P",
-  "LI",
-  "DIV",
-  "H1",
-  "H2",
-  "H3",
-  "H4",
-  "H5",
-  "H6",
-  "PRE",
-  "BLOCKQUOTE",
-  "TR",
-]);
 
 /** The chips in a clipboard HTML fragment, with the text around them. Undefined when it holds no chip. */
 function fromChipHtml(html: string, handleOf: (ref: string) => string): Tagged | undefined {
@@ -177,7 +189,10 @@ export function fromClipboard(
   return chips ?? hydrate(data.text, handleOf);
 }
 
-/** The text in `[start, end)` as plain text, and as HTML with each whole tag in it as a `data-of-tag` span. */
+/**
+ * The text in `[start, end)` as plain text, and as HTML with each whole tag in it as a `data-of-tag` span. Callers
+ * snap the selection first (`snapSelection`); a tag the selection only partly covers is written as plain text.
+ */
 export function toClipboard(t: Tagged, start: number, end: number): { text: string; html: string } {
   let html = "";
   let at = start;

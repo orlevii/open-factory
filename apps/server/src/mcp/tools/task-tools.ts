@@ -252,7 +252,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
+              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>

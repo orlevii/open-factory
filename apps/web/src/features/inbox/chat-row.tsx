@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type MouseEvent, memo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { ROW_GRID } from "@/components/row-grid";
+import { usePlainTags } from "@/components/tag/plain-tags";
 import { formatInboxTime } from "@/features/session/format";
 import { skipFocusPreload } from "@/lib/row-nav";
 import { chatRowId } from "./api";
@@ -44,6 +45,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   updates?: boolean;
 }) {
   const { agent, unread, latest } = row;
+  const preview = usePlainTags(latest.preview);
   const read = unread === 0;
   const at = new Date(latest.createdAt);
   const time = formatInboxTime(at, new Date(now));
@@ -117,7 +119,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
             </time>
           </span>
           <span id={previewId} className={`truncate text-[0.8125rem] leading-[1.125rem] ${tone}`}>
-            {latest.preview}
+            {preview}
           </span>
         </span>
       </Link>

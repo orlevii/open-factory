@@ -29,6 +29,7 @@ import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-error
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageHeader } from "@/components/page-header";
+import { usePlainTags } from "@/components/tag/plain-tags";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1025,10 +1026,11 @@ export function TaskDetailHeader({
   taskKey: string;
   title?: string | undefined;
 }) {
+  const plain = usePlainTags(title ?? "");
   return (
     <PageHeader
       title={taskKey}
-      documentTitle={title ? `${taskKey} · ${title}` : taskKey}
+      documentTitle={title ? `${taskKey} · ${plain}` : taskKey}
       heading={
         <>
           <Link

@@ -1,8 +1,10 @@
 import type { ServerMessage } from "@open-factory/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { formatInboxTime } from "@/features/session/format";
+import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -549,7 +551,13 @@ test("the row's expiry text follows the now prop, not the wall clock (memo contr
   );
   const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
   const row = credItem({ name: "work", expiresAt, current: true }) as never;
-  const rows = (now: number) => <InboxRow item={row} now={now} onOpen={() => {}} />;
+  // A row reads the principals cache for tags in its preview.
+  const qc = createQueryClient({ queries: { retry: false } });
+  const rows = (now: number) => (
+    <QueryClientProvider client={qc}>
+      <InboxRow item={row} now={now} onOpen={() => {}} />
+    </QueryClientProvider>
+  );
   const router = createRouter({
     routeTree: createRootRoute({ component: () => <ul>{rows(Date.UTC(2026, 10, 19, 12))}</ul> }),
     history: createMemoryHistory(),

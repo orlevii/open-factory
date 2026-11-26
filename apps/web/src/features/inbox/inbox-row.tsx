@@ -4,6 +4,7 @@ import { CircleAlert } from "lucide-react";
 import { type ComponentProps, type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { ROW_GRID } from "@/components/row-grid";
+import { usePlainTags } from "@/components/tag/plain-tags";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -166,7 +167,8 @@ export const InboxRow = memo(function InboxRow({
   // A credential row renders from the live `expiresAt`; its stored body is for notifications only.
   const hasPreview = item.kind !== "credential";
   const previewId = `inbox-preview-${item.id}`;
-  const preview = useMemo(() => previewOf(item.preview), [item.preview]);
+  const text = usePlainTags(item.preview);
+  const preview = useMemo(() => previewOf(text), [text]);
   const common: RowCommon = {
     "data-inbox-id": item.id,
     "data-row": "",

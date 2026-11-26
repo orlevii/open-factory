@@ -78,7 +78,7 @@ function McpResult({ content }: { content: string }) {
   if (json !== undefined) return <OutputPlate>{json}</OutputPlate>;
   if (isBinary(content)) return <OutputTail text={content} />;
   if (!content.trim()) return null;
-  return <Markdown source={content} variant="work" untrusted />;
+  return <Markdown source={content} variant="work" untrusted tags={false} />;
 }
 
 /** Expanded: the result first, then the input as a key/value list. A failure shows its output. */

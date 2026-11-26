@@ -1,4 +1,5 @@
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { onCopyTags } from "../tag/copy-tags";
 import { OpenFenceCode } from "./code-block";
 import { Markdown, NewTabNote, PROSE_CLASS, VARIANT_CLASS } from "./markdown";
 import { splitBlocks } from "./split-blocks";
@@ -93,7 +94,7 @@ export const BlockMarkdown = memo(function BlockMarkdown({
   );
   return (
     <>
-      <div className={CONTAINER_CLASS}>
+      <div className={CONTAINER_CLASS} onCopy={onCopyTags}>
         {blocks.map((block, i) => {
           const open = tail && i === lastIndex ? tail : undefined;
           return (

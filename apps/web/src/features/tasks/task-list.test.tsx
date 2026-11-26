@@ -292,3 +292,30 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   expect(all).not.toHaveAttribute("title");
   expect(three).not.toHaveTextContent("more");
 });
+
+test("a task title with a tag shows the tag's current handle in the row and its name, as plain text", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p1",
+            ref: "k7x2m9qd",
+            kind: "agent",
+            handle: "builder",
+            name: "Builder",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
+    "GET /api/tasks?": () => json(page([task(7, { title: "Review <@k7x2m9qd> output" })])),
+  });
+  renderApp("/tasks", alice);
+  const row = await screen.findByRole("link", {
+    name: /^T-7, Review @builder output, Open/,
+  });
+  expect(within(row).getByText("Review @builder output")).toBeInTheDocument();
+  expect(row.querySelector("a")).toBeNull();
+});

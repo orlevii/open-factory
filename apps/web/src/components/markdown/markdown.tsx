@@ -1,7 +1,10 @@
 import { ArrowUpRight } from "lucide-react";
-import { memo, useId, useMemo } from "react";
+import { memo, type ReactNode, useId, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { onCopyTags } from "../tag/copy-tags";
+import { remarkTags } from "../tag/remark-tags";
+import { InsideLinkContext, MarkdownTag } from "../tag/tag";
 import { CodeBlock, PlainCode } from "./code-block";
 import { MermaidBlock } from "./mermaid-block";
 
@@ -68,7 +71,10 @@ function imagesAsLinks() {
   return (tree: HastNode) => walk(tree, false);
 }
 
-function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
+/** `of-tag` is the element the remark plugin emits; it is not an HTML element, so `Components` lacks it. */
+type TagComponents = Components & { "of-tag": (props: { tagRef?: string }) => ReactNode };
+
+function makeComponents(newTabNoteId: string, untrusted: boolean): TagComponents {
   return {
     a: ({ href, title, children }) => {
       // The sanitizer empties a javascript: href rather than dropping the link, and an empty or
@@ -89,15 +95,16 @@ function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
           rel="noopener noreferrer"
           aria-describedby={newTabNoteId}
         >
-          {children}
+          <InsideLinkContext value>{children}</InsideLinkContext>
           <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3 align-[-0.1em]" />
         </a>
       ) : (
         <a href={href} title={title}>
-          {children}
+          <InsideLinkContext value>{children}</InsideLinkContext>
         </a>
       );
     },
+    "of-tag": ({ tagRef }: { tagRef?: string }) => <MarkdownTag tagRef={tagRef} />,
     // Wide tables scroll inside their own box instead of widening the page.
     table: ({ children }) => (
       <div className="md-table">
@@ -141,6 +148,7 @@ function makeComponents(newTabNoteId: string, untrusted: boolean): Components {
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS_WITH_TAGS = [remarkGfm, remarkTags];
 const REHYPE_PLUGINS = [imagesAsLinks];
 export const PROSE_CLASS = "prose prose-sm prose-of max-w-none";
 export const VARIANT_CLASS = {
@@ -153,16 +161,18 @@ export const VARIANT_CLASS = {
 const MarkdownBody = memo(function MarkdownBody({
   source,
   untrusted,
+  tags,
   noteId,
 }: {
   source: string;
   untrusted: boolean;
+  tags: boolean;
   noteId: string;
 }) {
   const components = useMemo(() => makeComponents(noteId, untrusted), [noteId, untrusted]);
   return (
     <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
+      remarkPlugins={tags ? REMARK_PLUGINS_WITH_TAGS : REMARK_PLUGINS}
       rehypePlugins={REHYPE_PLUGINS}
       components={components}
     >
@@ -178,6 +188,8 @@ type MarkdownProps = {
   variant?: "default" | "detail" | "work";
   /** Text from outside (tool results, fetched pages, U3 §9.3): mermaid fences render as code. */
   untrusted?: boolean;
+  /** `<@ref>` renders as a chip (default). Mono tool input and output pass false and show the raw text. */
+  tags?: boolean;
 } & (
   | { bare?: false; noteId?: undefined }
   /** U3 §11.4: one block among siblings in a container that owns the `prose` classes and the
@@ -190,13 +202,17 @@ type MarkdownProps = {
  *  doesn't parse again. */
 export const Markdown = memo(function Markdown(props: MarkdownProps) {
   const untrusted = props.untrusted ?? false;
+  const tags = props.tags ?? true;
   if (props.bare)
-    return <MarkdownBody source={props.source} untrusted={untrusted} noteId={props.noteId} />;
+    return (
+      <MarkdownBody source={props.source} untrusted={untrusted} tags={tags} noteId={props.noteId} />
+    );
   return (
     <ProseMarkdown
       source={props.source}
       variant={props.variant ?? "default"}
       untrusted={untrusted}
+      tags={tags}
     />
   );
 });
@@ -205,16 +221,21 @@ function ProseMarkdown({
   source,
   variant,
   untrusted,
+  tags,
 }: {
   source: string;
   variant: "default" | "detail" | "work";
   untrusted: boolean;
+  tags: boolean;
 }) {
   const newTabNoteId = useId();
   return (
     <>
-      <div className={`${PROSE_CLASS}${VARIANT_CLASS[variant]}`}>
-        <MarkdownBody source={source} untrusted={untrusted} noteId={newTabNoteId} />
+      <div
+        className={`${PROSE_CLASS}${VARIANT_CLASS[variant]}`}
+        onCopy={tags ? onCopyTags : undefined}
+      >
+        <MarkdownBody source={source} untrusted={untrusted} tags={tags} noteId={newTabNoteId} />
       </div>
       {/* After the prose, never in it: as its last child it would keep the last block's bottom
           margin (typography zeroes only the last child's), and rows inside a turn would drift apart. */}

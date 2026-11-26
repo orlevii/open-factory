@@ -103,9 +103,13 @@ export function useTagField({
   const [version, bump] = useReducer((n: number) => n + 1, 0);
 
   // The field shows the stored text; one that changed from outside (a draft, a send, Reply) is hydrated afresh.
+  // `synced` is the last value this hook produced or hydrated: a stored `<@ref|label>` or uppercase ref doesn't
+  // round-trip through `serialise`, so comparing against that would hydrate on every render.
+  const synced = useRef(value);
   let cur = tagged;
   if (!enabled) cur = { text: value, ranges: NO_RANGES };
-  else if (value !== serialise(tagged)) {
+  else if (value !== synced.current) {
+    synced.current = value;
     cur = hydrate(value, pendingOr);
     setTagged(cur);
     undo.current.clear();
@@ -123,7 +127,8 @@ export function useTagField({
     selection.current = sel;
     latest.current = next;
     setTagged(next);
-    live.current.setValue(serialise(next));
+    synced.current = serialise(next);
+    live.current.setValue(synced.current);
   }, []);
   const restore = (s: Snapshot | undefined) => {
     if (!s) return;
@@ -137,12 +142,16 @@ export function useTagField({
   // The caret a change asked for goes in once it has rendered.
   useLayoutEffect(() => {
     const sel = goTo.current;
-    if (!sel || !box.current) return;
+    const el = box.current;
+    if (!sel || !el || composing.current) return; // Safari cancels an IME composition on a selection write
     goTo.current = undefined;
-    box.current.setSelectionRange(sel[0], sel[1]);
+    if (el.selectionStart !== sel[0] || el.selectionEnd !== sel[1])
+      el.setSelectionRange(sel[0], sel[1]);
   });
 
-  // A tag whose principal was pending takes its handle when the cache learns it.
+  // A tag whose principal was pending takes its handle when the cache learns it. This stays an effect: it reads the
+  // field's live selection (DOM) to carry the caret across the longer label, and the cache is external state that
+  // only `version` signals, so there is nothing to derive in render or in a change handler.
   useEffect(() => (enabled ? subscribe?.(bump) : undefined), [enabled, subscribe]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the cache's change signal
   useEffect(() => {
@@ -193,11 +202,14 @@ export function useTagField({
       return;
     }
     const caret = el.selectionEnd ?? el.value.length;
-    const grew = el.value.length > latest.current.text.length;
     const kind = (e.nativeEvent as InputEvent).inputType ?? "";
+    // Typing over a selection is an insertion too, though the text may not have grown.
+    const typed =
+      !kind.startsWith("delete") &&
+      (kind.startsWith("insert") || el.value.length > latest.current.text.length);
     const before = snapshot();
     if (/Paste|Cut|Drop|Replacement/.test(kind)) undo.current.step(before);
-    else undo.current.type(before, grew ? el.value.slice(caret - 1, caret) : "");
+    else undo.current.type(before, typed ? el.value.slice(caret - 1, caret) : "");
     commit(rebase(latest.current, el.value, caret), [caret, caret]);
   };
 
@@ -265,22 +277,22 @@ export function useTagField({
     commit(r.tagged, [r.caret, r.caret]);
   };
 
-  /** A paste holding tags goes in as tags; true when it did (anything else is the browser's). */
-  const paste = (e: ClipboardEvent<Box>): boolean => {
-    if (!enabled) return false;
+  /** A paste holding tags goes in as tags: the text it left. Undefined for anything else (the browser's paste). */
+  const paste = (e: ClipboardEvent<Box>): string | undefined => {
+    if (!enabled) return undefined;
     const el = e.currentTarget;
     const html = e.clipboardData.getData("text/html");
     const fragment = fromClipboard(
       { text: e.clipboardData.getData("text/plain"), ...(html ? { html } : {}) },
       pendingOr,
     );
-    if (!fragment.ranges.length) return false;
+    if (!fragment.ranges.length) return undefined;
     e.preventDefault();
     const [a, b] = selOf(el);
     undo.current.step(snapshot([a, b]));
     const r = insertTagged(latest.current, a, b, fragment);
     commit(r.tagged, [r.caret, r.caret]);
-    return true;
+    return r.tagged.text;
   };
 
   /** A picked tag replaces the typed `@query` (through the end of the handle, and a space after it). */

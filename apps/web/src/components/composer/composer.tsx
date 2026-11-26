@@ -758,7 +758,10 @@ export const Composer = memo(function Composer({
       e.clipboardData.files.length > 0 && e.clipboardData.getData("text/plain") === "";
     if (!fileOnly) {
       // Tags in the paste go in as tags, with no change event; anything else is the browser's paste.
-      pasted.current = !tag.paste(e);
+      const left = tag.paste(e);
+      pasted.current = left === undefined;
+      // Tags went in with no change event: a menu stays shut for the text the paste left.
+      if (left !== undefined) pastedText.current = left;
       return;
     }
     e.preventDefault();

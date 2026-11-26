@@ -665,6 +665,21 @@ test("Reply puts the author's mention at the start of the composer and focuses i
   expect(box).toHaveValue("@dev ");
 });
 
+test("Reply to a comment posts the author's tag as <@ref>", async () => {
+  const api = world();
+  const bodies: string[] = [];
+  api.on("POST /api/tasks/T-42/comments", async (req) => {
+    bodies.push((req as { body: string }).body);
+    return posted("ok");
+  });
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Reply to @dev" }));
+  const box = screen.getByRole("combobox", { name: "Comment" });
+  await waitFor(() => expect(box).toHaveValue("@dev "));
+  await userEvent.type(box, "thanks{Enter}");
+  await waitFor(() => expect(bodies).toEqual([`<@${refFor("dev")}> thanks`]));
+});
+
 test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure puts the text back, the helper names the assignee", async () => {
   const api = world();
   let fail = true;

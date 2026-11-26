@@ -148,6 +148,32 @@ test("a picked tag shows as @handle and is posted as <@ref>; a typed @name that 
   );
 });
 
+test("Reply to a human comment tags its author: the box shows @handle and the post carries <@ref>", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["principals"], {
+    byRef: new Map([
+      [
+        refFor("dana"),
+        {
+          id: "d",
+          ref: refFor("dana"),
+          kind: "human",
+          handle: "dana",
+          name: "Dana",
+          state: "live",
+          avatar: null,
+        },
+      ],
+    ]),
+    unknown: new Set(),
+  });
+  const { ref, box } = setup(qc);
+  act(() => ref.current?.reply(`<@${refFor("dana")}>`));
+  expect(box()).toHaveValue("@dana ");
+  await userEvent.type(box(), "thanks{Enter}");
+  await waitFor(() => expect(posts).toEqual([{ body: `<@${refFor("dana")}> thanks` }]));
+});
+
 test("while a comment posts a muted Posting… status shows; Send keeps its label", async () => {
   let release: () => void = () => {};
   vi.mocked(fetch).mockImplementationOnce(

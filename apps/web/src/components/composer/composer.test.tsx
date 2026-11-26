@@ -1624,3 +1624,48 @@ test("a composer without a tagging source leaves <@ref> text raw", async () => {
   const { box } = setup({ completions: { at: AT } });
   expect(box).toHaveValue(`see <@${ADA}>`);
 });
+
+test("a stored tag with a label or an uppercase ref hydrates as a tag without looping", async () => {
+  writeDraft("agent:dev", `a <@${ADA}|ada> b <@${BOB.toUpperCase()}>`);
+  const { box, onSubmit } = setup({ completions: TAGS });
+  expect(box).toHaveValue("a @ada b @bob");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toContain(`<@${ADA}|ada>`);
+});
+
+test("cutting a tag removes it, puts it on the clipboard as a tag, and undo brings it back", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box, "x ");
+  (box as HTMLTextAreaElement).setSelectionRange(2, 7);
+  const set = vi.fn();
+  fireEvent.cut(box, { clipboardData: { setData: set } });
+  expect(set).toHaveBeenCalledWith("text/html", `<span data-of-tag="${ADA}">@ada</span> `);
+  expect(box).toHaveValue("x ");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("x @ada ");
+});
+
+test("a paste never opens a menu, even when it ends in an @query", async () => {
+  const { box } = setup({ completions: TAGS });
+  const html = `<span data-of-tag="${ADA}">@ada</span> and @bo`;
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/html" ? html : "@ada and @bo"),
+    },
+  });
+  caretAt(box, 12, 12, "keyUp");
+  expect(box).toHaveValue("@ada and @bo");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("an @query with no match closes the menu, and Esc then typing on doesn't reopen it", async () => {
+  const { box } = setup({ completions: TAGS });
+  await userEvent.type(box, "@a");
+  expect(screen.getByRole("listbox", { name: "Tag someone" })).toBeInTheDocument();
+  await userEvent.type(box, "zz");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.clear(box);
+  await userEvent.type(box, "@a{Escape}d");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});

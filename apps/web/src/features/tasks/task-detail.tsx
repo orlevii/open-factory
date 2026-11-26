@@ -5,6 +5,7 @@ import {
   taskBodySchema,
   taskTitleSchema,
 } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -283,7 +284,7 @@ export function TaskDetailView({
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
     if (c?.type !== "comment") return setMissing(true);
     setHighlight(commentId);
-    if (c.author.kind === "agent") composer.current?.prefill(authorMention(c.author));
+    if (c.author.kind === "agent") composer.current?.prefill(tagOf(c.author.ref));
     requestAnimationFrame(() => {
       const el = document.getElementById(`comment-${commentId}`);
       el?.scrollIntoView?.({ block: "center" });

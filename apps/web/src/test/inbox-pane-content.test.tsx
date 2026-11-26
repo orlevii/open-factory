@@ -125,6 +125,18 @@ function setup(items: unknown[]) {
     [`GET /api/agents/${refFor("dev")}`]: () => json(agentDetail()),
     [`GET /api/agents/${refFor("dev")}/events?`]: validQuery(eventsQuerySchema, eventsRoute("dev")),
     "GET /api/tasks/T-7": () => json(task()),
+    "GET /api/principals": () =>
+      json({
+        principals: ["ada", "dev"].map((handle) => ({
+          id: handle,
+          ref: refFor(handle),
+          kind: "agent",
+          handle,
+          name: handle,
+          state: "live",
+          avatar: null,
+        })),
+      }),
   });
   for (const i of items as { id: string }[])
     api.on(`POST /api/inbox/${i.id}/read`, () => json({ ok: true }));
@@ -192,7 +204,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
   fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
     expect(api.calls.find((c) => c.url === "/api/tasks/T-7/comments")?.body).toEqual({
-      body: "@ada thanks",
+      body: `<@${refFor("ada")}> thanks`,
     }),
   );
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));

@@ -5,6 +5,7 @@ import { count, sql } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { Auth } from "../auth/auth.ts";
 import { inputLengthError } from "../auth/options.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 import {
   createPrincipal,
   HandleTakenError,
@@ -40,6 +41,8 @@ export interface SignUpDeps {
   invites: InviteService;
   auth: Pick<Auth, "handler">;
   bus: EventBus;
+  /** Tells the browsers about the new person once their user row has committed. */
+  publishPrincipal: PublishPrincipal;
   log: { error: (obj: object, msg: string) => void };
 }
 
@@ -121,6 +124,7 @@ export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): 
       );
     }
     d.bus.publishAll({ type: "users_changed" });
+    await d.publishPrincipal(principal.id);
     return res;
   });
 }

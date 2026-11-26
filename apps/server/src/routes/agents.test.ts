@@ -346,7 +346,7 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     });
     expect(patched.statusCode).toBe(200);
     expect(patched.json().agent.description).toBe("the boss");
-    for (const extra of [{ template: "lead" }, { handle: "other" }]) {
+    for (const extra of [{ template: "lead" }, { id: "other" }]) {
       const rejected = await call("PATCH", `/api/agents/${await t2.refOf("boss")}`, {
         description: "x",
         ...extra,
@@ -708,6 +708,7 @@ describe("S7: the ended list is bounded", () => {
       configChanges: s.app.configChanges,
       localRuntimeAllowed: () => true,
       policy: new PolicyInputs({ db }),
+      publishPrincipal: s.app.publishPrincipal,
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

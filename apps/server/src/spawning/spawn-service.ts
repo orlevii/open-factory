@@ -11,6 +11,7 @@ import type { Config } from "../config.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
 import type { Router } from "../messaging/router.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 import {
   type AgentRecord,
   agentRecords,
@@ -61,6 +62,8 @@ export class SpawnService {
       log: RuntimeLog;
       /** The closing latch (spec §5.2 step 1). */
       closing(): boolean;
+      /** Tells the browsers about the new agent once its transaction has committed. */
+      publishPrincipal: PublishPrincipal;
       random?: () => string;
       now?: () => number;
     },
@@ -346,6 +349,7 @@ export class SpawnService {
       await this.discard(refOf(newId));
       return out;
     }
+    await this.d.publishPrincipal(out.child.id);
     // §5.2 step 5: the status before the hand-off; both hand-offs are enqueued after boot, never awaited.
     const status = await router.handOffBrief(out.brief, out.child);
     router.handOffRows(out.peers);

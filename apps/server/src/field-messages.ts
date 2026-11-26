@@ -6,7 +6,7 @@ export const FIELD_MSG = {
   chooseManager: "Choose an active agent or person.",
   projectRemoved: "A chosen project was removed.",
   handleInvalid: "Invalid handle.",
-  handleTaken: "That handle is taken.",
+  handleTaken: "Another agent or person has this handle",
   handleFolderExists: "That handle's folder already exists.",
   reportsCycle: "That would create a reporting loop.",
   invalidTime: "Not a valid time.",

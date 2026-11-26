@@ -10,11 +10,12 @@ import {
   terminateAgentToolSchema,
 } from "./agents.ts";
 
-test("PATCH body is strict: template and handle are rejected, not dropped", () => {
+test("PATCH body is strict: an unknown field is rejected, not dropped", () => {
   expect(patchAgentBodySchema.safeParse({ description: "x" }).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({}).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({ template: "lead" }).success).toBe(false);
-  expect(patchAgentBodySchema.safeParse({ handle: "boss", description: "x" }).success).toBe(false);
+  expect(patchAgentBodySchema.safeParse({ handle: "boss", description: "x" }).success).toBe(true);
+  expect(patchAgentBodySchema.safeParse({ handle: "Boss" }).success).toBe(false);
 });
 
 test("spawn tool schema: enum from the caller's templates, suffix pattern, required fields", () => {

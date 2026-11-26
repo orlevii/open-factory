@@ -46,6 +46,28 @@ export function mergePrincipals(
   });
 }
 
+/**
+ * The queries whose data renders a handle field (their responses carry handles as strings, not refs). A rename or a
+ * new principal invalidates each; mounted ones refetch once, the rest when next used. Chats are left out: they read
+ * handles through the principals cache. Reconnecting invalidates every non-chat query, so a missed frame is covered.
+ */
+export const HANDLE_QUERY_KEYS = [
+  ["agents"], // agent lists: handle, reportsTo, spawner
+  ["agent"], // an agent's detail: handle, reportsTo, spawner
+  ["inbox"], // rows: sender, subject, mentioned and held-by handles
+  ["tasks"], // lists, details, search and per-agent: creator, assignee, comment authors
+  ["schedules"], // lists and details: target, creator, owner
+  ["usage"], // per-agent and per-credential rows: handle, spawner
+  ["users"], // the admin list: each person's handle
+  ["session"], // the signed-in person's own handle (`/api/me`)
+] as const;
+
+/** `principal_updated`: patches the principals cache with the item and refreshes every query that shows handles. */
+export function applyPrincipalUpdated(qc: QueryClient, item: PrincipalItem): void {
+  mergePrincipals(qc, [item]);
+  for (const queryKey of HANDLE_QUERY_KEYS) void qc.invalidateQueries({ queryKey });
+}
+
 /** The ref of the principal with this handle, from the loaded cache (a send's optimistic entry names refs). */
 export function refOfHandle(qc: QueryClient, handle: string): string | undefined {
   const cache = qc.getQueryData<PrincipalsCache>(principalsQueryOptions.queryKey);

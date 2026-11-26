@@ -7,6 +7,7 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { ApiError } from "../errors.ts";
 import type { TerminatePort } from "../mcp/tools/terminate-agent.ts";
 import type { Router } from "../messaging/router.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 import { type Principal, principalById } from "../principals/principal-store.ts";
 
 const { agents } = schema;
@@ -24,6 +25,8 @@ export class TerminateService implements TerminatePort {
       runtimes: AgentRuntimes;
       router: Pick<Router, "snapshot" | "persistPeerEvents" | "handOffRows">;
       log: RuntimeLog;
+      /** Tells the browsers the agent is terminated, once the transaction has committed. */
+      publishPrincipal: PublishPrincipal;
     },
   ) {}
 
@@ -124,6 +127,7 @@ export class TerminateService implements TerminatePort {
     rt.markTerminated({ committed: true });
     rt.chatChanged(rejectedFor);
     if (already) return { status: "terminated" };
+    await this.d.publishPrincipal(agentId);
     // A row whose insert committed after the transaction's reject-pending update (its sender read the agent live, and
     // READ COMMITTED doesn't show the transaction that row) is pending still: reject it now. Any later hand-off finds
     // the committed latch, which rejects it.

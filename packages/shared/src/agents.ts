@@ -278,6 +278,7 @@ export type CreateAgentBody = z.infer<typeof createAgentBodySchema>;
 export const patchAgentBodySchema = z
   .strictObject({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
+    handle: handleSchema,
     description: z.string().trim().max(500),
     reportsTo: managerRefSchema,
     credential: nameSchema,

@@ -19,5 +19,6 @@ export const handleSchema = z
   .string()
   .min(2, MSG.handleLength)
   .max(40, MSG.handleLength)
-  .regex(HANDLE_PATTERN, MSG.nameChars)
+  .regex(/^[a-z0-9-]*$/, MSG.handleChars)
+  .regex(HANDLE_PATTERN, MSG.handleEnds)
   .refine((h) => !(RESERVED_HANDLES as readonly string[]).includes(h), MSG.handleReserved);

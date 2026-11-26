@@ -10,7 +10,10 @@ export const MSG = {
   managerUnknown: "Choose an active agent or person.",
   managerRequired: "Choose who this agent reports to.",
   handleLength: "Use 2 to 40 characters",
-  handleReserved: "That handle is reserved.",
+  handleReserved: "Reserved for the factory",
+  /** 42 characters: the spec §4.5 copy, the one message over the usual 40. */
+  handleChars: "Use lowercase letters, numbers and hyphens",
+  handleEnds: "Start and end with a letter or number",
   secretChars: "Use A–Z, 0–9 and underscores.",
   nameReserved: "That name is reserved.",
   cronFields: "Use 5 fields, like 0 9 * * 1-5.",

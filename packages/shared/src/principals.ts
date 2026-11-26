@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { avatarColorSchema } from "./avatar.ts";
+import { handleSchema } from "./handle.ts";
 
 export const principalStateSchema = z.enum(["live", "archived", "terminated", "disabled"]);
 export type PrincipalState = z.infer<typeof principalStateSchema>;
@@ -34,3 +35,12 @@ export const principalsQuerySchema = z.object({
     .pipe(z.array(z.string()).max(MAX_PRINCIPAL_REFS))
     .optional(),
 });
+
+/** `PATCH /api/me`: the signed-in person's own name and handle; either or both. */
+export const patchMeBodySchema = z
+  .strictObject({
+    name: z.string().trim().min(1, "Enter a name").max(80, "Use up to 80 characters"),
+    handle: handleSchema,
+  })
+  .partial();
+export type PatchMeBody = z.infer<typeof patchMeBodySchema>;

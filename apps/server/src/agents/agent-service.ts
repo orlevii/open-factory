@@ -28,10 +28,12 @@ import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import { resolveAgentArg, resolveArg } from "../principals/principal-args.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 import {
   agentRowByRef,
   createPrincipal,
   HandleTakenError,
+  isHandleTaken,
   type Principal,
   principalById,
   principalsByHandles,
@@ -169,6 +171,8 @@ export class AgentService {
       /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
       store: Pick<EventStore, "append">;
       bus: Pick<EventBus, "publishAll">;
+      /** Tells the browsers a principal was created or changed; called after the change committed. */
+      publishPrincipal: PublishPrincipal;
       /** I2 §7.2: an overlay save writes its event and notice and schedules the restart check here. */
       configChanges: Pick<ConfigChanges, "overlaySaved">;
       /** The factory's local-runtime gate (`config.allowLocalRuntime`), read live. */
@@ -755,6 +759,7 @@ export class AgentService {
     await this.peerEvents(id, { kind: "joined", ...this.byOf(actor) }, noPeers);
     const ref = made.ref;
     if (!ref) throw new Error("create finished without a principal");
+    await this.d.publishPrincipal(id);
     this.orgAction(actor, "agent_created", ref);
     return this.summary(ref);
   }
@@ -874,6 +879,9 @@ export class AgentService {
       set.runtime = b.runtime;
       changed.feeds = true;
     }
+    // A handle is the principal's, not the agent's: written to `principals`, never feeds the process, so it restarts nothing.
+    const renamed =
+      b.handle !== undefined && b.handle !== (await this.handleOfId(row.id)) ? b.handle : undefined;
     // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.
     if (b.color !== undefined && b.color !== row.color) set.color = b.color;
     if (b.credential !== undefined) {
@@ -911,13 +919,17 @@ export class AgentService {
       row,
       write: async (tx) => {
         await this.assertUserEnabled(tx, movedTo);
+        if (renamed !== undefined) await this.rename(tx, row.id, renamed);
         if (Object.keys(set).length)
           await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
         if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
         children = await this.syncChildren(tx, row.id);
       },
       after: async () => {
+        // After a rename the loaded runtime's cached handle is stale (it names the agent in refusals and logs).
         await runtimes.refresh(row.id);
+        if (renamed !== undefined || set.displayName !== undefined)
+          await this.d.publishPrincipal(row.id);
         await this.applyToChildren(children);
         if (moved && before)
           await this.peerEvents(
@@ -941,6 +953,16 @@ export class AgentService {
         return this.summary(ref);
       },
     };
+  }
+
+  /** Writes the agent's new handle in the caller's transaction; a handle another principal holds is a field error. */
+  private async rename(tx: Tx, id: string, handle: string) {
+    try {
+      await tx.update(schema.principals).set({ handle }).where(eq(schema.principals.id, id));
+    } catch (err) {
+      if (isHandleTaken(err)) throw handleTaken();
+      throw err;
+    }
   }
 
   private async grantNames(agentId: string): Promise<string[]> {
@@ -1155,6 +1177,7 @@ export class AgentService {
       { kind: "left", reason: "archived", ...this.byOf(actor) },
       before,
     );
+    await this.d.publishPrincipal(row.id);
     this.orgAction(actor, "agent_archived", ref);
     return this.summary(ref);
   }
@@ -1209,6 +1232,7 @@ export class AgentService {
     // archived and is rejected (accepted, spec §10.1).
     this.d.scheduling?.changed();
     await this.peerEvents(row.id, { kind: "joined", ...this.byOf(actor) }, noPeers);
+    await this.d.publishPrincipal(row.id);
     this.orgAction(actor, "agent_unarchived", ref);
     return this.summary(ref);
   }

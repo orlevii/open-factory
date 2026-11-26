@@ -53,6 +53,7 @@ import { LoopGuard } from "./messaging/loop-guard.ts";
 import { LoopResume } from "./messaging/loop-resume.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
+import { type PublishPrincipal, publishPrincipal } from "./principals/principal-events.ts";
 import { principalById } from "./principals/principal-store.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
@@ -142,6 +143,8 @@ declare module "fastify" {
     usage: UsageService;
     invites: InviteService;
     userAdmin: UserAdminService;
+    /** Publishes `principal_updated` for a principal; call after the change committed. */
+    publishPrincipal: PublishPrincipal;
     factorySettings: FactorySettings;
     reaper: Reaper;
     schedules: ScheduleService;
@@ -368,7 +371,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("schedules", schedules);
   app.decorate("scheduler", scheduler);
+  const publishPrincipalFrame: PublishPrincipal = async (id) => {
+    try {
+      await publishPrincipal({ bus, db: deps.db, templatesDir: templates.dir }, id);
+    } catch (err) {
+      app.log.warn({ err, principal: id }, "publishing a principal update failed");
+    }
+  };
+  app.decorate("publishPrincipal", publishPrincipalFrame);
   const agents = new AgentService({
+    publishPrincipal: publishPrincipalFrame,
     db: deps.db,
     templates,
     workspace,
@@ -436,7 +448,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   );
   app.decorate(
     "userAdmin",
-    new UserAdminService({ db: deps.db, now: clock, bus, signIn: app.signIn }),
+    new UserAdminService({
+      db: deps.db,
+      now: clock,
+      bus,
+      signIn: app.signIn,
+      publishPrincipal: publishPrincipalFrame,
+    }),
   );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
@@ -465,9 +483,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
+    publishPrincipal: publishPrincipalFrame,
   });
   app.decorate("spawner", spawner);
-  const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
+  const terminator = new TerminateService({
+    db: deps.db,
+    store,
+    runtimes,
+    router,
+    log: app.log,
+    publishPrincipal: publishPrincipalFrame,
+  });
   app.decorate("terminator", terminator);
   const taskStore = new TaskStore({ db: deps.db, clock: () => store.clock() });
   const tasks = new TaskService({

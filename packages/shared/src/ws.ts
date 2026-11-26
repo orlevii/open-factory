@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentLiveShape, agentStatusSchema, queueItemSchema, waitingOnSchema } from "./agents.ts";
 import { sessionEventSchema } from "./events.ts";
+import { principalItemSchema } from "./principals.ts";
 import { liveCronSchema } from "./schedules.ts";
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
@@ -104,6 +105,8 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   /** S10: factory settings, users and invites, and the images list changed. */
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
+  /** A principal was created or its handle, name or state changed: the full item, so the web patches its principals cache. */
+  z.object({ type: z.literal("principal_updated"), principal: principalItemSchema }),
   /**
    * I5 §9.5: the Library (skill sources) changed; the Library pages refetch. `addFailed` is
    * the repo of a background GitHub add that failed and whose row was removed: the spec (§10.4) asks for a toast

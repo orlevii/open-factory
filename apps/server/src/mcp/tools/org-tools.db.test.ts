@@ -244,7 +244,7 @@ test("create_agent with a taken name returns the human sentence on the handle fi
     reports_to: "@or",
     credential: "work",
   });
-  expect(r).toMatchObject({ err: true, text: "handle: That handle is taken." });
+  expect(r).toMatchObject({ err: true, text: "handle: Another agent or person has this handle" });
 });
 
 test("update_agent: config without base_hash is a schema error", async () => {

@@ -29,7 +29,14 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
           ? await handleSignUp(
-              { db, invites: app.invites, auth: app.auth, bus: app.bus, log: request.log },
+              {
+                db,
+                invites: app.invites,
+                auth: app.auth,
+                bus: app.bus,
+                publishPrincipal: app.publishPrincipal,
+                log: request.log,
+              },
               req,
               request.body,
             )

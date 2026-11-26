@@ -557,5 +557,6 @@ function serviceDeps(app: T): ConstructorParameters<typeof SpawnService>[0] {
     config: app.app.config,
     log: app.app.log,
     closing: () => false,
+    publishPrincipal: app.app.publishPrincipal,
   };
 }

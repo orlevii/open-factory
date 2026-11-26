@@ -483,6 +483,7 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     runtimes,
     router,
     log: silentLog,
+    publishPrincipal: async () => {},
   });
   const load = async (agentId: string) => {
     const r = await runtimes.load(agentId);

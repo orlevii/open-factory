@@ -15,6 +15,7 @@ import { useInboxNotifier } from "@/features/inbox/notifications";
 import { createOrgToasts } from "@/features/org/org-toasts";
 import { CommandPalette } from "@/features/palette/command-palette";
 import {
+  applyPrincipalUpdated,
   type PrincipalsCache,
   principalsQueryOptions,
   requestPrincipal,
@@ -130,6 +131,8 @@ function AppLayout() {
         if (m.type === "settings_changed") {
           void qc.invalidateQueries({ queryKey: ["factory-settings"] });
         }
+        // A rename, a new agent or person, or a state change: patch the cache and refetch what shows handles.
+        if (m.type === "principal_updated") applyPrincipalUpdated(qc, m.principal);
         if (m.type === "users_changed") {
           void qc.invalidateQueries({ queryKey: ["users"] });
           void qc.invalidateQueries({ queryKey: ["invites"] });

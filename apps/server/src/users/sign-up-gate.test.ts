@@ -97,7 +97,7 @@ describe("bootstrap", () => {
     const res = await rawPost(SIGN_UP, person());
     expect(res.status).toBe(200);
     expect(await userCount()).toBe(1);
-    expect(seen).toEqual([{ type: "users_changed" }]);
+    expect(seen.map((m) => m.type)).toEqual(["users_changed", "principal_updated"]);
   });
 
   test("two concurrent first sign-ups: exactly one succeeds, the other gets invite_required", async () => {
@@ -168,7 +168,7 @@ describe("with one user", () => {
     const inv = await newInvite();
     seen.length = 0;
     expect((await rawPost(SIGN_UP, person({ invite: inv.token }))).status).toBe(200);
-    expect(seen).toEqual([{ type: "users_changed" }]);
+    expect(seen.map((m) => m.type)).toEqual(["users_changed", "principal_updated"]);
   });
 
   describe("after better-auth's 2xx", () => {
@@ -190,7 +190,17 @@ describe("with one user", () => {
     });
     const deps = (auth: ReturnType<typeof fakeAuth>) => {
       const log = { error: vi.fn() };
-      return { log, d: { db: h.db, invites: h.app.invites, auth, bus: h.app.bus, log } };
+      return {
+        log,
+        d: {
+          db: h.db,
+          invites: h.app.invites,
+          auth,
+          bus: h.app.bus,
+          publishPrincipal: h.app.publishPrincipal,
+          log,
+        },
+      };
     };
     const req = () => new Request(`${h.app.config.publicUrl}${SIGN_UP}`, { method: "POST" });
 

@@ -92,6 +92,39 @@ test("a pushed agent_status frame turns the row's Working into Idle", async () =
   expect(within(row).queryByText("Working")).not.toBeInTheDocument();
 });
 
+test("after principal_updated, the agent list shows the new handle", async () => {
+  let calls = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      calls += 1;
+      return json({
+        agents: [agentSummary({ handle: calls === 1 ? "dev" : "builder" })],
+        running: { count: 0 },
+      });
+    }),
+  );
+  renderApp("/agents", alice);
+  const row = await screen.findByRole("link", { name: /Dev agent/ });
+  expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
+  act(() =>
+    pushFrame({
+      type: "principal_updated",
+      principal: {
+        id: "id-dev",
+        ref: refFor("dev"),
+        kind: "agent",
+        handle: "builder",
+        name: "Dev agent",
+        state: "live",
+        avatar: null,
+      },
+    }),
+  );
+  expect((await screen.findAllByText("@builder")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("@dev")).not.toBeInTheDocument();
+});
+
 test("a failed list says so", async () => {
   vi.stubGlobal(
     "fetch",

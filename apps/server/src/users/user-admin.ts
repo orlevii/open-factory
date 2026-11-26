@@ -4,6 +4,7 @@ import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { SignInAttempts } from "../credentials/sign-in/attempts.ts";
 import { ApiError } from "../errors.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 
 /** S10 spec §9.4: list, disable and enable users. Every user is an admin. */
 export class UserAdminService {
@@ -13,6 +14,7 @@ export class UserAdminService {
       now: () => Date;
       bus: EventBus;
       signIn: Pick<SignInAttempts, "endFor">;
+      publishPrincipal: PublishPrincipal;
     },
   ) {}
 
@@ -109,6 +111,7 @@ export class UserAdminService {
     this.d.bus.closeUser(targetId);
     this.d.signIn.endFor(targetId);
     this.d.bus.publishAll({ type: "users_changed" });
+    await this.d.publishPrincipal(targetId);
     return { revokedInvites };
   }
 
@@ -141,6 +144,7 @@ export class UserAdminService {
         .where(eq(schema.users.id, targetId));
     });
     this.d.bus.publishAll({ type: "users_changed" });
+    await this.d.publishPrincipal(targetId);
   }
 
   /** One primary-key lookup; an unknown user counts as disabled. */

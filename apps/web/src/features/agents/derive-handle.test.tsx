@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, test, vi } from "vitest";
-import { deriveSlug, foldLetters, useTakenNames } from "./derive-slug";
+import { deriveHandle, foldLetters, useTakenNames } from "./derive-handle";
 
 const lists = vi.hoisted(() => ({
   exclude: Promise.resolve([{ handle: "alice" }]),
@@ -31,7 +31,7 @@ vi.mock("@/features/settings/api", () => ({
 
 const none = new Set<string>();
 
-describe("deriveSlug", () => {
+describe("deriveHandle", () => {
   test.each([
     ["Priya Nair", "priya-nair"],
     ["Łukasz Żak", "lukasz-zak"],
@@ -44,19 +44,21 @@ describe("deriveSlug", () => {
     ["  --Ops!!  Lead-- ", "ops-lead"],
     ["陳大文", ""],
     ["🤖", ""],
-    ["9lives", ""],
-  ])("%s → %s", (n, s) => expect(deriveSlug(n, none)).toBe(s));
+    ["9lives", "9lives"],
+  ])("%s → %s", (n, s) => expect(deriveHandle(n, none)).toBe(s));
 
   test("taken names get -2, -3", () => {
-    expect(deriveSlug("Priya Nair", new Set(["priya-nair"]))).toBe("priya-nair-2");
-    expect(deriveSlug("Priya Nair", new Set(["priya-nair", "priya-nair-2"]))).toBe("priya-nair-3");
+    expect(deriveHandle("Priya Nair", new Set(["priya-nair"]))).toBe("priya-nair-2");
+    expect(deriveHandle("Priya Nair", new Set(["priya-nair", "priya-nair-2"]))).toBe(
+      "priya-nair-3",
+    );
   });
 
   test("a 40-char base is cut so the suffix fits, never '--2'", () => {
     const name = "abcdefghij abcdefghij abcdefghij abcdefgh";
-    const base = deriveSlug(name, none);
+    const base = deriveHandle(name, none);
     expect(base.length).toBe(40);
-    const s = deriveSlug(name, new Set([base]));
+    const s = deriveHandle(name, new Set([base]));
     expect(s.length).toBeLessThanOrEqual(40);
     expect(s).not.toMatch(/--/);
     expect(s.endsWith("-2")).toBe(true);
@@ -64,9 +66,9 @@ describe("deriveSlug", () => {
 
   test("a base ending in a hyphen at the cut gets no '--2'", () => {
     const name = `${"a".repeat(37)} bcd`; // 37 letters, then a hyphen as the 38th character
-    const base = deriveSlug(name, none);
+    const base = deriveHandle(name, none);
     expect(base.length).toBe(40);
-    const s = deriveSlug(name, new Set([base]));
+    const s = deriveHandle(name, new Set([base]));
     expect(s).toBe(`${"a".repeat(37)}-2`);
     expect(s).not.toMatch(/--/);
   });
@@ -78,7 +80,7 @@ test("foldLetters folds what NFKD leaves alone", () => {
 
 test("foldLetters folds capital sharp S", () => {
   expect(foldLetters("STRAẞE")).toBe("STRASsE");
-  expect(deriveSlug("STRAẞE", none)).toBe("strasse");
+  expect(deriveHandle("STRAẞE", none)).toBe("strasse");
 });
 
 describe("useTakenNames", () => {

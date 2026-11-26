@@ -126,7 +126,7 @@ const section = async (name: string) => {
   return h.parentElement as HTMLElement;
 };
 
-test("a 48px strip titled Agent details, with the agent's @slug and description", async () => {
+test("a 48px strip titled Agent details, with the agent's @handle and description", async () => {
   setup({ agent: agentSummary({ handle: "lead", description: "Keeps the roadmap moving." }) });
   expect(await screen.findByRole("heading", { name: "Agent details" })).toBeInTheDocument();
   expect(screen.getByText("@lead")).toBeInTheDocument();

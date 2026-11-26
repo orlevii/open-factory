@@ -32,11 +32,11 @@ afterEach(() => {
 });
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, s)).toISOString();
-const msg = (slug: string, i: number, over: Record<string, unknown> = {}) => ({
+const msg = (handle: string, i: number, over: Record<string, unknown> = {}) => ({
   kind: "message",
-  id: `${slug}-m${i}`,
-  from: { kind: "agent", ref: `${slug}`.padEnd(8, "0") },
-  body: `${slug} says ${i}`,
+  id: `${handle}-m${i}`,
+  from: { kind: "agent", ref: `${handle}`.padEnd(8, "0") },
+  body: `${handle} says ${i}`,
   recipients: [{ ref: "abcd2345" }],
   urgent: false,
   createdAt: at(i),
@@ -49,12 +49,12 @@ const chatPage = (entries: unknown[]) => ({
   newerCursor: null,
   working: null,
 });
-const row = (slug: string, name: string, unread: number) => ({
+const row = (handle: string, name: string, unread: number) => ({
   agent: {
-    ref: refFor(slug),
-    handle: slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -62,8 +62,13 @@ const row = (slug: string, name: string, unread: number) => ({
     archivedAt: null,
   },
   unread,
-  firstUnreadId: `${slug}-m3`,
-  latest: { messageId: `${slug}-m3`, preview: `${slug} says 3`, createdAt: at(3), urgent: false },
+  firstUnreadId: `${handle}-m3`,
+  latest: {
+    messageId: `${handle}-m3`,
+    preview: `${handle} says 3`,
+    createdAt: at(3),
+    urgent: false,
+  },
 });
 
 let api: MockApi;
@@ -102,8 +107,8 @@ beforeEach(() => {
 });
 
 const pane = () => screen.getByRole("region", { name: "Reading pane" });
-const listRow = (slug: string) =>
-  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(slug)}"]`);
+const listRow = (handle: string) =>
+  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(handle)}"]`);
 async function visit(path: string) {
   fakeMatchMedia.installWidth(1280);
   const app = renderApp(path, alice);

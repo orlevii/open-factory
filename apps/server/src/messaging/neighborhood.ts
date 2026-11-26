@@ -1,7 +1,12 @@
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
-import { type Principal, principalsByIds } from "../principals/principal-store.ts";
+import {
+  type AgentRecord,
+  agentRecords,
+  type Principal,
+  principalsByIds,
+} from "../principals/principal-store.ts";
 import { tagLookupFor } from "../principals/principal-text.ts";
 
 /** An agent that is neither archived nor terminated. */
@@ -18,45 +23,34 @@ export class Neighborhood {
     agentId: string,
     tx: Exec = this.db,
   ): Promise<{
-    manager: AgentRow | null;
-    peers: AgentRow[];
-    reports: AgentRow[];
+    manager: AgentRecord | null;
+    peers: AgentRecord[];
+    reports: AgentRecord[];
   }> {
-    const [self] = await tx.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    const [self] = await agentRecords(tx).where(eq(schema.agents.id, agentId));
     if (!self) return { manager: null, peers: [], reports: [] };
     const live = liveAgent;
-    const order = [asc(schema.agents.displayName), asc(schema.agents.slug)] as const;
+    const order = [asc(schema.agents.displayName), asc(schema.principals.handle)] as const;
     // A human manager has no agent row: `manager` is null.
     const manager =
-      (
-        await tx
-          .select()
-          .from(schema.agents)
-          .where(and(eq(schema.agents.id, self.reportsTo), live))
-      )[0] ?? null;
+      (await agentRecords(tx).where(and(eq(schema.agents.id, self.reportsTo), live)))[0] ?? null;
     // Peers share the manager, an agent or a human.
     const sameManager = eq(schema.agents.reportsTo, self.reportsTo);
     const peers = (
-      await tx
-        .select()
-        .from(schema.agents)
+      await agentRecords(tx)
         .where(and(sameManager, live))
         .orderBy(...order)
     ).filter((a) => a.id !== agentId);
-    const reports = await tx
-      .select()
-      .from(schema.agents)
+    const reports = await agentRecords(tx)
       .where(and(eq(schema.agents.reportsTo, agentId), live))
       .orderBy(...order);
     return { manager, peers, reports };
   }
 
-  async all(tx: Exec = this.db): Promise<AgentRow[]> {
-    return tx
-      .select()
-      .from(schema.agents)
+  async all(tx: Exec = this.db): Promise<AgentRecord[]> {
+    return agentRecords(tx)
       .where(liveAgent)
-      .orderBy(asc(schema.agents.displayName), asc(schema.agents.slug));
+      .orderBy(asc(schema.agents.displayName), asc(schema.principals.handle));
   }
 
   /** The principals of these agents (their ref and current handle), by id. */

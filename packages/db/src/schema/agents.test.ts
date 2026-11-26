@@ -20,8 +20,8 @@ test("seq is unique per agent; deleting an agent cascades", async () => {
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into principals (id, kind, handle, ref) values ('a1', 'agent', 'dev', substr(md5('a1'::text), 1, 8))`;
   await sql`insert into principals (id, kind, handle, ref) values ('a2', 'agent', 'other', substr(md5('a2'::text), 1, 8))`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-    values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1', 'u1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1', 'u1')`;
+  await sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+    values ('a1', 'Dev agent', 'dev', '{}', 'local', 'c1', 'u1'), ('a2', 'Other', 'dev', '{}', 'local', 'c1', 'u1')`;
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;
   await sql`insert into session_events (agent_id, seq, turn_id, type, payload) values ('a1', 1, 't1', 'turn_started', '{}')`;
   await sql`insert into session_events (agent_id, seq, type, payload) values ('a2', 1, 'process_started', '{"resumed":false}')`;
@@ -39,8 +39,8 @@ test("system rows need no user and a notice; user rows need a user and no notice
   await sql`insert into users (id, name, email) values ('u2', 'Al', 'al@x.io')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into principals (id, kind, handle, ref) values ('a3', 'agent', 'third', substr(md5('a3'::text), 1, 8))`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-    values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2', 'u1')`;
+  await sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+    values ('a3', 'Third', 'dev', '{}', 'local', 'c2', 'u1')`;
   await sql`insert into messages (id, kind, from_id, to_id, body, notice) values ('n1','system',null,'a3','x','crash')`;
   await expect(
     sql`insert into messages (id, kind, from_id, to_id, body) values ('n2','system',null,'a3','x')`,

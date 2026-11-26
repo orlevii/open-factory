@@ -21,9 +21,9 @@ test("GET /api/principals without a session is 401", async () => {
 });
 
 test("GET /api/principals lists every agent and human with the state a chip shows", async () => {
-  const live = await h.seedAgent({ slug: "dev" });
-  const archived = await h.seedAgent({ slug: "old" });
-  const terminated = await h.seedAgent({ slug: "gone" });
+  const live = await h.seedAgent({ handle: "dev" });
+  const archived = await h.seedAgent({ handle: "old" });
+  const terminated = await h.seedAgent({ handle: "gone" });
   await h.app.db
     .update(schema.agents)
     .set({ archivedAt: new Date() })
@@ -58,8 +58,8 @@ test("GET /api/principals lists every agent and human with the state a chip show
 });
 
 test("GET /api/principals?refs= returns only those refs, case-insensitively", async () => {
-  const dev = await h.seedAgent({ slug: "dev" });
-  await h.seedAgent({ slug: "other" });
+  const dev = await h.seedAgent({ handle: "dev" });
+  await h.seedAgent({ handle: "other" });
   const ref = (
     await h.app.db
       .select({ ref: schema.principals.ref })

@@ -9,13 +9,13 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  for (const [id, slug] of [
+  for (const [id, handle] of [
     ["m1", "lead"],
     ["r1", "dev"],
     ["r2", "qa"],
     ["x1", "hr"],
   ] as const)
-    await insertAgent(t.sql, { id, slug });
+    await insertAgent(t.sql, { id, handle });
 });
 afterAll(() => t.close());
 

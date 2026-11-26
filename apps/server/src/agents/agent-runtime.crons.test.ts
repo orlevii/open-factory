@@ -25,7 +25,7 @@ let driver: FakeDriver;
 let rt: AgentRuntime;
 async function make(runtime: "local" | "docker" = "local") {
   n += 1;
-  await insertAgent(t.sql, { id: `c${n}`, slug: `cron${n}` });
+  await insertAgent(t.sql, { id: `c${n}`, handle: `cron${n}` });
   if (runtime === "docker") await t.sql`update agents set runtime = 'docker' where id = ${`c${n}`}`;
   driver = new FakeDriver();
   const agent = await store.agentById(`c${n}`);

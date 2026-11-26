@@ -4,7 +4,6 @@ import { toolError } from "../server.ts";
 
 /** The service's field names are the form's; a tool's parameters are named as the tool's input (spec §7.2). */
 const TOOL_FIELD: Record<string, string> = {
-  slug: "name",
   reportsTo: "reports_to",
   displayName: "display_name",
 };
@@ -16,7 +15,7 @@ const issueLine = (i: TemplateIssue) => {
 };
 
 /**
- * An org service's refusal as a tool error (spec §7.2): a `FieldError` becomes "name: That slug is taken.", an
+ * An org service's refusal as a tool error (spec §7.2): a `FieldError` becomes "handle: That handle is taken.", an
  * `invalid_config` lists its error issues as `path: message` lines, any other `ApiError` (`OrgRefusedError`
  * included) is its own sentence. Anything else is a bug and is rethrown: the SDK answers it without the message.
  */

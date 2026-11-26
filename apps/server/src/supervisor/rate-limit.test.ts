@@ -53,7 +53,7 @@ class World {
       log,
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: store,
-      load: async (slug) => [...this.loaded.values()].find((rt) => rt.agent.slug === slug),
+      load: async (handle) => [...this.loaded.values()].find((rt) => rt.agent.handle === handle),
     });
   }
 
@@ -73,7 +73,7 @@ class World {
     const credId = await this.credential(cred);
     n += 1;
     const id = `rl${n}`;
-    await insertAgent(t.sql, { id, slug: `rl${n}` });
+    await insertAgent(t.sql, { id, handle: `rl${n}` });
     await t.sql`update agents set credential_id = ${credId} where id = ${id}`;
     const agent = await store.agentById(id);
     if (!agent) throw new Error("no agent");
@@ -103,7 +103,7 @@ class World {
   }
   proc(rt: AgentRuntime): FakeProcess {
     const p = this.starts(rt).at(-1);
-    if (!p) throw new Error(`${rt.agent.slug} never started`);
+    if (!p) throw new Error(`${rt.agent.handle} never started`);
     return p;
   }
 

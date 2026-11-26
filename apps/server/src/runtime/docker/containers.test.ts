@@ -130,7 +130,7 @@ test("spec hash changes on image id, mounts and uid; not on anything else passed
       mounts: [{ ...inputs.mounts[0], readOnly: true } as Mount, ...inputs.mounts.slice(1)],
     }),
   ).not.toBe(h);
-  // Extra properties (an agent id, a slug, an image ref) never reach the hash.
+  // Extra properties (an agent id, a handle, an image ref) never reach the hash.
   expect(specHash({ ...base, agentId: "x", ref: "y", image: "z" } as typeof base)).toBe(h);
 });
 

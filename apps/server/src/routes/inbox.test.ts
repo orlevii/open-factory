@@ -17,8 +17,8 @@ beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp({ harnessDriver: driver });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
-  await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
   const or = await signUp(h.app, { handle: "or" });
   cookie = or.cookie;
   orId = or.user.id;
@@ -36,9 +36,9 @@ afterEach(() => h.close());
 
 const get = (path: string, headers: Record<string, string> = { cookie }) =>
   h.app.inject({ method: "GET", url: path, headers });
-const procOf = (slug: string) => {
-  const p = driver.startsOf(slug).at(-1);
-  if (!p) throw new Error(`${slug} not started`);
+const procOf = (handle: string) => {
+  const p = driver.startsOf(handle).at(-1);
+  if (!p) throw new Error(`${handle} not started`);
   return p;
 };
 /** `ada` opens a turn and records the `send_message` tool call Claude would make before calling the tool. */
@@ -361,8 +361,12 @@ test("read-from marks that agent's unread messages up to upTo, idempotent, user-
   await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const sam = (await signUp(h.app, { handle: "sam" })).cookie;
   const upTo = new Date().toISOString();
-  const readFrom = async (c: string, slug = "ada", body: object = { upTo }) =>
-    post(`/api/inbox/read-from/${slug === "nobody" ? UNKNOWN_REF : await h.refOf(slug)}`, body, c);
+  const readFrom = async (c: string, handle = "ada", body: object = { upTo }) =>
+    post(
+      `/api/inbox/read-from/${handle === "nobody" ? UNKNOWN_REF : await h.refOf(handle)}`,
+      body,
+      c,
+    );
   // Another user's call neither marks nor leaks into my items.
   expect((await readFrom(sam)).json().marked).toBe(0);
   expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({
@@ -454,15 +458,15 @@ test("GET /api/inbox/:id: the owner's item equals the list entry; another user's
 });
 
 /** A report of @or's forwards `n` updates, as its runtime does. */
-async function updatesFrom(slug: string, n: number, over: { fact?: "denied" } = {}) {
-  const a = await agentRowOf(h.app, slug);
-  if (!a) throw new Error(`no agent ${slug}`);
+async function updatesFrom(handle: string, n: number, over: { fact?: "denied" } = {}) {
+  const a = await agentRowOf(h.app, handle);
+  if (!a) throw new Error(`no agent ${handle}`);
   for (let i = 1; i <= n; i++)
-    await h.app.router.forward({ agentId: a.id, body: `${slug} update ${i}`, ...over });
+    await h.app.router.forward({ agentId: a.id, body: `${handle} update ${i}`, ...over });
 }
 
 test("a human manager's reports' updates come grouped per report as updates, never as items, for that user only", async () => {
-  await h.sql`update agents set reports_to = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
   const sam = await signUp(h.app, { handle: "sam" });
   await updatesFrom("ada", 3);
   await updatesFrom("bob", 1);
@@ -493,7 +497,7 @@ test("a human manager's reports' updates come grouped per report as updates, nev
 });
 
 test("read-from with kind member_update marks one report's updates read and leaves chats and other reports alone", async () => {
-  await h.sql`update agents set reports_to = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
   await updatesFrom("ada", 2);
   await updatesFrom("bob", 1);
   await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
@@ -513,7 +517,7 @@ test("read-from with kind member_update marks one report's updates read and leav
 });
 
 test("read-from with the default kind leaves the human manager's errored notice about that agent unread", async () => {
-  await h.sql`update agents set reports_to = ${orId} where slug = 'ada'`;
+  await h.sql`update agents set reports_to = ${orId} where id = (select id from principals where handle = 'ada')`;
   const ada = await agentRowOf(h.app, "ada");
   if (!ada) throw new Error("seed");
   await h.app.router.forward({ agentId: ada.id, fact: "errored", body: "@ada is errored." });

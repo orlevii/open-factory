@@ -32,10 +32,10 @@ import { dockerodeClient } from "../src/runtime/docker/client.ts";
 import { containerName, LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
 import { principalSql } from "../src/test/principals.ts";
 import { agentWorkdir } from "../src/workspace/paths.ts";
-import { bySlug } from "./by-slug.ts";
+import { byHandle } from "./by-handle.ts";
 
 const IMAGE = "open-factory-base:dev";
-const SLUG = "smoke-dock";
+const HANDLE = "smoke-dock";
 const TOKEN_FILE = path.join(homedir(), ".open-factory-spike", "oauth-token");
 
 let token = "";
@@ -246,13 +246,14 @@ async function until<T>(
 /** Sends a human message and waits for the turn it starts (the first origin-less turn_end after it). */
 async function turn(body: string, ms = 240_000): Promise<{ from: number; events: AnyEvent[] }> {
   const from = await lastSeq();
-  const rt = await bySlug(app, SLUG);
-  if (!rt) throw new Error(`no runtime for ${SLUG}`);
-  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [SLUG], body, false))
-    .results;
+  const rt = await byHandle(app, HANDLE);
+  if (!rt) throw new Error(`no runtime for ${HANDLE}`);
+  const [sent] = (
+    await app.router.send({ userId: "smoke", handle: "smoke" }, [HANDLE], body, false)
+  ).results;
   if (!sent || sent.status === "refused" || sent.status === "start_failed")
     throw new Error(
-      `send to ${SLUG} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+      `send to ${HANDLE} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
     );
   const got = await until(
     "the turn to end",
@@ -374,7 +375,7 @@ try {
     app.agents.create(
       {
         template: "dock",
-        slug: SLUG,
+        handle: HANDLE,
         displayName: "Smoke Dock",
         description: "Smoke Docker agent",
         reportsTo: "smoke",
@@ -383,7 +384,11 @@ try {
       { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   );
-  agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");
+  agentId = String(
+    (
+      await conn.sql`select a.id from agents a join principals p on p.id = a.id where p.handle = ${HANDLE}`
+    )[0]?.id ?? "",
+  );
   const workdir = agentWorkdir(config.factoryHome, refOf(agentId));
 
   // 1. Remember a word, use the skill.
@@ -448,7 +453,7 @@ try {
     afterHib.State.Running === false,
     `state: ${afterHib.State.Status}; id ${afterHib.Id.slice(0, 12)}`,
   );
-  const status2 = (await bySlug(app, SLUG))?.live().status;
+  const status2 = (await byHandle(app, HANDLE))?.live().status;
   check("2. status hibernated", status2 === "hibernated", `status: ${status2}`);
 
   // 3. AC1: a message wakes it; it recalls the word.
@@ -535,7 +540,7 @@ try {
   const waitStart = Date.now();
   say("    waiting 80 s (warm window 60 s + 20 s)…");
   await sleep(80_000);
-  const rt5 = await bySlug(app, SLUG);
+  const rt5 = await byHandle(app, HANDLE);
   const live5 = rt5?.live();
   const hib5 = evs(await since(waitFrom)).filter((e) => e.type === "hibernated");
   const sleepTasks = (live5?.waitingOn.tasks ?? []).filter((t) =>
@@ -648,7 +653,7 @@ try {
     brief(JSON.stringify(first)),
   );
   const claudes = procsAfter.filter((p) => p.comm === "claude");
-  const live8 = (await bySlug(app, SLUG))?.live();
+  const live8 = (await byHandle(app, HANDLE))?.live();
   check(
     "8. the agent recovered: not errored, one claude in the container",
     live8?.status !== "errored" && claudes.length === 1,

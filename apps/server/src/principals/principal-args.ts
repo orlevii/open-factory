@@ -1,8 +1,10 @@
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { normaliseRef, RESERVED_HANDLES } from "@open-factory/shared";
 import { plainTagWarning } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import {
+  type AgentRecord,
+  agentRecords,
   type Principal,
   principalsByHandles,
   principalsByRefs,
@@ -86,7 +88,7 @@ export const resolveArg = async (tx: Tx, raw: string): Promise<ArgResolution> =>
   (await resolveArgs(tx, [raw]))[0] as ArgResolution;
 
 export type AgentArg =
-  | { kind: "agent"; row: AgentRow; ref: string; handle: string; warning?: string }
+  | { kind: "agent"; row: AgentRecord; ref: string; handle: string; warning?: string }
   | { kind: "unknown_ref"; ref: string }
   /** Not an agent: unknown, a person, reserved or a channel. `name` is the resolved handle, else the argument without its `@`. */
   | { kind: "not_agent"; name: string };
@@ -96,7 +98,7 @@ export async function resolveAgentArg(tx: Tx, raw: string): Promise<AgentArg> {
   const r = await resolveArg(tx, raw);
   if (r.kind === "unknown_ref") return r;
   if (r.kind === "principal" && r.p.kind === "agent") {
-    const [row] = await tx.select().from(schema.agents).where(eq(schema.agents.id, r.p.id));
+    const [row] = await agentRecords(tx).where(eq(schema.agents.id, r.p.id));
     if (row)
       return {
         kind: "agent",

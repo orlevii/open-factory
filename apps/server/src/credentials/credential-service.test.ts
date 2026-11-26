@@ -102,8 +102,8 @@ async function rowOf(name: string) {
   return row;
 }
 
-async function agentUsing(slug: string, credentialName: string, archived = false) {
-  const a = await t.seedAgent({ slug });
+async function agentUsing(handle: string, credentialName: string, archived = false) {
+  const a = await t.seedAgent({ handle });
   const c = await rowOf(credentialName);
   await t.db
     .update(schema.agents)
@@ -157,7 +157,7 @@ test("reverify records lastVerifiedAt on success and lastError on failure; alway
   expect((await svc.list()).find((c) => c.name === "work")).toMatchObject({ lastError: null });
 });
 
-test("replace: one rejected restart doesn't abort the others and is logged by slug only", async () => {
+test("replace: one rejected restart doesn't abort the others and is logged by handle only", async () => {
   const a = await agentUsing("fa", "work");
   const b = await agentUsing("fb", "work");
   failRestart.add(a);
@@ -172,7 +172,7 @@ test("replace: one rejected restart doesn't abort the others and is logged by sl
   expect(restarts).toContain(b);
   expect(restarts).not.toContain(a);
   expect(warns).toHaveLength(1);
-  expect(warns[0]?.obj).toEqual({ slug: "fa" });
+  expect(warns[0]?.obj).toEqual({ handle: "fa" });
   expect(JSON.stringify(warns)).not.toContain("boom");
   await t.db.delete(schema.agents).where(inArray(schema.agents.id, [a, b]));
 });
@@ -219,18 +219,17 @@ test("remove: only-active and only-archived wording", async () => {
 });
 
 async function spawnedUsing(
-  slug: string,
+  handle: string,
   spawnerId: string,
   credentialName: string,
   terminated = false,
 ) {
   const c = await rowOf(credentialName);
-  const id = `${slug}-id`;
-  await seedTestPrincipal(t.db, "agent", slug, id);
+  const id = `${handle}-id`;
+  await seedTestPrincipal(t.db, "agent", handle, id);
   await t.db.insert(schema.agents).values({
     id,
-    slug,
-    displayName: slug,
+    displayName: handle,
     template: "t",
     config: {} as never,
     runtime: "local",

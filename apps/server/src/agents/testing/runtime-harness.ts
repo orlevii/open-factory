@@ -83,7 +83,7 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
 export const okSpec = (
   a: {
     id: string;
-    slug: string;
+    handle: string;
     credentialId?: string | null;
   },
   config: Partial<TemplateConfig> = {},
@@ -166,7 +166,7 @@ export class RuntimeHarness {
       /** The Docker launcher; pair it with `spec` returning a Docker spec. */
       docker?: RuntimeDeps["docker"];
       /** What `prepareStart` returns (default: `okSpec`, a local spec). */
-      spec?: (a: { id: string; slug: string }) => PreparedSpec;
+      spec?: (a: { id: string; handle: string }) => PreparedSpec;
       /** Runs after the agent row exists and before `init()` (rows a boot would find pending). */
       seed?: (agentId: string) => Promise<void>;
       /** The interrupt hold's fallback (200ms by default). */
@@ -190,7 +190,7 @@ export class RuntimeHarness {
     this.minted = 0;
     await insertAgent(this.t.sql, {
       id: this.agentId,
-      slug: `dev${this.n}`,
+      handle: `dev${this.n}`,
       ...(opts.errorKind ? { errorKind: opts.errorKind } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),

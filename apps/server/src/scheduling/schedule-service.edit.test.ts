@@ -32,8 +32,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo", displayName: "CEO" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo", displayName: "CEO" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
@@ -77,7 +77,7 @@ test("edit only the body: the creator and the next run stay", async () => {
 test("edit only the target is re-checked live", async () => {
   const s = await mk();
   expect((await svc.edit(or, s.key, { target: "dev" })).target.handle).toBe("dev");
-  await insertAgent(t.sql, { id: "old", slug: "old", archived: true });
+  await insertAgent(t.sql, { id: "old", handle: "old", archived: true });
   await rejects(svc.edit(or, s.key, { target: "old" }), { code: "target_ended" });
   await rejects(svc.edit(or, s.key, { target: "nobody" }), { code: "target_not_found" });
 });
@@ -216,7 +216,7 @@ test("a human-created schedule's restore isn't bound by an agent's limit", async
 });
 
 test("restore is refused when the target ended", async () => {
-  await insertAgent(t.sql, { id: "kid", slug: "kid" });
+  await insertAgent(t.sql, { id: "kid", handle: "kid" });
   await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
   const s = await mk({ target: "kid" });
   await svc.remove(or, s.key);

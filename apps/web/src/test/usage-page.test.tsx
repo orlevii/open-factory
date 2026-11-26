@@ -78,9 +78,9 @@ const leadFamily = (): AgentUsageRow[] => [
     spawned: totals({ costUsd: 3.4, turns: 29 }),
     total: totals({ costUsd: 4.6, turns: 41 }),
   }),
-  ...["lead-a1", "lead-b2", "lead-c3"].map((slug, i) =>
+  ...["lead-a1", "lead-b2", "lead-c3"].map((handle, i) =>
     usageRow({
-      handle: slug,
+      handle: handle,
       kind: "ephemeral",
       spawner: { ref: refFor("lead"), handle: "lead" },
       terminated: i === 0,

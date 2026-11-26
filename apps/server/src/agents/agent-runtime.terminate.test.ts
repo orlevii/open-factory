@@ -421,8 +421,8 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
   worldSeq += 1;
   const leadId = `lead-${worldSeq}`;
   const id = `kid-${worldSeq}`;
-  await insertAgent(h.t.sql, { id: leadId, slug: `lead${worldSeq}` });
-  await insertAgent(h.t.sql, { id, slug: `kid${worldSeq}`, reportsTo: leadId });
+  await insertAgent(h.t.sql, { id: leadId, handle: `lead${worldSeq}` });
+  await insertAgent(h.t.sql, { id, handle: `kid${worldSeq}`, reportsTo: leadId });
   await h.t.sql`update agents set kind = 'ephemeral', runtime = 'docker' where id = ${id}`;
   const driver = new FakeDriver();
   const docker = new Docker(driver);

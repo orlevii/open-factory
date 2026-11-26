@@ -1,10 +1,10 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   cancelScheduleToolSchema,
   formatOffsetIso,
   listSchedulesToolSchema,
   scheduleMessageToolSchema,
 } from "@open-factory/shared";
+import type { AgentRecord } from "../../principals/principal-store.ts";
 import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
 import { ScheduleError } from "../../scheduling/errors.ts";
 import type { ScheduleService } from "../../scheduling/schedule-service.ts";
@@ -22,7 +22,7 @@ type ScheduleTools = {
   /** The zone an agent's schedule gets when it passes none (`FACTORY_TIMEZONE`, spec §7.1). */
   factoryZone: string;
   /** The calling agent, from the token (never from an argument). */
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
   /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
   facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };

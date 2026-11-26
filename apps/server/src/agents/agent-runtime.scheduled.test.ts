@@ -31,7 +31,7 @@ async function makeRuntime(opts: { status?: string; sessionId?: string } = {}) {
   agentId = `a${n}`;
   await insertAgent(t.sql, {
     id: agentId,
-    slug: `dev${n}`,
+    handle: `dev${n}`,
     ...(opts.status ? { status: opts.status } : {}),
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
   });
@@ -118,8 +118,8 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
 
 test("an agent author is its tag in by", async () => {
   await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
-  await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-              select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
+  await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+              select 'auth1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
   const row = await scheduled({ authorId: "auth1" });
   expect(row.authorTag).toBe(`<@${testRef("auth1")}>`);
   expect(row.authorKind).toBe("agent");

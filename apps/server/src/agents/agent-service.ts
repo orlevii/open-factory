@@ -11,13 +11,13 @@ import {
   agentPolicyIssues,
   type ConfigDoc,
   type CreateAgentBody,
+  handleSchema,
   LOCAL_RUNTIME_REFUSAL,
   nameSchema,
   type PatchAgentBody,
   type PutAgentConfigResponse,
   type ReportsTo,
   type ResolvedValue,
-  slugSchema,
   touchesLocalRuntime,
   treeOrder,
 } from "@open-factory/shared";
@@ -89,7 +89,7 @@ type Manager =
   | { kind: "agent"; row: AgentRow; ref: string; handle: string }
   | { kind: "human"; id: string; ref: string; handle: string; name: string };
 
-const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
+const handleTaken = () => new FieldError("handle", FIELD_MSG.handleTaken, "handle_taken");
 
 /** A materialize failure as the API's: the template's folders didn't pass the workspace checks. */
 function materializeFailure(err: unknown, actor: Actor): unknown {
@@ -105,12 +105,12 @@ function materializeFailure(err: unknown, actor: Actor): unknown {
 }
 
 /** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
-function spawnedMessage(spawner: string, slugs: string[]): string {
-  return `@${spawner} has live spawned agents: ${slugs.map((s) => `@${s}`).join(", ")}. Terminate them first.`;
+function spawnedMessage(spawner: string, handles: string[]): string {
+  return `@${spawner} has live spawned agents: ${handles.map((h) => `@${h}`).join(", ")}. Terminate them first.`;
 }
 
-function reportsMessage(slugs: string[]): string {
-  const tags = slugs.map((s) => `@${s}`);
+function reportsMessage(handles: string[]): string {
+  const tags = handles.map((h) => `@${h}`);
   const who =
     tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags[tags.length - 1]}`;
   return `${who} ${tags.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
@@ -661,13 +661,13 @@ export class AgentService {
     actor: Actor,
     warnings: string[] = [],
   ): Promise<AgentSummary> {
-    const slugOk = slugSchema.safeParse(b.slug);
-    if (!slugOk.success)
-      throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
+    const handleOk = handleSchema.safeParse(b.handle);
+    if (!handleOk.success)
+      throw new FieldError("handle", handleOk.error.issues[0]?.message ?? FIELD_MSG.handleInvalid);
     if (b.manageOrg !== undefined && actor.kind === "agent")
       throw new OrgRefusedError("Only a human can grant manage_org.");
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor);
-    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor, warnings));
+    return this.d.lock.run(`create:${b.handle}`, () => this.createLocked(b, actor, warnings));
   }
 
   private async createLocked(
@@ -677,7 +677,7 @@ export class AgentService {
   ): Promise<AgentSummary> {
     const { db, workspace } = this.d;
     // The cheap pre-read before materialising; the principal insert in the transaction is the guarantee (spec §4.1).
-    if ((await principalsByHandles(db, [b.slug])).size) throw slugTaken();
+    if ((await principalsByHandles(db, [b.handle])).size) throw handleTaken();
     // Spec §4.3: the description's tags are stored as `<@ref>`; an unknown ref refuses the create.
     b = {
       ...b,
@@ -693,7 +693,7 @@ export class AgentService {
     const config = b.config ? await this.checkedOverlay(b.config, tpl, actor) : {};
 
     const prep: MaterializeCheck = {
-      handle: b.slug,
+      handle: b.handle,
       displayName: b.displayName,
       description: b.description,
       template: b.template,
@@ -716,7 +716,7 @@ export class AgentService {
     let id: string;
     try {
       id = await db.transaction(async (tx) => {
-        const principal = await createPrincipal(tx, "agent", b.slug);
+        const principal = await createPrincipal(tx, "agent", b.handle);
         const { id } = principal;
         made.ref = principal.ref;
         made.stage = "folder";
@@ -727,7 +727,6 @@ export class AgentService {
         await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
-          slug: b.slug,
           displayName: b.displayName,
           description: b.description,
           descriptionBy: actor.kind === "agent" ? actor.id : null,
@@ -746,7 +745,7 @@ export class AgentService {
         return id;
       });
     } catch (err) {
-      if (err instanceof HandleTakenError) throw slugTaken();
+      if (err instanceof HandleTakenError) throw handleTaken();
       // folder_exists means the folder isn't ours: leave it alone.
       const foreign = err instanceof FieldError && err.code === "folder_exists";
       if (made.ref && made.stage !== "principal" && !foreign)
@@ -1000,7 +999,7 @@ export class AgentService {
       return await this.d.containers.isRunning(row.id, await this.refOf(row.id));
     } catch (err) {
       this.d.log.warn(
-        { err, agent: row.slug },
+        { err, agent: row.id },
         "couldn't check the container; staging the persona reset",
       );
       return true;
@@ -1082,9 +1081,9 @@ export class AgentService {
       }
       for (const j of await Promise.allSettled(jobs))
         if (j.status === "rejected")
-          log.error({ err: j.reason, agent: row.slug }, "applying a persona reset failed");
+          log.error({ err: j.reason, agent: row.id }, "applying a persona reset failed");
     })();
-    work.catch((err) => log.error({ err, agent: row.slug }, "applying a persona reset failed"));
+    work.catch((err) => log.error({ err, agent: row.id }, "applying a persona reset failed"));
   }
 
   /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */

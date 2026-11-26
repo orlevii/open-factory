@@ -1,4 +1,4 @@
-import { RESERVED_SLUGS, slugSchema } from "@open-factory/shared";
+import { handleSchema, RESERVED_HANDLES } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { agentsListQueryOptions } from "@/features/agents/api";
@@ -30,8 +30,8 @@ export function foldLetters(s: string): string {
 const trimHyphens = (s: string) => s.replace(/^-+|-+$/g, "");
 
 /** An agent's address from its display name (§6.3): "" when nothing survives or it isn't a valid
- *  slug; a taken address gets -2, -3, … with the base cut so the whole fits 40 characters. */
-export function deriveSlug(name: string, taken: ReadonlySet<string>): string {
+ *  handle; a taken address gets -2, -3, … with the base cut so the whole fits 40 characters. */
+export function deriveHandle(name: string, taken: ReadonlySet<string>): string {
   const base = trimHyphens(
     foldLetters(name)
       .normalize("NFKD")
@@ -41,17 +41,17 @@ export function deriveSlug(name: string, taken: ReadonlySet<string>): string {
   );
   const cut = trimHyphens(base.slice(0, MAX));
   if (!cut) return "";
-  let slug = cut;
-  for (let n = 2; taken.has(slug); n++) {
+  let handle = cut;
+  for (let n = 2; taken.has(handle); n++) {
     const suffix = `-${n}`;
-    slug = trimHyphens(cut.slice(0, MAX - suffix.length)) + suffix;
+    handle = trimHyphens(cut.slice(0, MAX - suffix.length)) + suffix;
   }
-  return slugSchema.safeParse(slug).success ? slug : "";
+  return handleSchema.safeParse(handle).success ? handle : "";
 }
 
-/** Every address the server refuses: agent slugs (archived included), human handles and the reserved
+/** Every address the server refuses: agent handles (archived included), human handles and the reserved
  *  ones. undefined until the lists answered. Callers must always derive against this set: without
- *  it a reserved name like "Me" derives "" (slugSchema refuses it) instead of "me-2". */
+ *  it a reserved name like "Me" derives "" (handleSchema refuses it) instead of "me-2". */
 export function useTakenNames(enabled: boolean): ReadonlySet<string> | undefined {
   const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled });
   const archived = useQuery({ ...agentsListQueryOptions("only"), enabled });
@@ -64,7 +64,7 @@ export function useTakenNames(enabled: boolean): ReadonlySet<string> | undefined
             ...active.data.map((a) => a.handle),
             ...archived.data.map((a) => a.handle),
             ...users.data.map((u) => u.handle),
-            ...RESERVED_SLUGS,
+            ...RESERVED_HANDLES,
           ])
         : undefined,
     [active.data, archived.data, users.data],

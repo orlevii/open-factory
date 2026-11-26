@@ -26,8 +26,8 @@ async function setup(factorySettings: {
   t = await makeTestApp({ harnessDriver: driver, factorySettings });
   const app = t;
   const or = await signUp(app.app, { handle: "or" });
-  const lead = await app.seedAgent({ slug: "lead" });
-  const dev = await app.seedAgent({ slug: "dev" });
+  const lead = await app.seedAgent({ handle: "lead" });
+  const dev = await app.seedAgent({ handle: "dev" });
   await app.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
   const loaded = await app.app.runtimes.load(lead.id);
   if (!loaded) throw new Error("no runtime for lead");

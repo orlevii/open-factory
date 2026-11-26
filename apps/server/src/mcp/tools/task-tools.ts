@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   commentTaskToolSchema,
   createTaskToolSchema,
@@ -8,7 +7,7 @@ import {
   updateTaskToolSchema,
 } from "@open-factory/shared";
 import { agentTagOf } from "@open-factory/shared/tags";
-import type { Principal } from "../../principals/principal-store.ts";
+import type { AgentRecord, Principal } from "../../principals/principal-store.ts";
 import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
@@ -34,7 +33,7 @@ const principal = (p: { ref: string; handle: string }) => agentTagOf(p);
 type TaskTools = {
   tasks: TaskService;
   /** The calling agent, from the token (never from an argument). */
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
   /** The calling agent's principal: its ref and handle, which the actor carries. */
   loadPrincipal(id: string): Promise<Principal | undefined>;
   /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
@@ -78,18 +77,17 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
     task: {
       key: string;
       status: string;
-      assignee?: string;
+      assignee?: { ref: string; handle: string };
       assigneeEnded?: string;
       blockedBy: string[];
     };
     note?: string;
     warnings?: string[];
   }) => {
-    const facing = await d.facing({ handles: r.task.assignee ? [r.task.assignee] : [] });
     return {
       key: r.task.key,
       status: r.task.status,
-      ...(r.task.assignee ? { assignee: facing.tag(r.task.assignee) } : {}),
+      ...(r.task.assignee ? { assignee: agentTagOf(r.task.assignee) } : {}),
       ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
       blocked_by: r.task.blockedBy,
     };
@@ -295,12 +293,10 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           (args: { id: string; body: string }, tctx: ToolContext) =>
             guard(async () => {
               const r = await d.tasks.comment(await actorOf(tctx), args.id, args.body);
-              const facing = await d.facing({
-                handles: [...r.deliveredTo, ...r.notReached.map((n) => n.name)],
-              });
+              const facing = await d.facing({ handles: r.notReached.map((n) => n.name) });
               return {
                 id: r.id,
-                delivered_to: r.deliveredTo.map((h) => facing.tag(h)),
+                delivered_to: r.deliveredTo.map(agentTagOf),
                 mentioned_humans: r.mentionedHumans.map(agentTagOf),
                 not_reached: r.notReached.map((n) => {
                   const name = facing.tag(n.name);

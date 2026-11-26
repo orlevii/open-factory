@@ -12,11 +12,11 @@ const drv = new FakeDriver();
 beforeAll(async () => {
   s = await makeTestApp({ harnessDriver: drv });
   agentIds = {
-    dev: (await s.seedAgent({ slug: "dev" })).id,
-    ops: (await s.seedAgent({ slug: "ops" })).id,
-    old: (await s.seedAgent({ slug: "old" })).id,
+    dev: (await s.seedAgent({ handle: "dev" })).id,
+    ops: (await s.seedAgent({ handle: "ops" })).id,
+    old: (await s.seedAgent({ handle: "old" })).id,
   };
-  await s.sql`update agents set reports_to = ${agentIds.dev ?? null}, kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'old'`;
+  await s.sql`update agents set reports_to = ${agentIds.dev ?? null}, kind = 'ephemeral', terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'old')`;
   or = (await s.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => s.close());
@@ -69,20 +69,20 @@ test("a human recipient is refused", async () => {
 });
 
 test("the human REST send resolves only agents: each refused target is its own result", async () => {
-  const one = (slug: string) => post({ to: [slug], body: "only agents" });
-  for (const slug of ["or", "nobody", "humans", "factory"]) {
-    const r = await one(slug);
+  const one = (handle: string) => post({ to: [handle], body: "only agents" });
+  for (const handle of ["or", "nobody", "humans", "factory"]) {
+    const r = await one(handle);
     expect(r.statusCode).toBe(202);
     // A person is a principal (named by tag); a name nobody holds stays the word it was written as.
     expect(r.json().results).toEqual([
       expect.objectContaining({
-        to: slug === "or" ? expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/) : `@${slug}`,
+        to: handle === "or" ? expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/) : `@${handle}`,
         status: "refused",
         reason: expect.any(String),
       }),
     ]);
   }
-  await s.seedAgent({ slug: "shelved" });
+  await s.seedAgent({ handle: "shelved" });
   await s.app.agents.archive(await s.refOf("shelved"), {
     kind: "human",
     ref: "k7x2m9qd",
@@ -154,8 +154,8 @@ test("a hand-off that throws for one recipient is that recipient's start_failed,
 test("start_failed keeps that recipient's row pending", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seedAgent({ slug: "bad", config: { template: { secrets: ["GH_TOKEN"] } } });
-    await t2.seedAgent({ slug: "fine" });
+    await t2.seedAgent({ handle: "bad", config: { template: { secrets: ["GH_TOKEN"] } } });
+    await t2.seedAgent({ handle: "fine" });
     const cookie = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",

@@ -13,7 +13,7 @@ export class ApiError extends Error {
   }
 }
 
-const FIELD_STATUS: Record<string, number> = { slug_taken: 409, folder_exists: 409 };
+const FIELD_STATUS: Record<string, number> = { handle_taken: 409, folder_exists: 409 };
 export class FieldError extends ApiError {
   constructor(field: string, message: string, code = "validation_error") {
     super(FIELD_STATUS[code] ?? 400, code, message, { fields: { [field]: message } });
@@ -28,7 +28,7 @@ export function registerErrorHandlers(app: FastifyInstance) {
         .send({ error: { code: err.code, message: err.message, ...err.extra } });
     }
     if (hasZodFastifySchemaValidationErrors(err) || err.validation) {
-      // fastify-type-provider-zod puts one item per issue on err.validation; instancePath is "/slug".
+      // fastify-type-provider-zod puts one item per issue on err.validation; instancePath is "/handle".
       const fields: Record<string, string> = {};
       for (const issue of err.validation ?? []) {
         const field = issue.instancePath.split("/")[1];

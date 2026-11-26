@@ -8,6 +8,7 @@ import { type Actor, overlayVersion } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { insertAgent } from "../../agents/testing/rows.ts";
+import { agentRecords } from "../../principals/principal-store.ts";
 import { makeTestApp } from "../../test/helpers.ts";
 import { seedTestUser, testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
@@ -32,9 +33,9 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
 const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 const tok: Record<string, string> = {};
-const row = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const row = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r;
 };
 const writeTemplate = (name: string, extra = "") => {
@@ -47,10 +48,10 @@ const writeTemplate = (name: string, extra = "") => {
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
   return d;
 };
-const body = (slug: string) => ({
+const body = (handle: string) => ({
   template: "dev",
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
@@ -66,9 +67,9 @@ const names = async (who: string) =>
       name: string;
     }[]
   ).map((x) => x.name);
-const configEvents = async (slug: string) =>
+const configEvents = async (handle: string) =>
   (
-    await t.sql`select 1 from session_events where agent_id = ${(await row(slug)).id} and type = 'config_changed'`
+    await t.sql`select 1 from session_events where agent_id = ${(await row(handle)).id} and type = 'config_changed'`
   ).length;
 
 beforeAll(async () => {
@@ -113,10 +114,10 @@ test("a flag turned off after tools/list makes the call an unknown-tool error", 
   await t.app.agents.update(await t.refOf("temp"), { manageOrg: false }, human);
   const r = await mcpCall(url, tok.temp as string, "tools/call", {
     name: "get_agent",
-    arguments: { slug: "hr-bot" },
+    arguments: { target: "hr-bot" },
   });
   expect(r.json.error).toMatchObject({ code: -32602, message: "Tool get_agent not found" });
-  expect(JSON.stringify(r.json)).not.toContain('"slug":"hr-bot"');
+  expect(JSON.stringify(r.json)).not.toContain('"handle":"hr-bot"');
 });
 
 test("a handler reached with a revoked caller row refuses with the sentence", async () => {
@@ -144,16 +145,19 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
         if (n === "get_agent") handler = h;
       },
     } as never);
-  const res = await handler?.({ slug: "plain" }, { http: { authInfo: { clientId: revoked.id } } });
+  const res = await handler?.(
+    { target: "plain" },
+    { http: { authInfo: { clientId: revoked.id } } },
+  );
   expect(res).toEqual({
     isError: true,
     content: [{ type: "text", text: "@hr-bot can't manage the org any more." }],
   });
 });
 
-const createArgs = (slug: string, extra: object = {}) => ({
+const createArgs = (handle: string, extra: object = {}) => ({
   template: "dev",
-  name: `@${slug}`,
+  handle: `@${handle}`,
   display_name: "C",
   description: "d",
   credential: "work",
@@ -165,15 +169,15 @@ test.each([
   ["an agent with its bare name", "hr-bot", "agent"],
   ["a person with their @handle", "@or", "user"],
 ])("create_agent reports to %s", async (n, reports_to, kind) => {
-  const slug = `c-${n.replace(/\W+/g, "-")}`;
-  const r = await call("hr-bot", "create_agent", createArgs(slug, { reports_to }));
+  const handle = `c-${n.replace(/\W+/g, "-")}`;
+  const r = await call("hr-bot", "create_agent", createArgs(handle, { reports_to }));
   expect(r.json).toMatchObject({
-    slug,
+    handle,
     status: "created",
-    tag: expect.stringMatching(new RegExp(`^<@[0-9a-z]{8}\\|${slug}>$`)),
+    tag: expect.stringMatching(new RegExp(`^<@[0-9a-z]{8}\\|${handle}>$`)),
   });
   expect(r.json.note).toBe(`${r.json.tag} is created and starts when it gets its first message.`);
-  const created = await row(slug);
+  const created = await row(handle);
   expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : "u-or");
   expect(created.manageOrg).toBe(false);
 });
@@ -182,7 +186,9 @@ test("create_agent without reports_to is refused and creates nothing", async () 
   const r = await call("hr-bot", "create_agent", createArgs("no-boss"));
   expect(r.err).toBe(true);
   expect(r.text).toContain("reports_to");
-  expect(await t.sql`select 1 from agents where slug = 'no-boss'`).toHaveLength(0);
+  expect(
+    await t.sql`select 1 from agents where id = (select id from principals where handle = 'no-boss')`,
+  ).toHaveLength(0);
 });
 
 test("create_agent and update_agent refuse an unknown handle, a disabled person and a spawned agent as the manager", async () => {
@@ -191,7 +197,7 @@ test("create_agent and update_agent refuse an unknown handle, a disabled person 
   await t.app.agents.create(body("kid-parent"), human);
   await insertAgent(t.sql, {
     id: "kid-id",
-    slug: "kid-abcd",
+    handle: "kid-abcd",
     kind: "ephemeral",
     reportsTo: (await row("kid-parent")).id,
   });
@@ -200,53 +206,59 @@ test("create_agent and update_agent refuse an unknown handle, a disabled person 
     expect(await call("hr-bot", "create_agent", createArgs("never", { reports_to }))).toMatchObject(
       { err: true, text: refusal },
     );
-    expect(await call("hr-bot", "update_agent", { slug: "dev-1", reports_to })).toMatchObject({
+    expect(await call("hr-bot", "update_agent", { target: "dev-1", reports_to })).toMatchObject({
       err: true,
       text: refusal,
     });
   }
-  expect(await t.sql`select 1 from agents where slug = 'never'`).toHaveLength(0);
+  expect(
+    await t.sql`select 1 from agents where id = (select id from principals where handle = 'never')`,
+  ).toHaveLength(0);
   expect((await row("dev-1")).reportsTo).toBe("u-or");
   await t.sql`delete from agents where id = 'kid-id'`;
   await t.sql`delete from credentials where id = 'cred-kid-id'`;
 });
 
 test("update_agent moves an agent to a new manager and reports reports_to as changed; get_agent shows it", async () => {
-  const r = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@plain" });
-  expect(r.json).toMatchObject({ slug: "dev-1", changed: ["reports_to"] });
+  const r = await call("hr-bot", "update_agent", { target: "dev-1", reports_to: "@plain" });
+  expect(r.json).toMatchObject({ handle: "dev-1", changed: ["reports_to"] });
   const moved = await row("dev-1");
   expect(moved.reportsTo).toBe((await row("plain")).id);
   const [plain] = await t.sql`select ref from principals where handle = 'plain'`;
-  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe(
+  expect((await call("hr-bot", "get_agent", { target: "dev-1" })).json.reports_to).toBe(
     `<@${plain?.ref}|plain>`,
   );
-  const back = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@or" });
+  const back = await call("hr-bot", "update_agent", { target: "dev-1", reports_to: "@or" });
   expect(back.json).toMatchObject({ changed: ["reports_to"] });
-  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toMatch(
+  expect((await call("hr-bot", "get_agent", { target: "dev-1" })).json.reports_to).toMatch(
     /^<@[0-9a-z]{8}\|or>$/,
   );
 });
 
-test("create_agent with a taken name returns the human sentence as name: …", async () => {
+test("create_agent with a taken name returns the human sentence on the handle field", async () => {
   const r = await call("hr-bot", "create_agent", {
     template: "dev",
-    name: "plain",
+    handle: "plain",
     display_name: "P",
     description: "",
     reports_to: "@or",
     credential: "work",
   });
-  expect(r).toMatchObject({ err: true, text: "name: That slug is taken." });
+  expect(r).toMatchObject({ err: true, text: "handle: That handle is taken." });
 });
 
 test("update_agent: config without base_hash is a schema error", async () => {
-  const r = await call("hr-bot", "update_agent", { slug: "dev-1", config: {} });
+  const r = await call("hr-bot", "update_agent", { target: "dev-1", config: {} });
   expect(r.err).toBe(true);
   expect(r.text).toContain("base_hash");
 });
 
 test("update_agent: a stale hash gives the Q14 sentence", async () => {
-  const r = await call("hr-bot", "update_agent", { slug: "dev-1", config: {}, base_hash: "stale" });
+  const r = await call("hr-bot", "update_agent", {
+    target: "dev-1",
+    config: {},
+    base_hash: "stale",
+  });
   expect(r).toMatchObject({
     err: true,
     text: "@dev-1's configuration changed since you read it; call get_agent again.",
@@ -257,7 +269,7 @@ test("update_agent: identity with an invalid config writes nothing", async () =>
   const before = await row("dev-1");
   const hash = overlayVersion(before.config as never);
   const r = await call("hr-bot", "update_agent", {
-    slug: "dev-1",
+    target: "dev-1",
     display_name: "Renamed",
     config: { settings: { hooks: { PreToolUse: [] } } },
     base_hash: hash,
@@ -275,7 +287,7 @@ test("update_agent: a valid identity patch with a stale base_hash writes nothing
   const spy = vi.spyOn(t.app.bus, "publishAll");
   try {
     const r = await call("hr-bot", "update_agent", {
-      slug: "dev-1",
+      target: "dev-1",
       display_name: "Nope",
       config: { template: { model: "opus" } },
       base_hash: "stale",
@@ -296,13 +308,13 @@ test("update_agent: a valid identity patch with a stale base_hash writes nothing
 test("update_agent: identity and config together write both and list the changes", async () => {
   const hash = overlayVersion((await row("dev-1")).config as never);
   const r = await call("hr-bot", "update_agent", {
-    slug: "dev-1",
+    target: "dev-1",
     display_name: "Developer One",
     config: { template: { model: "opus" } },
     base_hash: hash,
   });
   expect(r.err).toBe(false);
-  expect(r.json.slug).toBe("dev-1");
+  expect(r.json.handle).toBe("dev-1");
   expect(r.json.changed.slice(0, 2)).toEqual(["display_name", "config"]);
   expect(r.json.changed.length).toBeGreaterThan(2);
   expect(r.json.restart).toBe(false);
@@ -325,7 +337,7 @@ test("get_agent: overlay_hash is the overlay version, references stay literal, c
     overlayVersion((await row("dev-1")).config as never),
     human,
   );
-  const r = await call("hr-bot", "get_agent", { slug: "@dev-1" });
+  const r = await call("hr-bot", "get_agent", { target: "@dev-1" });
   const stored = (await row("dev-1")).config;
   expect(r.json.overlay_hash).toBe(overlayVersion(stored as never));
   expect(JSON.stringify(r.json.effective)).toContain(REF);
@@ -342,14 +354,14 @@ test("an agent editing its own description gets its restart with wake; another a
   const spy = vi.spyOn(t.app.runtimes, "requestRestart");
   try {
     const hrId = (await row("hr-bot")).id;
-    expect((await call("hr-bot", "update_agent", { slug: "hr-bot", description: "me" })).err).toBe(
-      false,
-    );
+    expect(
+      (await call("hr-bot", "update_agent", { target: "hr-bot", description: "me" })).err,
+    ).toBe(false);
     expect(spy).toHaveBeenCalledWith(hrId, { wake: true });
     spy.mockClear();
-    expect((await call("hr-bot", "update_agent", { slug: "dev-1", description: "you" })).err).toBe(
-      false,
-    );
+    expect(
+      (await call("hr-bot", "update_agent", { target: "dev-1", description: "you" })).err,
+    ).toBe(false);
     expect(spy.mock.calls.filter(([, o]) => o?.wake)).toEqual([]);
   } finally {
     spy.mockRestore();
@@ -384,16 +396,16 @@ test("list_templates lists name, display name, validity and agent count", async 
 });
 
 test("archive_agent and unarchive_agent follow the human rules; self-archive is refused", async () => {
-  expect((await call("hr-bot", "archive_agent", { slug: "hr-bot" })).text).toBe(
+  expect((await call("hr-bot", "archive_agent", { target: "hr-bot" })).text).toBe(
     "Ask a human to archive you.",
   );
-  expect((await call("hr-bot", "archive_agent", { slug: "plain" })).json).toMatchObject({
-    slug: "plain",
+  expect((await call("hr-bot", "archive_agent", { target: "plain" })).json).toMatchObject({
+    handle: "plain",
     archived: true,
   });
   expect((await row("plain")).archivedAt).not.toBeNull();
-  expect((await call("hr-bot", "unarchive_agent", { slug: "plain" })).json).toMatchObject({
-    slug: "plain",
+  expect((await call("hr-bot", "unarchive_agent", { target: "plain" })).json).toMatchObject({
+    handle: "plain",
     archived: false,
   });
   expect((await row("plain")).archivedAt).toBeNull();
@@ -431,13 +443,13 @@ test("no tool result holds a secret value, a credential token or a host path (AC
   const calls: [string, object, boolean][] = [
     ["list_templates", {}, false],
     ["get_template", { name: "dev" }, false],
-    ["get_agent", { slug: "dev-1" }, false],
-    ["get_agent", { slug: "hr-bot" }, false],
+    ["get_agent", { target: "dev-1" }, false],
+    ["get_agent", { target: "hr-bot" }, false],
     [
       "create_agent",
       {
         template: "dev",
-        name: "scan-1",
+        handle: "scan-1",
         display_name: "S",
         description: "",
         reports_to: "@or",
@@ -446,17 +458,17 @@ test("no tool result holds a secret value, a credential token or a host path (AC
       },
       false,
     ],
-    ["update_agent", { slug: "scan-1", description: "changed" }, false],
-    ["archive_agent", { slug: "scan-1" }, false],
-    ["unarchive_agent", { slug: "scan-1" }, false],
+    ["update_agent", { target: "scan-1", description: "changed" }, false],
+    ["archive_agent", { target: "scan-1" }, false],
+    ["unarchive_agent", { target: "scan-1" }, false],
     ["list_library", {}, false],
     ["list_org_resources", {}, false],
-    ["get_agent", { slug: "nobody" }, true],
+    ["get_agent", { target: "nobody" }, true],
     [
       "create_agent",
       {
         template: "dev",
-        name: "scan-1",
+        handle: "scan-1",
         display_name: "S",
         description: "",
         reports_to: "@or",
@@ -478,7 +490,7 @@ test("no tool result holds a secret value, a credential token or a host path (AC
   rmSync(repo, { recursive: true, force: true });
   const gone = await call("hr-bot", "create_agent", {
     template: "dev",
-    name: "scan-2",
+    handle: "scan-2",
     display_name: "S",
     description: "",
     reports_to: "@or",
@@ -495,7 +507,7 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
     kind: "agent",
     id: (await row("hr-bot")).id,
     ref: testRef((await row("hr-bot")).id),
-    slug: "hr-bot",
+    handle: "hr-bot",
   };
   const before = await row("dev-1");
   const plan = await t.app.configs.planOverlay(
@@ -546,7 +558,9 @@ test("create_agent refuses an unknown ref as the manager with the fix-it sentenc
   expect(r.text).toBe(
     "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
   );
-  expect(await t.sql`select 1 from agents where slug = 'ghosted'`).toHaveLength(0);
+  expect(
+    await t.sql`select 1 from agents where id = (select id from principals where handle = 'ghosted')`,
+  ).toHaveLength(0);
 });
 
 test("create_agent and get_agent warn on a plain handle and stay quiet for a tag", async () => {
@@ -564,8 +578,10 @@ test("create_agent and get_agent warn on a plain handle and stay quiet for a tag
     createArgs("not-warned", { reports_to: `<@${boss?.ref}>` }),
   );
   expect(tagged.json).not.toHaveProperty("warnings");
-  expect((await call("hr-bot", "get_agent", { slug: "hr-bot" })).json.warnings).toEqual([warning]);
-  expect((await call("hr-bot", "get_agent", { slug: `<@${boss?.ref}>` })).json).not.toHaveProperty(
-    "warnings",
-  );
+  expect((await call("hr-bot", "get_agent", { target: "hr-bot" })).json.warnings).toEqual([
+    warning,
+  ]);
+  expect(
+    (await call("hr-bot", "get_agent", { target: `<@${boss?.ref}>` })).json,
+  ).not.toHaveProperty("warnings");
 });

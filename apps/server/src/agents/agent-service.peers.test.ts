@@ -30,20 +30,20 @@ beforeEach(async () => {
 });
 afterEach(() => h.close());
 
-const held = async (slug: string) =>
+const held = async (handle: string) =>
   (
     await h.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
-                where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
+                where a.id = (select id from principals where handle = ${handle}) and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 /** An agent's tag, as the factory writes it in a body (its principal's ref). */
-const tag = async (slug: string) => tagOf(testRef((await agentRowOf(h.app, slug))?.id ?? ""));
+const tag = async (handle: string) => tagOf(testRef((await agentRowOf(h.app, handle))?.id ?? ""));
 /** The signed-in human `or`'s tag. */
 const OR = tagOf(testRef("u-or"));
-function create(slug: string, displayName: string, reportsTo: string) {
+function create(handle: string, displayName: string, reportsTo: string) {
   return h.app.agents.create(
     {
       template: "lead",
-      slug,
+      handle,
       displayName,
       description: "d",
       reportsTo,
@@ -81,7 +81,8 @@ test("manager change: left the old neighborhood, joined the new; the moved agent
   ]);
   expect(await held("dev")).toEqual([]);
   // The moved agent's own org changed: S4's restart request gives it a fresh CLAUDE.md (spec §10.2, §17.2).
-  const [dev] = await h.sql`select id from agents where slug = 'dev'`;
+  const [dev] =
+    await h.sql`select id from agents where id = (select id from principals where handle = 'dev')`;
   expect(restart.mock.calls.map((c) => c[0])).toEqual([dev?.id]);
 });
 

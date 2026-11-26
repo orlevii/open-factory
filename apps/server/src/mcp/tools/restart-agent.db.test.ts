@@ -18,15 +18,15 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: drv });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
-  for (const slug of ["lead", "dev", "qa"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
   // A spawned report of lead, and dev and kid are lead's reports.
-  ids.kid = (await h.seedAgent({ slug: "kid" })).id;
+  ids.kid = (await h.seedAgent({ handle: "kid" })).id;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'kid')`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
 });
 afterEach(() => h.close());
 
@@ -48,19 +48,19 @@ const names = async (who: string) =>
 const post = (url: string, payload: Record<string, unknown>) =>
   h.app.inject({ method: "POST", url, headers: { cookie }, payload });
 /** The processes the driver has started for an agent, in order. */
-const startsOf = (slug: string) => drv.starts.filter((p) => p.spec.agentId === ids[slug]);
+const startsOf = (handle: string) => drv.starts.filter((p) => p.spec.agentId === ids[handle]);
 /** What a process was sent, as [from, body] pairs in order. */
 const delivered = (p: { sent: { from: string; body: string }[][] }) =>
   p.sent.flat().map((m) => [handleOf(m.from), m.body]);
 /** An envelope sender is a tag; the test reads its handle. */
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 /** A report of lead that is running with a turn open (a cut restart interrupts it). */
-async function runningMidTurn(slug: string) {
-  await post("/api/messages", { to: [slug], body: "work", urgent: false });
-  const p = startsOf(slug).at(-1);
+async function runningMidTurn(handle: string) {
+  await post("/api/messages", { to: [handle], body: "work", urgent: false });
+  const p = startsOf(handle).at(-1);
   if (!p) throw new Error("never started");
   p.emit(ev.session(), ev.turn());
-  await (await runtimeOf(h.app, slug))?.settled();
+  await (await runtimeOf(h.app, handle))?.settled();
   return p;
 }
 
@@ -96,7 +96,7 @@ test("a non-report is refused without manage_org, and is not restarted", async (
 });
 
 test("with manage_org, any live agent is accepted", async () => {
-  await h.sql`update agents set manage_org = true where slug = 'lead'`;
+  await h.sql`update agents set manage_org = true where id = (select id from principals where handle = 'lead')`;
   expect(await call("lead", { target: "qa" })).toMatchObject({
     err: false,
     json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/), status: "not_running" },
@@ -104,7 +104,7 @@ test("with manage_org, any live agent is accepted", async () => {
 });
 
 test("the caller can't restart itself, even with manage_org", async () => {
-  await h.sql`update agents set manage_org = true where slug = 'lead'`;
+  await h.sql`update agents set manage_org = true where id = (select id from principals where handle = 'lead')`;
   expect(await call("lead", { target: "@lead" })).toMatchObject({
     err: true,
     text: "Your config changes apply when you're idle; you can't restart yourself.",
@@ -112,7 +112,7 @@ test("the caller can't restart itself, even with manage_org", async () => {
 });
 
 test("an archived report gets the messaging sentence and is not restarted", async () => {
-  await h.sql`update agents set archived_at = now() where slug = 'dev'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'dev')`;
   expect(await call("lead", { target: "dev" })).toMatchObject({
     err: true,
     text: "@dev is archived and can't receive messages.",
@@ -122,7 +122,7 @@ test("an archived report gets the messaging sentence and is not restarted", asyn
 
 // Only an ephemeral agent can be terminated (a schema rule), so a terminated report is a spawned one.
 test("a terminated report gets the messaging sentence and is not restarted", async () => {
-  await h.sql`update agents set terminated_at = now() where slug = 'kid'`;
+  await h.sql`update agents set terminated_at = now() where id = (select id from principals where handle = 'kid')`;
   expect(await call("lead", { target: "kid" })).toMatchObject({
     err: true,
     text: "@kid was terminated and can't receive messages.",
@@ -189,7 +189,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
 
 test("an errored report whose restart is refused up front gets no note", async () => {
   // The row is read fresh by the runtime (as the task-lifecycle test does), so an errored status is set in the db.
-  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'resume_unrecoverable' where slug = 'dev'`;
+  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'resume_unrecoverable' where id = (select id from principals where handle = 'dev')`;
   const r = await call("lead", { target: "dev", note: "Rerun the tests." });
   expect(r).toMatchObject({ err: true });
   const rows = await h.sql`select 1 from messages where body = 'Rerun the tests.'`;
@@ -313,7 +313,7 @@ test("an idle report: the restart notice comes before the note on the next proce
   const p = startsOf("dev").at(-1);
   p?.emit(...ev.fullTurn());
   await (await runtimeOf(h.app, "dev"))?.settled();
-  await h.sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where slug = 'dev'`;
+  await h.sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where id = (select id from principals where handle = 'dev')`;
   const r = await call("lead", { target: "dev", note: "Pick up the new model." });
   expect(r.json).toMatchObject({ status: "restarted_idle" });
   await (await runtimeOf(h.app, "dev"))?.settled();

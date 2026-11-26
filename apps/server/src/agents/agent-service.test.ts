@@ -17,7 +17,7 @@ import { refOf } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import { principalById, principalsByHandles } from "../principals/principal-store.ts";
+import { agentRecords, principalById, principalsByHandles } from "../principals/principal-store.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { principalSql, seedTestPrincipal, seedTestUser } from "../test/principals.ts";
@@ -39,15 +39,15 @@ function writeTemplate(name: string, y: string) {
   writeFileSync(path.join(d, "template.yaml"), y);
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
 }
-const idOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const idOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r.id;
 };
 
-const refFor = async (slug: string) => refOf(await idOf(slug));
-const workdirOf = async (slug: string) => path.join(home, "agents", await refFor(slug));
-const stateOf = async (slug: string) => path.join(home, "state", "agents", await refFor(slug));
+const refFor = async (handle: string) => refOf(await idOf(handle));
+const workdirOf = async (handle: string) => path.join(home, "agents", await refFor(handle));
+const stateOf = async (handle: string) => path.join(home, "state", "agents", await refFor(handle));
 
 beforeAll(async () => {
   fake = createFakeClaude({ scenario: "reply" });
@@ -74,7 +74,7 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
   const a = await svc.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
@@ -97,7 +97,7 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
   const b = await svc.create(
     {
       template: "lead",
-      slug: "dev-1",
+      handle: "dev-1",
       displayName: "Dev",
       description: "",
       reportsTo: "lead",
@@ -131,7 +131,7 @@ test("summaries carry the template avatarVersion", async () => {
 });
 
 test.each([
-  ["slug taken", { slug: "lead" }, { code: "slug_taken" }],
+  ["handle taken", { handle: "lead" }, { code: "handle_taken" }],
   [
     "unknown credential",
     { credential: "nope" },
@@ -149,7 +149,7 @@ test.each([
     svc.create(
       {
         template: "lead",
-        slug: "x-new",
+        handle: "x-new",
         displayName: "X",
         description: "",
         reportsTo: "or",
@@ -161,14 +161,14 @@ test.each([
   ).rejects.toMatchObject(err);
 });
 
-test("create with a reserved slug is refused and creates no principal", async () => {
-  const slugs = ["humans", "me", "scheduler"];
-  for (const slug of slugs)
+test("create with a reserved handle is refused and creates no principal", async () => {
+  const handles = ["humans", "me", "scheduler"];
+  for (const handle of handles)
     await expect(
       svc.create(
         {
           template: "lead",
-          slug,
+          handle,
           displayName: "X",
           description: "",
           reportsTo: "or",
@@ -177,7 +177,7 @@ test("create with a reserved slug is refused and creates no principal", async ()
         { kind: "human", ref: "k7x2m9qd", handle: "or" },
       ),
     ).rejects.toMatchObject({ code: "validation_error" });
-  expect((await principalsByHandles(t.db, slugs)).size).toBe(0);
+  expect((await principalsByHandles(t.db, handles)).size).toBe(0);
 });
 
 test("create: a folder that carries the handle's name is no collision and stays untouched", async () => {
@@ -187,7 +187,7 @@ test("create: a folder that carries the handle's name is no collision and stays 
   await svc.create(
     {
       template: "lead",
-      slug: "occupied",
+      handle: "occupied",
       displayName: "O",
       description: "",
       reportsTo: "or",
@@ -272,7 +272,7 @@ test("the agents_color CHECK rejects 13 and 0 on its own row", async () => {
   await svc.create(
     {
       template: "lead",
-      slug: "colour-check",
+      handle: "colour-check",
       displayName: "C",
       description: "",
       reportsTo: "or",
@@ -282,7 +282,7 @@ test("the agents_color CHECK rejects 13 and 0 on its own row", async () => {
   );
   for (const bad of [13, 0])
     await expect(
-      t.sql`update agents set color = ${bad} where slug = 'colour-check'`,
+      t.sql`update agents set color = ${bad} where id = (select id from principals where handle = 'colour-check')`,
     ).rejects.toThrow(/agents_color|check/i);
 });
 
@@ -290,7 +290,7 @@ test("projects: duplicate names are deduped (order kept) on create and PATCH", a
   const made = await svc.create(
     {
       template: "lead",
-      slug: "dupe",
+      handle: "dupe",
       displayName: "D",
       description: "",
       reportsTo: "or",
@@ -316,13 +316,13 @@ test("projects: duplicate names are deduped (order kept) on create and PATCH", a
   ).toEqual(["app"]);
 });
 
-async function makeStageAgent(slug: string) {
-  writeTemplate(slug, yaml(slug));
+async function makeStageAgent(handle: string) {
+  writeTemplate(handle, yaml(handle));
   await svc.create(
     {
-      template: slug,
-      slug,
-      displayName: slug,
+      template: handle,
+      handle,
+      displayName: handle,
       description: "",
       reportsTo: "or",
       credential: "work",
@@ -330,8 +330,8 @@ async function makeStageAgent(slug: string) {
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
 }
-async function startAndStop(slug: string, start: boolean) {
-  const rt = await runtimes.byRef(await t.refOf(slug));
+async function startAndStop(handle: string, start: boolean) {
+  const rt = await runtimes.byRef(await t.refOf(handle));
   if (!rt) throw new Error("no runtime");
   if (start) {
     const u = await t.signUpUser();
@@ -347,17 +347,17 @@ async function startAndStop(slug: string, start: boolean) {
 }
 
 /** The pending `config_changed` notice lines of an agent. */
-async function pendingConfigLines(slug: string): Promise<string[]> {
+async function pendingConfigLines(handle: string): Promise<string[]> {
   const rows = await t.sql`
-    select body from messages where to_id = ${await idOf(slug)} and notice = 'config_changed' and state = 'pending'`;
+    select body from messages where to_id = ${await idOf(handle)} and notice = 'config_changed' and state = 'pending'`;
   return rows.flatMap((r) =>
     String(r.body)
       .split("\n")
       .filter((l) => l.startsWith("- ")),
   );
 }
-const personaBackups = async (slug: string) => {
-  const dir = path.join(await stateOf(slug), "persona");
+const personaBackups = async (handle: string) => {
+  const dir = path.join(await stateOf(handle), "persona");
   return existsSync(dir) ? readdirSync(dir) : [];
 };
 
@@ -429,7 +429,7 @@ test("reset persona of a Docker agent stages while its container runs, or when D
   await svc.create(
     {
       template: "dock-p",
-      slug: "dock-p",
+      handle: "dock-p",
       displayName: "Dock",
       description: "",
       reportsTo: "or",
@@ -589,7 +589,7 @@ test("unarchive is refused while the manager is archived", async () => {
   await svc.create(
     {
       template: "lead",
-      slug: "helper",
+      handle: "helper",
       displayName: "Helper",
       description: "",
       reportsTo: "dev-1",
@@ -607,13 +607,13 @@ test("unarchive is refused while the manager is archived", async () => {
   });
 });
 
-test("create refuses a slug that is a human handle", async () => {
+test("create refuses a handle that is a human handle", async () => {
   await t.signUpUser({ handle: "sam" });
   await expect(
     svc.create(
       {
         template: "lead",
-        slug: "sam",
+        handle: "sam",
         displayName: "Sam",
         description: "",
         reportsTo: "or",
@@ -621,28 +621,40 @@ test("create refuses a slug that is a human handle", async () => {
       },
       { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
-  ).rejects.toMatchObject({ code: "slug_taken" });
+  ).rejects.toMatchObject({ code: "handle_taken" });
 });
 
-const createBody = (slug: string) => ({
+const createBody = (handle: string) => ({
   template: "lead",
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
 });
-const agentRows = async (slug: string) =>
-  t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+const agentRows = async (handle: string) =>
+  agentRecords(t.db).where(eq(schema.principals.handle, handle));
 
-test("create refuses a slug held by a human principal that has no user row yet", async () => {
+test("create refuses a handle held by a human principal that has no user row yet", async () => {
   await seedTestPrincipal(t.db, "human", "inflight");
   const folders = readdirSync(path.join(home, "agents"));
   await expect(
     svc.create(createBody("inflight"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
-  ).rejects.toMatchObject({ code: "slug_taken" });
+  ).rejects.toMatchObject({ code: "handle_taken" });
   expect(await agentRows("inflight")).toEqual([]);
   expect(readdirSync(path.join(home, "agents"))).toEqual(folders);
+});
+
+test("creating an agent with a taken handle is refused on the handle field", async () => {
+  await svc.create(createBody("twin-one"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await expect(
+    svc.create(createBody("twin-one"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({
+    status: 409,
+    code: "handle_taken",
+    extra: { fields: { handle: expect.any(String) } },
+  });
+  expect(await agentRows("twin-one")).toHaveLength(1);
 });
 
 test("creating an agent creates its principal with the agent's id and handle", async () => {
@@ -653,31 +665,31 @@ test("creating an agent creates its principal with the agent's id and handle", a
   expect(principal?.ref).toBe(refOf(agent?.id ?? ""));
 });
 
-test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate, the winner's folder intact", async () => {
+test("two concurrent creates of one handle: one succeeds, the other is handle_taken, no duplicate, the winner's folder intact", async () => {
   const results = await Promise.allSettled([
     svc.create(createBody("dup-race"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
     svc.create(createBody("dup-race"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ]);
   expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   const failed = results.find((r) => r.status === "rejected");
-  expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
+  expect(failed).toMatchObject({ reason: { code: "handle_taken" } });
   expect(await agentRows("dup-race")).toHaveLength(1);
   expect(existsSync(path.join(await workdirOf("dup-race"), "AGENTS.md"))).toBe(true);
 });
 
-async function createSpawner(slug: string) {
+async function createSpawner(handle: string) {
   await svc.create(
     {
       template: "lead",
-      slug,
-      displayName: slug,
+      handle,
+      displayName: handle,
       description: "",
       reportsTo: "or",
       credential: "work",
     },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  return idOf(slug);
+  return idOf(handle);
 }
 /**
  * A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). Like a real spawn it holds the
@@ -686,13 +698,13 @@ async function createSpawner(slug: string) {
 const insertChild = async (
   q: typeof t.sql,
   spawnerId: string,
-  slug: string,
+  handle: string,
   terminated = false,
 ) => {
   const id = randomUUID();
-  await q.unsafe(principalSql(id, "agent", slug));
-  await q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-       select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+  await q.unsafe(principalSql(id, "agent", handle));
+  await q`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+       select ${id}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
               ${terminated ? new Date().toISOString() : null}::timestamptz, null
        from agents where id = ${spawnerId}`;
   await q`insert into agent_project_grants (agent_id, project_id)
@@ -826,7 +838,8 @@ test("a spawned agent can't be edited, reset, archived or unarchived: 409 epheme
   await expect(
     svc.unarchive(await refFor("spawner-4-ee11"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject(refused);
-  const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
+  const [r] =
+    await t.sql`select display_name from agents where id = (select id from principals where handle = 'spawner-4-ee11')`;
   expect(r?.display_name).toBe("Kid");
 });
 
@@ -841,7 +854,7 @@ test("a spawned agent can't be a manager on create or edit", async () => {
     svc.create(
       {
         template: "lead",
-        slug: "under-kid",
+        handle: "under-kid",
         displayName: "Under",
         description: "",
         reportsTo: "spawner-5-ff11",
@@ -891,7 +904,7 @@ test("a human-managed agent reports its manager as a human", async () => {
   const created = await svc.create(
     {
       template: "lead",
-      slug: "human-led",
+      handle: "human-led",
       displayName: "Human led",
       description: "",
       reportsTo: "or",

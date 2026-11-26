@@ -30,19 +30,19 @@ async function make(o: { spawned?: boolean; archived?: boolean; terminated?: boo
   n += 1;
   id = `sc${n}`;
   if (o.spawned) {
-    await insertAgent(t.sql, { id: `sl${n}`, slug: `slead${n}` });
-    await insertAgent(t.sql, { id, slug: `stop${n}`, reportsTo: `sl${n}` });
+    await insertAgent(t.sql, { id: `sl${n}`, handle: `slead${n}` });
+    await insertAgent(t.sql, { id, handle: `stop${n}`, reportsTo: `sl${n}` });
     await t.sql`update agents set kind = 'ephemeral' where id = ${id}`;
   } else if (o.terminated) {
-    await insertAgent(t.sql, { id: `tl${n}`, slug: `tlead${n}` });
+    await insertAgent(t.sql, { id: `tl${n}`, handle: `tlead${n}` });
     await insertAgent(t.sql, {
       id,
-      slug: `stop${n}`,
+      handle: `stop${n}`,
       terminatedAt: new Date(),
       reportsTo: `tl${n}`,
     });
   } else
-    await insertAgent(t.sql, { id, slug: `stop${n}`, ...(o.archived ? { archived: true } : {}) });
+    await insertAgent(t.sql, { id, handle: `stop${n}`, ...(o.archived ? { archived: true } : {}) });
   driver = new FakeDriver();
   forwarded = [];
   const agent = await store.agentById(id);

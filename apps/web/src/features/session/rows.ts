@@ -296,7 +296,7 @@ function factoryKind(e: Ev<"tool_call">): "outgoing" | "spawn" | "terminate" | u
   if (!i) return undefined;
   if (e.name === SPAWN_AGENT_TOOL && isStr(i.template) && isStr(i.description) && isStr(i.prompt))
     return "spawn";
-  if (e.name === TERMINATE_AGENT_TOOL && isStr(i.slug)) return "terminate";
+  if (e.name === TERMINATE_AGENT_TOOL && isStr(i.target)) return "terminate";
   return undefined;
 }
 

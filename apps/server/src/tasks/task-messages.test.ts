@@ -15,11 +15,11 @@ beforeEach(async () => {
   creatorId = user.id;
   taskId = randomUUID();
   await h.sql`insert into tasks (id, title, created_by_id) values (${taskId}, 'Plan the migration', ${creatorId})`;
-  await h.seedAgent({ slug: "dev" });
+  await h.seedAgent({ handle: "dev" });
 });
 afterEach(() => h.close());
 
-const proc = (slug: string) => driver.startsOf(slug).at(-1);
+const proc = (handle: string) => driver.startsOf(handle).at(-1);
 async function dev() {
   const a = await agentRowOf(h.app, "dev");
   if (!a) throw new Error("seed");
@@ -95,7 +95,8 @@ test("to an errored agent a task_message stays pending and starts no attempt", a
   await makeErrored();
   const row = await update();
   await handOff(row, "task_message");
-  const [a] = await h.sql`select status, attempting from agents where slug = 'dev'`;
+  const [a] =
+    await h.sql`select status, attempting from agents where id = (select id from principals where handle = 'dev')`;
   expect(a).toEqual({ status: "errored", attempting: false });
   expect(driver.startsOf("dev")).toHaveLength(0);
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("pending");
@@ -128,7 +129,7 @@ test("a human's task comment to an errored agent starts an attempt with the mess
 test("boot wakes an agent whose only pending row is a task row", async () => {
   await update();
   const wakes = await h.app.store.bootWakes();
-  expect(wakes.map((w) => w.slug)).toEqual(["dev"]);
+  expect(wakes.map((w) => w.handle)).toEqual(["dev"]);
 });
 
 test("createHumanMessage: a task_update to a user is a task_event inbox item", async () => {

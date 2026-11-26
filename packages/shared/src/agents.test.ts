@@ -10,11 +10,11 @@ import {
   terminateAgentToolSchema,
 } from "./agents.ts";
 
-test("PATCH body is strict: template and slug are rejected, not dropped", () => {
+test("PATCH body is strict: template and handle are rejected, not dropped", () => {
   expect(patchAgentBodySchema.safeParse({ description: "x" }).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({}).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({ template: "lead" }).success).toBe(false);
-  expect(patchAgentBodySchema.safeParse({ slug: "boss", description: "x" }).success).toBe(false);
+  expect(patchAgentBodySchema.safeParse({ handle: "boss", description: "x" }).success).toBe(false);
 });
 
 test("spawn tool schema: enum from the caller's templates, suffix pattern, required fields", () => {
@@ -86,7 +86,7 @@ test("PATCH manageOrg must be a boolean", () => {
 test("create body accepts manageOrg as a boolean", () => {
   const valid = {
     template: "lead",
-    slug: "boss",
+    handle: "boss",
     displayName: "Boss",
     description: "",
     reportsTo: "k7x2m9qd",
@@ -114,7 +114,7 @@ test.each(["or", "@or", "k7x2m9q", "k7x2m9qdd"])(
 test.each([null, "", "  "])("a create body without a manager (%j) is refused", (reportsTo) => {
   const body = {
     template: "lead",
-    slug: "boss",
+    handle: "boss",
     displayName: "Boss",
     description: "",
     reportsTo,

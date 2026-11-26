@@ -46,7 +46,7 @@ const json = (data: unknown) =>
     headers: { "content-type": "application/json" },
   });
 
-test("lists agents with status label, slug and the unsandboxed badge", async () => {
+test("lists agents with status label, handle and the unsandboxed badge", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>

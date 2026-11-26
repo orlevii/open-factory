@@ -73,16 +73,17 @@ export class UserAdminService {
       if (target.disabledAt === null) {
         // I9 §4.5: a human who manages agents can't be disabled while they report to them; move them first.
         const managed = await tx
-          .select({ slug: schema.agents.slug })
+          .select({ handle: schema.principals.handle })
           .from(schema.agents)
+          .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
           .where(and(eq(schema.agents.reportsTo, targetId), isNull(schema.agents.terminatedAt)))
-          .orderBy(asc(schema.agents.slug));
+          .orderBy(asc(schema.principals.handle));
         if (managed.length)
           throw new ApiError(
             409,
             "manages_agents",
-            `@${target.handle} manages ${managed.map((a) => `@${a.slug}`).join(", ")}. Move them to another manager first.`,
-            { agents: managed.map((a) => a.slug) },
+            `@${target.handle} manages ${managed.map((a) => `@${a.handle}`).join(", ")}. Move them to another manager first.`,
+            { agents: managed.map((a) => a.handle) },
           );
         await tx
           .update(schema.users)

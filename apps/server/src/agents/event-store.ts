@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRow, type Db, type RuntimeJournal, schema } from "@open-factory/db";
+import { type Db, type RuntimeJournal, schema } from "@open-factory/db";
 import {
   type AnyEvent,
   anyEventSchema,
@@ -39,6 +39,8 @@ import {
 import { alias } from "drizzle-orm/pg-core";
 import { resolveAgentArg } from "../principals/principal-args.ts";
 import {
+  type AgentRecord,
+  agentRecordColumns,
   principalById,
   principalsByIds,
   principalsByRefs,
@@ -76,6 +78,7 @@ const {
   principals,
   loopHolds,
 } = schema;
+
 type MessageRow = typeof messages.$inferSelect;
 /** The sender when it is a human (a chat_changed goes to people only); null for an agent, the factory or a schedule. */
 const humanSender = sql<string | null>`(select u.id from users u where u.id = ${messages.fromId})`;
@@ -87,7 +90,7 @@ export type PendingRow = MessageRow & {
   fromKind: "human" | "agent" | null;
   /** `kind='message'` rows: the full recipient list as `<@ref>` tags (what the envelope's `to` shows, rendered at delivery). */
   recipientTags: string[] | null;
-  subjectSlug: string | null;
+  subjectHandle: string | null;
   /** The subject agent's ref (the envelope's `about`, rendered at delivery). */
   subjectRef: string | null;
   subjectDisplayName: string | null;
@@ -198,7 +201,11 @@ export class EventStore {
 
   // agents
   async listAgents() {
-    return this.db.select().from(agents).orderBy(asc(agents.slug));
+    return this.db
+      .select(agentRecordColumns)
+      .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
+      .orderBy(asc(principals.handle));
   }
   /** The agent whose principal has this ref (already normalised), if any. */
   async agentByRef(ref: string) {
@@ -222,8 +229,14 @@ export class EventStore {
     return p.handle;
   }
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
-  async agentById(id: string, tx: Exec = this.db) {
-    return (await tx.select().from(agents).where(eq(agents.id, id)))[0];
+  async agentById(id: string, tx: Exec = this.db): Promise<AgentRecord | undefined> {
+    return (
+      await tx
+        .select(agentRecordColumns)
+        .from(agents)
+        .innerJoin(principals, eq(principals.id, agents.id))
+        .where(eq(agents.id, id))
+    )[0];
   }
   /**
    * U3 §13.3: the command list of the agent's latest process start (a side table, never on agent reads). Only
@@ -336,11 +349,12 @@ export class EventStore {
    * S7 §10.3 step 2: which of `ids` (agents with a container still listed) are terminated. Bounded by the listed
    * containers, so the sweep never reads every terminated agent.
    */
-  async terminatedAmong(ids: string[]): Promise<AgentRow[]> {
+  async terminatedAmong(ids: string[]): Promise<AgentRecord[]> {
     if (!ids.length) return [];
     return this.db
-      .select()
+      .select(agentRecordColumns)
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .where(and(inArray(agents.id, ids), isNotNull(agents.terminatedAt)))
       .orderBy(asc(agents.terminatedAt), asc(agents.id));
   }
@@ -361,10 +375,11 @@ export class EventStore {
    * S7 §10.3 step 1: live spawned agents idle since before `cutoff`, except those owed a continue notice and those
    * whose credential is paused at `now` (a rate-limit pause is waiting, not idleness). The runtime re-checks each.
    */
-  async ttlCandidates(cutoff: Date, now: Date): Promise<AgentRow[]> {
+  async ttlCandidates(cutoff: Date, now: Date): Promise<AgentRecord[]> {
     const rows = await this.db
-      .select({ agent: agents })
+      .select({ agent: agentRecordColumns })
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .leftJoin(credentials, eq(credentials.id, agents.credentialId))
       .where(
         and(
@@ -384,10 +399,11 @@ export class EventStore {
    * failed container removal sets), a journal still kept, or a termination recent enough that its stop may still be
    * in flight (`terminated_at > recentCutoff`).
    */
-  async stuckCandidates(recentCutoff: Date): Promise<AgentRow[]> {
+  async stuckCandidates(recentCutoff: Date): Promise<AgentRecord[]> {
     return this.db
-      .select()
+      .select(agentRecordColumns)
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .where(
         and(
           isNotNull(agents.terminatedAt),
@@ -401,10 +417,11 @@ export class EventStore {
       .orderBy(asc(agents.terminatedAt), asc(agents.id));
   }
   /** S7 §10.3 step 3: terminated before `cutoff`, its workspace neither pinned nor deleted yet. */
-  async workspaceCandidates(cutoff: Date): Promise<AgentRow[]> {
+  async workspaceCandidates(cutoff: Date): Promise<AgentRecord[]> {
     return this.db
-      .select()
+      .select(agentRecordColumns)
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .where(
         and(
           lt(agents.terminatedAt, cutoff),
@@ -448,15 +465,16 @@ export class EventStore {
    * its debounce while the agent runs; peer rows never wake anyone). `resume` when a factory-restarted notice
    * is among them.
    */
-  async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
+  async bootWakes(): Promise<{ id: string; handle: string; resume: boolean }[]> {
     const deliverable = this.deliverableWhere();
     const rows = await this.db
       .select({
         id: agents.id,
-        slug: agents.slug,
+        handle: principals.handle,
         resume: sql<boolean>`bool_or(${messages.notice} = 'factory_restarted')`,
       })
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .innerJoin(
         messages,
         and(eq(messages.toId, agents.id), eq(messages.state, "pending"), deliverable),
@@ -468,7 +486,7 @@ export class EventStore {
           sql`${agents.status} <> 'errored'`,
         ),
       )
-      .groupBy(agents.id, agents.slug)
+      .groupBy(agents.id, principals.handle)
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
   }
@@ -529,16 +547,17 @@ export class EventStore {
    * only the rare crash-window agents come back.
    */
   async terminatedWithoutEvent(): Promise<
-    { id: string; slug: string; runtime: string; by: string }[]
+    { id: string; handle: string; runtime: string; by: string }[]
   > {
     const rows = await this.db
       .select({
         id: agents.id,
-        slug: agents.slug,
+        handle: principals.handle,
         runtime: agents.runtime,
         terminatedBy: agents.terminatedBy,
       })
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .where(
         and(
           isNotNull(agents.terminatedAt),
@@ -582,10 +601,11 @@ export class EventStore {
     await this.db.update(agents).set({ rateLimitNoticeOwed: owed }).where(eq(agents.id, agentId));
   }
   /** The live (not archived, not terminated) agents on the credential that are owed a continue notice. */
-  async owedAgents(credentialId: string): Promise<{ id: string; slug: string }[]> {
+  async owedAgents(credentialId: string): Promise<{ id: string; handle: string }[]> {
     return this.db
-      .select({ id: agents.id, slug: agents.slug })
+      .select({ id: agents.id, handle: principals.handle })
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .where(
         and(
           eq(agents.credentialId, credentialId),
@@ -594,7 +614,7 @@ export class EventStore {
           isNull(agents.terminatedAt),
         ),
       )
-      .orderBy(asc(agents.slug));
+      .orderBy(asc(principals.handle));
   }
 
   // credentials (rate-limit pauses, spec §7.2)
@@ -1140,7 +1160,7 @@ export class EventStore {
       return { row, userIds };
     });
   }
-  /** One row with the same joins as the queue (sender handle and slug, subject slug and name), whatever its state. */
+  /** One row with the same joins as the queue (sender handle, subject handle and name), whatever its state. */
   async pendingRow(id: string, tx: Exec = this.db): Promise<PendingRow> {
     const [r] = await this.joined(tx).where(eq(messages.id, id));
     if (!r) throw new Error(`message ${id} not found`);
@@ -1184,7 +1204,7 @@ export class EventStore {
         fromHandle: fp.handle,
         fromRef: fp.ref,
         fromKind: fp.kind,
-        subjectSlug: sa.slug,
+        subjectHandle: sp.handle,
         subjectRef: sp.ref,
         subjectDisplayName: sa.displayName,
         taskNumber: tasks.number,
@@ -1503,7 +1523,7 @@ export class EventStore {
         fromHandle: fu.handle,
         fromRef: fu.ref,
         fromKind: fu.kind,
-        subjectSlug: sa.slug,
+        subjectHandle: sp.handle,
         subjectRef: sp.ref,
         toHandle: tu.handle,
         credName: credentials.name,
@@ -1535,7 +1555,7 @@ export class EventStore {
     for (const r of page) {
       // Member updates are the page's grouped `updates` (I9 §4.5), never items.
       if (r.item.kind === "member_update") continue;
-      // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
+      // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty handle.
       if (r.m.subjectCredentialId && r.credName !== null) {
         items.push({
           id: r.item.id,
@@ -1579,7 +1599,7 @@ export class EventStore {
           factory || !r.fromHandle || !r.fromRef || !r.fromKind
             ? { kind: "factory" }
             : { kind: r.fromKind, ref: r.fromRef, handle: r.fromHandle },
-        ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
+        ...(r.subjectHandle ? { about: r.subjectHandle } : {}),
         to: r.m.toAllHumans ? "everyone" : `@${r.toHandle ?? ""}`,
         preview: r.preview,
         urgent: r.m.urgent,

@@ -1,4 +1,4 @@
-import { ApiError } from "@open-factory/shared";
+import { ApiError, loopHoldSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useRef, useState } from "react";
@@ -11,6 +11,8 @@ import { sessionQueryOptions } from "@/lib/session";
 import { type InboxItem, useResumeHold } from "./api";
 
 type Hold = NonNullable<InboxItem["loopHold"]>;
+
+const conflictResumedBy = loopHoldSchema.shape.resumedBy;
 
 const messages = (n: number) => `${n} ${n === 1 ? "message" : "messages"}`;
 const HANDLE = /(@[\w-]+)/;
@@ -43,8 +45,14 @@ function resumedOf(
   if (own) return { by: me, at: hold.resumedAt ?? own.at, sentOn: own.sentOn };
   if (hold.resumedAt && hold.resumedBy)
     return { by: `@${hold.resumedBy.handle}`, at: hold.resumedAt, sentOn: hold.sentOn };
-  if (typeof conflict?.resumedBy === "string" && typeof conflict.resumedAt === "string")
-    return { by: conflict.resumedBy, at: conflict.resumedAt, sentOn: undefined };
+  if (typeof conflict?.resumedAt === "string") {
+    const by = conflictResumedBy.safeParse(conflict.resumedBy);
+    return {
+      by: by.success && by.data ? `@${by.data.handle}` : "",
+      at: conflict.resumedAt,
+      sentOn: undefined,
+    };
+  }
   return undefined;
 }
 

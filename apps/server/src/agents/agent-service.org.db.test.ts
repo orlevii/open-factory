@@ -8,6 +8,7 @@ import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
@@ -30,22 +31,22 @@ function writeTemplate(name: string, runtime: "docker" | "local") {
   );
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
 }
-const body = (slug: string, template = "dockertpl") => ({
+const body = (handle: string, template = "dockertpl") => ({
   template,
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
 });
-const rowOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+const rowOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
   return r;
 };
-const asAgent = async (slug: string): Promise<Actor> => {
-  const r = await rowOf(slug);
-  if (!r) throw new Error(`no agent ${slug}`);
-  return { kind: "agent", id: r.id, ref: testRef(r.id), slug };
+const asAgent = async (handle: string): Promise<Actor> => {
+  const r = await rowOf(handle);
+  if (!r) throw new Error(`no agent ${handle}`);
+  return { kind: "agent", id: r.id, ref: testRef(r.id), handle };
 };
 
 beforeAll(async () => {
@@ -76,11 +77,11 @@ afterAll(() => t.close());
 test.each([
   ["another agent", "target"],
   ["the caller's own row", "hr-bot"],
-])("an agent can't grant manage_org to %s", async (_n, slug) => {
-  await expect(svc.update(await t.refOf(slug), { manageOrg: true }, hr)).rejects.toThrow(
+])("an agent can't grant manage_org to %s", async (_n, handle) => {
+  await expect(svc.update(await t.refOf(handle), { manageOrg: true }, hr)).rejects.toThrow(
     new OrgRefusedError("Only a human can grant manage_org."),
   );
-  expect((await rowOf(slug))?.manageOrg).toBe(false);
+  expect((await rowOf(handle))?.manageOrg).toBe(false);
 });
 
 test("a human grants manage_org and the agent is asked to restart; the same value asks for nothing", async () => {
@@ -291,8 +292,8 @@ test("model and effort come from the agent's overlay, else its template, else ne
     human,
   );
   await svc.create(body("mdl-none", "localtpl"), human);
-  const shown = async (slug: string) => {
-    const a = await svc.summary(await t.refOf(slug));
+  const shown = async (handle: string) => {
+    const a = await svc.summary(await t.refOf(handle));
     return { model: a.model, effort: a.effort };
   };
   expect(await shown("mdl-tpl")).toEqual({
@@ -364,15 +365,23 @@ test("an archive that changes nothing and a refused create publish no org_action
   }
 });
 
-const heldBy = async (slug: string) =>
+const heldBy = async (handle: string) =>
   (
     await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
-                where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
+                where a.id = (select id from principals where handle = ${handle}) and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
 /** An agent's tag, as the factory writes it in a body (its principal's ref). */
-const tagOfSlug = async (slug: string) =>
-  tagOf(testRef(String((await t.sql`select id from agents where slug = ${slug}`)[0]?.id)));
+const tagOfHandle = async (handle: string) =>
+  tagOf(
+    testRef(
+      String(
+        (
+          await t.sql`select id from agents where id = (select id from principals where handle = ${handle})`
+        )[0]?.id,
+      ),
+    ),
+  );
 
 test("an agent actor's create, move and archive name it in the peer events; the recipient who is the actor isn't told", async () => {
   await svc.create({ ...body("pe-lead"), reportsTo: "or" }, human);
@@ -380,7 +389,7 @@ test("an agent actor's create, move and archive name it in the peer events; the 
   await svc.create({ ...body("pe-boss"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
-  const [pmo, hrTag] = [await tagOfSlug("pe-pmo"), await tagOfSlug("hr-bot")];
+  const [pmo, hrTag] = [await tagOfHandle("pe-pmo"), await tagOfHandle("hr-bot")];
   expect(await heldBy("pe-dev")).toEqual([
     {
       kind: "peer_joined",
@@ -397,7 +406,7 @@ test("an agent actor's create, move and archive name it in the peer events; the 
   ]);
   await clearPeerRows();
   await svc.update(await t.refOf("pe-dev"), { reportsTo: "pe-boss" }, hr);
-  const [dev, boss] = [await tagOfSlug("pe-dev"), await tagOfSlug("pe-boss")];
+  const [dev, boss] = [await tagOfHandle("pe-dev"), await tagOfHandle("pe-boss")];
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_left",
@@ -422,7 +431,7 @@ test("a human's create names no actor in the peer events", async () => {
     {
       kind: "peer_joined",
       notice: "report",
-      body: `${await tagOfSlug("hm-dev")} (hm-dev) joined as your report.`,
+      body: `${await tagOfHandle("hm-dev")} (hm-dev) joined as your report.`,
     },
   ]);
 });

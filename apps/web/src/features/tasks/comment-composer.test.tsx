@@ -107,7 +107,7 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
   });
 });
 
-test("`@` completes a handle as `@slug ` from the cached agents and users lists", async () => {
+test("`@` completes a handle as `@handle ` from the cached agents and users lists", async () => {
   const qc = new QueryClient();
   qc.setQueryData(
     ["agents", "exclude"],

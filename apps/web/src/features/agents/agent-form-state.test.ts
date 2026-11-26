@@ -45,9 +45,9 @@ const edit = (agent = lead): Args => ({
 test("each changed field validates on blur, with the form's messages", async () => {
   const { result } = mount(create());
   await waitFor(() => expect(result.current.credentials).toBeDefined());
-  act(() => result.current.set("slug", "Bad_Slug"));
-  act(() => result.current.blur("slug"));
-  expect(result.current.errors.slug).toBeTruthy();
+  act(() => result.current.set("handle", "Bad_Handle"));
+  act(() => result.current.blur("handle"));
+  expect(result.current.errors.handle).toBeTruthy();
   // Untouched: leaving it says nothing.
   act(() => result.current.blur("displayName"));
   expect(result.current.errors.displayName).toBeUndefined();
@@ -64,8 +64,8 @@ test("each changed field validates on blur, with the form's messages", async () 
   act(() => result.current.blur("template"));
   expect(result.current.errors.template).toBeUndefined();
   // Typing clears a field's error.
-  act(() => result.current.set("slug", "okay"));
-  expect(result.current.errors.slug).toBeUndefined();
+  act(() => result.current.set("handle", "okay"));
+  expect(result.current.errors.handle).toBeUndefined();
 });
 
 test("submit with invalid fields reports them all and sends nothing", async () => {
@@ -78,20 +78,20 @@ test("submit with invalid fields reports them all and sends nothing", async () =
   });
   expect(r).toBe("invalid");
   expect(onSubmit).not.toHaveBeenCalled();
-  expect(Object.keys(result.current.errors).sort()).toEqual(["displayName", "slug", "template"]);
+  expect(Object.keys(result.current.errors).sort()).toEqual(["displayName", "handle", "template"]);
   expect(result.current.attempt).toBe(1);
 });
 
-test("New agent: the template fills untouched fields, and the slug is not prefilled", async () => {
+test("New agent: the template fills untouched fields, and the handle is not prefilled", async () => {
   const { result } = mount(create({ prefill: { template: "lead" } }));
   await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
   expect(result.current.shown.description).toBe("Leads the team");
-  expect(result.current.shown.slug).toBe("");
+  expect(result.current.shown.handle).toBe("");
   expect(result.current.shown.credential).toBe("work");
   act(() => result.current.set("displayName", "Mine"));
   expect(result.current.shown.displayName).toBe("Mine");
   const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody) => undefined);
-  act(() => result.current.set("slug", "mine"));
+  act(() => result.current.set("handle", "mine"));
   await act(async () => {
     await result.current.submit(onSubmit);
   });
@@ -99,7 +99,7 @@ test("New agent: the template fills untouched fields, and the slug is not prefil
   expect(onSubmit).toHaveBeenCalledWith(
     {
       template: "lead",
-      slug: "mine",
+      handle: "mine",
       displayName: "Mine",
       description: "Leads the team",
       reportsTo: refFor("alice"),
@@ -142,25 +142,25 @@ test("a server field error lands under its field; any other error is the outcome
   const { result } = mount(create());
   await waitFor(() => expect(result.current.credentials).toBeDefined());
   act(() => {
-    result.current.set("slug", "taken");
+    result.current.set("handle", "taken");
     result.current.set("displayName", "T");
     result.current.set("template", "lead");
   });
   let r: string | undefined;
   await act(async () => {
     r = await result.current.submit(async () => {
-      throw new ApiError(409, "slug_taken", "That slug is taken.", {
-        fields: { slug: "That slug is taken." },
+      throw new ApiError(409, "handle_taken", "That handle is taken.", {
+        fields: { handle: "That handle is taken." },
       });
     });
   });
   expect(r).toBe("failed");
-  expect(result.current.errors.slug).toBe("That slug is taken.");
+  expect(result.current.errors.handle).toBe("That handle is taken.");
   expect(result.current.pending).toBe(false);
   // A mapped server error is a focus request.
   expect(result.current.attempt).toBe(1);
   expect(result.current.outcome.error).toBeUndefined();
-  act(() => result.current.set("slug", "free"));
+  act(() => result.current.set("handle", "free"));
   await act(async () => {
     r = await result.current.submit(async () => {
       throw new Error("offline");
@@ -176,7 +176,7 @@ test("a server field error lands under its field; any other error is the outcome
 type State = ReturnType<typeof useAgentFormState>;
 const fill = (s: State) =>
   act(() => {
-    s.set("slug", "plug");
+    s.set("handle", "plug");
     s.set("displayName", "P");
     s.set("template", "lead");
   });
@@ -206,7 +206,7 @@ test("a second submit while one is in flight is ignored", async () => {
   const { result } = mount(create());
   await waitFor(() => expect(result.current.credentials).toBeDefined());
   act(() => {
-    result.current.set("slug", "dup");
+    result.current.set("handle", "dup");
     result.current.set("displayName", "D");
     result.current.set("template", "lead");
   });
@@ -316,7 +316,7 @@ test("a late create success after dismiss leaves the draft for the host to clear
   const first = mount(create({ prefill: { template: "lead" } }));
   await waitFor(() => expect(first.result.current.credentials).toBeDefined());
   act(() => {
-    first.result.current.set("slug", "late");
+    first.result.current.set("handle", "late");
     first.result.current.set("displayName", "Late");
   });
   let release = () => {};
@@ -355,7 +355,7 @@ test("no restored banner when the draft equals the server copy", () => {
 test("New agent: manageOrg is sent when on, and omitted when off", async () => {
   const { result } = mount(create({ prefill: { template: "lead" } }));
   await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
-  act(() => result.current.set("slug", "mine"));
+  act(() => result.current.set("handle", "mine"));
   const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody) => undefined);
   await act(async () => {
     await result.current.submit(onSubmit);
@@ -458,7 +458,7 @@ test("New agent: model and effort are off until a template is chosen, then inher
   expect(result.current.modelEffort.disabledReason).toBeUndefined();
   await waitFor(() => expect(result.current.modelEffort.base?.template.model).toBe("opus"));
   // Nothing chosen: nothing is written to the new agent's config.
-  act(() => result.current.set("slug", "mine"));
+  act(() => result.current.set("handle", "mine"));
   await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
   const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody, _m?: unknown) => undefined);
   await act(async () => {

@@ -22,9 +22,9 @@ beforeEach(async () => {
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   frames.length = 0;
   h.app.bus.subscribeAll((m) => frames.push(m));
-  const lead = await h.seedAgent({ slug: "lead" });
-  for (const slug of ["ada", "bob"]) {
-    const r = await h.seedAgent({ slug });
+  const lead = await h.seedAgent({ handle: "lead" });
+  for (const handle of ["ada", "bob"]) {
+    const r = await h.seedAgent({ handle });
     await h.sql`update agents set reports_to = ${lead.id} where id = ${r.id}`;
   }
 });
@@ -40,23 +40,23 @@ const guardOf = () =>
     clock: () => new Date(),
     newId: randomUUID,
   });
-const proc = (slug: string) => driver.startsOf(slug).at(-1);
-const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
+const proc = (handle: string) => driver.startsOf(handle).at(-1);
+const settle = async (...handles: string[]) => {
+  for (const s of handles) await (await runtimeOf(h.app, s))?.settled();
 };
-/** Starts `slug` with a human message and returns its live token. */
-async function startIdle(slug: string) {
-  const { cookie } = await signUp(h.app, { handle: `h${slug}` });
+/** Starts `handle` with a human message and returns its live token. */
+async function startIdle(handle: string) {
+  const { cookie } = await signUp(h.app, { handle: `h${handle}` });
   const res = await h.app.inject({
     method: "POST",
     url: `/api/messages`,
     headers: { cookie },
-    payload: { to: [slug], body: "hi" },
+    payload: { to: [handle], body: "hi" },
   });
-  const p = proc(slug);
-  if (!p) throw new Error(`${slug} not started: ${res.statusCode} ${res.body}`);
-  p.emit(...ev.fullTurn(`sess-${slug}`));
-  await settle(slug);
+  const p = proc(handle);
+  if (!p) throw new Error(`${handle} not started: ${res.statusCode} ${res.body}`);
+  p.emit(...ev.fullTurn(`sess-${handle}`));
+  await settle(handle);
   return p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
 }
 /** Results name principals by tag; most tests read them by `@handle` (one test below asserts the tag shape). */
@@ -67,8 +67,8 @@ const sendPlain = async (...a: Parameters<typeof h.app.router.send>) =>
 const rawText = (r: { content: { text: string }[] }) => r.content[0]?.text ?? "";
 const text = (r: { content: { text: string }[] }) =>
   (r.content[0]?.text ?? "").replace(TAG_TEXT, "@$1");
-const pendingOf = (slug: string) =>
-  h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_id where a.slug = ${slug} and m.kind = 'message' order by m.created_at`;
+const pendingOf = (handle: string) =>
+  h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_id where a.id = (select id from principals where handle = ${handle}) and m.kind = 'message' order by m.created_at`;
 
 test("AC 1: send_message to a hibernated agent wakes it with agent_message; the result names its status; the tool-use id is stored", async () => {
   const tokA = await startIdle("ada");
@@ -120,7 +120,7 @@ test("an agent id smuggled in the tool arguments is ignored: the caller is the t
 });
 
 test("an errored recipient: accepted and pending, no attempt, the note says so", async () => {
-  await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where slug = 'bob'`;
+  await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where id = (select id from principals where handle = 'bob')`;
   const tokA = await startIdle("ada");
   const out = JSON.parse(
     text(await callTool(url, tokA, "send_message", { to: ["bob"], body: "are you ok" })),
@@ -134,9 +134,11 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
   await settle("bob");
   expect(proc("bob")).toBeUndefined();
   expect((await pendingOf("bob")).map((r) => r.state)).toEqual(["pending"]);
-  expect((await h.sql`select attempting from agents where slug = 'bob'`)[0]?.attempting).toBe(
-    false,
-  );
+  expect(
+    (
+      await h.sql`select attempting from agents where id = (select id from principals where handle = 'bob')`
+    )[0]?.attempting,
+  ).toBe(false);
 });
 
 test("AC 3: an urgent message from an agent interrupts a working recipient", async () => {
@@ -299,7 +301,7 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
 
 test("AC 4: list_peers returns relations, scope all, and the humans every time", async () => {
   await signUp(h.app, { handle: "or", name: "Or" });
-  const ops = await h.seedAgent({ slug: "ops" }); // top-level, a peer of lead
+  const ops = await h.seedAgent({ handle: "ops" }); // top-level, a peer of lead
   const tokA = await startIdle("ada");
   const near = JSON.parse(rawText(await callTool(url, tokA, "list_peers", {})));
   const agentsOf = (r: { peers: { kind: string; handle: string; relation?: string }[] }) =>
@@ -317,7 +319,7 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   expect(JSON.stringify(near)).not.toContain("@example.com"); // never emails
   const all = JSON.parse(rawText(await callTool(url, tokA, "list_peers", { scope: "all" })));
   expect(all.peers).toContainEqual(
-    expect.objectContaining({ handle: `@${ops.slug}`, relation: "other" }),
+    expect.objectContaining({ handle: `@${ops.handle}`, relation: "other" }),
   );
   expect(all.peers.find((x: { handle: string }) => x.handle === "@ada")).toBeUndefined();
 });
@@ -607,7 +609,7 @@ test("errored_reported clears with the error, so the next episode is reported", 
 
 test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
   const ada = await agentRowOf(h.app, "ada");
-  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'bob')`;
   const toGone = await sendPlain({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(toGone.results).toEqual([
     {
@@ -617,8 +619,8 @@ test("a message to a terminated agent is refused; a terminated sender can't send
       reason: "@bob was terminated and can't receive messages.",
     },
   ]);
-  await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
-  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'ada'`;
+  await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where id = (select id from principals where handle = 'bob')`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'ada')`;
   const fromEnded = await sendPlain({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(fromEnded.results).toMatchObject([
     {
@@ -640,15 +642,14 @@ test("a message to a terminated agent is refused; a terminated sender can't send
 });
 
 /** A spawned child of `lead` inserted inside `tx` (it shares lead's credential). */
-async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
+async function insertKid(tx: Tx, handle: string, o: { terminated?: boolean } = {}) {
   const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
-  const { id } = await createPrincipal(tx, "agent", slug);
+  const { id } = await createPrincipal(tx, "agent", handle);
   const [row] = await tx
     .insert(schema.agents)
     .values({
       id,
-      slug,
       displayName: "Kid",
       description: "",
       template: lead.template,
@@ -664,9 +665,9 @@ async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {})
   return row;
 }
 const heldRows = () =>
-  h.sql`select a.slug as "to", m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
-        where m.kind in ('peer_joined','peer_left') order by a.slug`;
-const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
+  h.sql`select p.handle as "to", m.kind, m.notice, m.body from messages m join principals p on p.id = m.to_id
+        where m.kind in ('peer_joined','peer_left') order by p.handle`;
+const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id ?? "";
 
 test("persistPeerEvents runs in the caller's transaction: it sees a child inserted there, and its rows roll back with it", async () => {
   const rollback = new Error("rollback");
@@ -723,7 +724,7 @@ const OR_TAG = "<@or000000>";
 
 test("persistPeerEvents: archived and terminated recipients get nothing; the terminated body names who", async () => {
   await h.db.transaction((tx) => insertKid(tx, "gone-ab12", { terminated: true }));
-  await h.sql`update agents set archived_at = now() where slug = 'bob'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'bob')`;
   const [ada, bob, gone, lead] = [
     await idOf("ada"),
     await idOf("bob"),
@@ -782,8 +783,8 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
 });
 
 describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () => {
-  const sendAs = async (slug: string, to: string[], body = "hello all") => {
-    const a = await agentRowOf(h.app, slug);
+  const sendAs = async (handle: string, to: string[], body = "hello all") => {
+    const a = await agentRowOf(h.app, handle);
     return sendPlain({ agentId: a?.id ?? "" }, to, body, false);
   };
   const rowsOf = (body: string) =>
@@ -821,7 +822,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
 
   test("a terminated recipient is refused alone while the others get rows with the accepted list only", async () => {
     await signUp(h.app, { handle: "or" });
-    await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
+    await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'bob')`;
     const r = await sendAs("ada", ["or", "bob", "lead"], "partial");
     expect(r.results.map((x) => [x.to, x.status])).toEqual([
       ["@or", "inbox"],
@@ -940,7 +941,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
   });
 
   test("an errored agent recipient is pending with the note, beside a queued one", async () => {
-    await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where slug = 'bob'`;
+    await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where id = (select id from principals where handle = 'bob')`;
     const r = await sendAs("ada", ["bob", "lead"], "mixed-status");
     expect(r.results[0]).toMatchObject({
       to: "@bob",
@@ -1008,9 +1009,9 @@ describe("loop guard on list sends", () => {
     const me = await signUp(h.app, { handle: "or" });
     orCookie = me.cookie;
     await h.app.factorySettings.update({ loopGuardMessages: N }, me.user.id);
-    await h.seedAgent({ slug: "cy" });
+    await h.seedAgent({ handle: "cy" });
   });
-  const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
+  const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id ?? "";
   const send = async (from: string, to: string[]) =>
     (await sendPlain({ agentId: await idOf(from) }, to, "ping", false)).results;
   /** Each direction sends N messages and bob one more, so the next send from ada exceeds N both ways. */

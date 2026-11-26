@@ -2,8 +2,9 @@ import { z } from "zod";
 import { avatarColorSchema } from "./avatar.ts";
 import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
+import { handleSchema } from "./handle.ts";
 import { MSG } from "./messages.ts";
-import { nameSchema, slugSchema } from "./names.ts";
+import { nameSchema } from "./names.ts";
 import { normaliseRef } from "./ref.ts";
 import { liveCronSchema } from "./schedules.ts";
 import { templateIssueSchema } from "./templates.ts";
@@ -265,7 +266,7 @@ export const spawnAgentToolSchema = (templates: [string, ...string[]]) =>
 export const terminateAgentToolSchema = z.strictObject({ target: z.string().min(1).max(80) });
 export const createAgentBodySchema = z.object({
   template: nameSchema,
-  slug: slugSchema,
+  handle: handleSchema,
   displayName: z.string().trim().min(1, "Enter a display name.").max(80),
   description: z.string().trim().max(500),
   reportsTo: managerRefSchema,

@@ -4,24 +4,24 @@ import { makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import type { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
-import { CONFLICT_SENTENCE } from "./task-service.ts";
+import { CONFLICT_SENTENCE, type CommentResult } from "./task-service.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Actor;
 const ids: Record<string, string> = {};
-const agent = (slug: string): Actor => ({
+const agent = (handle: string): Actor => ({
   kind: "agent",
-  id: ids[slug] as string,
-  ref: testRef(ids[slug] as string),
-  handle: slug,
+  id: ids[handle] as string,
+  ref: testRef(ids[handle] as string),
+  handle: handle,
 });
 
 beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   const u = await signUp(h.app, { handle: "or" });
   or = { kind: "human", id: u.user.id, ref: testRef(u.user.id), handle: "or" };
-  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  for (const handle of ["lead", "dev", "qa"]) ids[handle] = (await h.seedAgent({ handle })).id;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
 });
 afterEach(() => h.close());
 
@@ -52,15 +52,15 @@ const outcome = <T>(p: Promise<T>) =>
     (v) => ({ ok: true as const, v }),
     (e: unknown) => ({ ok: false as const, e }),
   );
-const spawned = async (slug: string) => {
-  const a = await h.seedAgent({ slug });
+const spawned = async (handle: string) => {
+  const a = await h.seedAgent({ handle });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${a.id}`;
-  ids[slug] = a.id;
+  ids[handle] = a.id;
   return a.id;
 };
-const kinds = (slug: string) =>
+const kinds = (handle: string) =>
   h.sql`select m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_id
-    where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
+    where a.id = (select id from principals where handle = ${handle}) and m.task_id is not null order by m.created_at`;
 
 test("termination first: the assignment is refused", async () => {
   const kid = await spawned("kid");
@@ -103,10 +103,10 @@ test("assignment first: the termination waits, then rejects the pending task_ass
 test("archive vs a comment mentioning the archived agent, both orders", async () => {
   await h.app.tasks.create(or, { title: "t" });
   // Archive first.
-  await h.sql`update agents set archived_at = now() where slug = 'qa'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'qa')`;
   const first = await h.app.tasks.comment(or, "T-1", `<@${testRef(ids.qa as string)}> hello`);
   expect(first.notReached).toEqual([{ name: "qa", reason: "archived" }]);
-  await h.sql`update agents set archived_at = null where slug = 'qa'`;
+  await h.sql`update agents set archived_at = null where id = (select id from principals where handle = 'qa')`;
   // Comment first: the archive (an agent-row write) waits for our FOR SHARE, then the row is rejected at hand-off.
   const a = hold(async (tx) => {
     await tx`lock table messages in share mode`;
@@ -235,7 +235,7 @@ test("a comment racing a reassignment goes to the assignee read under the lock",
   expect((await reassign).ok).toBe(true);
   const c = await comment;
   expect(c.ok).toBe(true);
-  expect((c as { v: { deliveredTo: string[] } }).v.deliveredTo).toEqual(["qa"]);
+  expect((c as { v: CommentResult }).v.deliveredTo.map((d) => d.handle)).toEqual(["qa"]);
 });
 
 test("a deadlock is retried once; two in a row become a plain sentence, never a raw error", async () => {

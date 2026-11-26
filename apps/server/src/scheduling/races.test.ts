@@ -17,9 +17,9 @@ beforeEach(async () => {
     schedulerTimers: timers,
   });
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  await h.seedAgent({ slug: "lead" });
-  await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where slug = 'lead') where slug = 'kid'`;
+  await h.seedAgent({ handle: "lead" });
+  await h.seedAgent({ handle: "kid" });
+  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where id = (select id from principals where handle = 'lead')) where id = (select id from principals where handle = 'kid')`;
 });
 afterEach(() => h.close());
 

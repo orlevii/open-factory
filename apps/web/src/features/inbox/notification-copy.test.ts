@@ -13,10 +13,12 @@ type ItemFixture = NotifiableItem;
 
 const PREVIEW = "SECRET-PREVIEW-MARKER-7431";
 
-const chat = (over: Partial<ChatFixture> & { slug?: string; name?: string } = {}): ChatFixture => ({
+const chat = (
+  over: Partial<ChatFixture> & { handle?: string; name?: string } = {},
+): ChatFixture => ({
   agent: {
-    ref: refFor(over.slug ?? "ada"),
-    handle: over.slug ?? "ada",
+    ref: refFor(over.handle ?? "ada"),
+    handle: over.handle ?? "ada",
     displayName: over.name ?? "Ada",
     template: "developer",
     avatarVersion: null,

@@ -16,7 +16,7 @@ import {
 } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { ApiError } from "../errors.ts";
-import { agentRowByRef, principalById } from "../principals/principal-store.ts";
+import { type AgentRecord, agentRowByRef, principalById } from "../principals/principal-store.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
 import type { ConfigChanges } from "./config-changes.ts";
@@ -28,7 +28,7 @@ type Base = { doc: ConfigDoc; dir: string } | null;
 
 /** What `planOverlay` validated: `write` runs in the caller's transaction (which holds the row lock), `after` once it commits. */
 export type OverlayPlan = {
-  row: AgentRow;
+  row: AgentRecord;
   overlay: AgentOverlay;
   write(tx: Tx, locked: AgentRow): Promise<void>;
   after(): Promise<PutAgentConfigResponse>;
@@ -49,7 +49,7 @@ export class ConfigService {
     return new ApiError(404, "agent_not_found", "No agent at this ref");
   }
 
-  private async rowByRef(ref: string): Promise<AgentRow> {
+  private async rowByRef(ref: string): Promise<AgentRecord> {
     const row = await agentRowByRef(this.d.db, ref);
     if (!row) throw this.notFound();
     return row;
@@ -81,7 +81,7 @@ export class ConfigService {
   }
 
   /** The issues of an overlay against the template (warnings and errors); the schema alone when there is no base. */
-  private async configIssues(row: AgentRow, overlay: unknown, base: Base) {
+  private async configIssues(row: AgentRecord, overlay: unknown, base: Base) {
     const parsed = agentOverlaySchema.safeParse(overlay);
     if (!parsed.success || !base) return overlaySchemaIssues(overlay);
     const ctx = {
@@ -101,7 +101,7 @@ export class ConfigService {
   }
 
   private configView(
-    row: AgentRow,
+    row: AgentRecord,
     overlay: Record<string, unknown>,
     base: { doc: ConfigDoc } | null,
     issues: AgentConfigResponse["issues"],
@@ -134,7 +134,7 @@ export class ConfigService {
   }
 
   /** The agent policy's issues for an overlay save (spec §6.2): `before` is the stored overlay. */
-  private policyIssues(row: AgentRow, overlay: AgentOverlay): TemplateIssue[] {
+  private policyIssues(row: AgentRecord, overlay: AgentOverlay): TemplateIssue[] {
     const stored = agentOverlaySchema.safeParse(this.overlayOf(row));
     return agentPolicyIssues({
       target: "overlay",
@@ -144,7 +144,7 @@ export class ConfigService {
   }
 
   /** Rule 8: an agent never reaches a local runtime, as the target or through a `can_spawn` name. */
-  private async assertNotLocal(row: AgentRow, overlay: unknown, actor: Actor) {
+  private async assertNotLocal(row: AgentRecord, overlay: unknown, actor: Actor) {
     if (actor.kind !== "agent") return;
     const raw: unknown = (overlay as AgentOverlay | undefined)?.template?.can_spawn;
     const spawns = Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
@@ -240,7 +240,7 @@ export class ConfigService {
   }
 }
 
-const withRuntime = (doc: ConfigDoc, runtime: AgentRow["runtime"]): ConfigDoc => ({
+const withRuntime = (doc: ConfigDoc, runtime: AgentRecord["runtime"]): ConfigDoc => ({
   ...doc,
   template: { ...doc.template, runtime },
 });

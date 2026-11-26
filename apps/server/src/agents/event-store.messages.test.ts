@@ -14,13 +14,13 @@ beforeAll(async () => {
   await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
   await t.sql.unsafe(principalSql("u2", "human", "dana"));
   await t.sql`insert into users (id, name, email) values ('u2', 'Dana', 'd@x.io')`;
-  for (const [id, slug] of [
+  for (const [id, handle] of [
     ["a1", "dev"],
     ["a2", "b"],
     ["a3", "c"],
     ["a4", "d"],
   ] as const)
-    await insertAgent(t.sql, { id, slug });
+    await insertAgent(t.sql, { id, handle });
 });
 afterAll(() => t.close());
 
@@ -55,7 +55,7 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
     kind: "member_update",
     fromHandle: "dev",
     fromKind: "agent",
-    subjectSlug: null,
+    subjectHandle: null,
   });
   expect(await store.pendingRow(h.id)).toEqual(q[2]);
   const fact = await store.createOrgRow({
@@ -67,7 +67,7 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
   });
   expect(fact).toMatchObject({
     fromHandle: null,
-    subjectSlug: "dev",
+    subjectHandle: "dev",
     subjectDisplayName: "Dev agent",
   });
 });
@@ -329,8 +329,8 @@ test("markRejected only touches pending rows", async () => {
 });
 
 test("bootWakes orders by deliverable rows only", async () => {
-  await insertAgent(t.sql, { id: "a5", slug: "e" });
-  await insertAgent(t.sql, { id: "a6", slug: "f" });
+  await insertAgent(t.sql, { id: "a5", handle: "e" });
+  await insertAgent(t.sql, { id: "a6", handle: "f" });
   const peer = await store.createOrgRow({
     kind: "peer_joined",
     toAgentId: "a5",

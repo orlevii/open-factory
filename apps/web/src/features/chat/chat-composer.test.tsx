@@ -85,10 +85,12 @@ afterEach(() => vi.unstubAllGlobals());
 const box = () => screen.findByRole("combobox", { name: "Message to Dev agent" });
 const note = () => document.querySelector<HTMLElement>("[data-composer-hint]");
 const toRow = () => document.querySelector<HTMLElement>("[data-recipients]");
-async function addRecipient(slug: string) {
+async function addRecipient(handle: string) {
   const input = await box();
-  await userEvent.type(input, `@${slug.slice(0, 2)}`);
-  await userEvent.click(await screen.findByRole("option", { name: new RegExp(`Add @${slug} as`) }));
+  await userEvent.type(input, `@${handle.slice(0, 2)}`);
+  await userEvent.click(
+    await screen.findByRole("option", { name: new RegExp(`Add @${handle} as`) }),
+  );
   return input;
 }
 

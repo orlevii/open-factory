@@ -16,9 +16,9 @@ export function fnv1a32(s: string): number {
   return h >>> 0;
 }
 
-/** Deterministic parts for a slug: peel one field at a time off the hash. */
-export function botParts(slug: string): BotParts {
-  let h = fnv1a32(slug);
+/** Deterministic parts for a seed string: peel one field at a time off the hash. */
+export function botParts(seed: string): BotParts {
+  let h = fnv1a32(seed);
   const take = (count: number): number => {
     const v = h % count;
     h = Math.floor(h / count);

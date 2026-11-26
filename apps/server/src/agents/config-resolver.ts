@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   type AgentOverlay,
   agentOverlaySchema,
@@ -11,6 +10,7 @@ import {
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
 
@@ -30,17 +30,20 @@ export type Effective = {
 const missing = (template: string) => new AgentStartError(`Template ${template} no longer exists.`);
 const invalidTemplate = (template: string) =>
   new AgentStartError(`Template ${template} has errors. Fix it in Templates.`, "template");
-const invalidOverlay = (slug: string) =>
+const invalidOverlay = (handle: string) =>
   new AgentStartError(
-    `The configuration of @${slug} is invalid. Fix it in Configuration.`,
+    `The configuration of @${handle} is invalid. Fix it in Configuration.`,
     "config",
-    `The configuration of @${slug} is invalid.`,
+    `The configuration of @${handle} is invalid.`,
   );
 
 /**
  * The parsed config of a merged doc, with the agent's fixed runtime (spec §6.6); undefined when it doesn't parse.
  */
-export function configOf(doc: ConfigDoc, runtime: AgentRow["runtime"]): TemplateConfig | undefined {
+export function configOf(
+  doc: ConfigDoc,
+  runtime: AgentRecord["runtime"],
+): TemplateConfig | undefined {
   const parsed = templateYamlSchema.safeParse(yamlPart(doc.template));
   return parsed.success ? { ...parsed.data, runtime } : undefined;
 }
@@ -72,7 +75,7 @@ export class ConfigResolver {
     return { skills };
   }
 
-  async effective(agent: AgentRow): Promise<Effective> {
+  async effective(agent: AgentRecord): Promise<Effective> {
     let base: ConfigDoc;
     try {
       base = (await this.d.templates.loadValid(agent.template)).doc;
@@ -88,14 +91,14 @@ export class ConfigResolver {
     let overlay: AgentOverlay = {};
     if (agent.kind !== "ephemeral") {
       const checked = agentOverlaySchema.safeParse(agent.config);
-      if (!checked.success) throw invalidOverlay(agent.slug);
+      if (!checked.success) throw invalidOverlay(agent.handle);
       overlay = checked.data;
     }
     const doc = mergeConfig(base, overlay);
     // The runtime is fixed at creation (spec §6.6): the row wins over the template.
     const config = configOf(doc, agent.runtime);
     // The template parsed on its own, so a failure here is the overlay's.
-    if (!config) throw invalidOverlay(agent.slug);
+    if (!config) throw invalidOverlay(agent.handle);
     const listedSkills = base.template.skills;
     const templateSkills = Array.isArray(listedSkills)
       ? listedSkills.filter((p): p is string => typeof p === "string")
@@ -107,7 +110,7 @@ export class ConfigResolver {
    * I2 §6.2: the skills of the running process (`started`), else those the next start would have. None when the config
    * can't be read (a missing or broken template, an invalid overlay): that start fails closed anyway.
    */
-  async skillsOf(agent: AgentRow, started: Effective | undefined): Promise<string[]> {
+  async skillsOf(agent: AgentRecord, started: Effective | undefined): Promise<string[]> {
     if (started) return started.config.skills;
     try {
       return (await this.effective(agent)).config.skills;

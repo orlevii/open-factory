@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import type { HarnessDriver } from "@open-factory/harness";
 import {
   type AgentStatus,
@@ -9,6 +8,7 @@ import {
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
@@ -71,10 +71,10 @@ export interface RuntimesDeps {
 export function localCleanup(
   store: Pick<EventStore, "agentById">,
   journal: Pick<ProcessJournal, "reap">,
-): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+): (agent: AgentRecord) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "local") return undefined;
-    let j: AgentRow["runtimeJournal"] | undefined;
+    let j: AgentRecord["runtimeJournal"] | undefined;
     try {
       j = (await store.agentById(agent.id))?.runtimeJournal;
     } catch (err) {
@@ -97,7 +97,7 @@ export function localCleanup(
 export function dockerCleanup(
   containers: Pick<ContainerManager, "stopIfRunning">,
   store: Pick<EventStore, "refOfAgent">,
-): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+): (agent: AgentRecord) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "docker") return undefined;
     return (await containers.stopIfRunning(agent.id, await store.refOfAgent(agent.id)))
@@ -106,7 +106,7 @@ export function dockerCleanup(
   };
 }
 
-/** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */
+/** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human or an agent. */
 function senderLabel(row: PendingRow): string {
   if (row.fromHandle) return `@${row.fromHandle}`;
   if (row.kind === "scheduled") return "@scheduler";
@@ -121,7 +121,7 @@ function senderLabel(row: PendingRow): string {
  * sweep's last list still showed. A termination still stopping is never stuck.
  */
 function terminationStuck(
-  row: { errorKind?: string | null; runtimeJournal?: AgentRow["runtimeJournal"] },
+  row: { errorKind?: string | null; runtimeJournal?: AgentRecord["runtimeJournal"] },
   rt: AgentRuntime | undefined,
 ): boolean {
   if (rt?.terminationSettling()) return false;
@@ -194,7 +194,7 @@ export class AgentRuntimes {
     return row ? this.runtimeOf(row) : undefined;
   }
 
-  private runtimeOf(row: AgentRow): Promise<AgentRuntime> {
+  private runtimeOf(row: AgentRecord): Promise<AgentRuntime> {
     let rt = this.byId.get(row.id);
     if (!rt) {
       const runtime = new AgentRuntime({
@@ -250,14 +250,14 @@ export class AgentRuntimes {
    * missing or invalid template, an invalid overlay): the start then fails closed with the resolver's own error.
    */
   private async imageAtLoad(
-    row: AgentRow,
+    row: AgentRecord,
     docker: NonNullable<RuntimesDeps["docker"]>,
   ): Promise<string | undefined> {
     try {
       return this.imageRef((await docker.resolver.effective(row)).config);
     } catch (err) {
       if (!(err instanceof AgentStartError))
-        this.d.log.warn({ err, agent: row.slug }, "reading the config for the image failed");
+        this.d.log.warn({ err, agent: row.handle }, "reading the config for the image failed");
       return undefined;
     }
   }
@@ -320,10 +320,10 @@ export class AgentRuntimes {
         err instanceof AgentTerminatedError ||
         err instanceof AgentStartError
       )
-        this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
+        this.d.log.info({ agent: rt.agent.handle, message: row.id }, err.message);
       else
         this.d.log.error(
-          { err, agent: rt.agent.slug, message: row.id },
+          { err, agent: rt.agent.handle, message: row.id },
           "delivering a message failed",
         );
     });
@@ -355,14 +355,14 @@ export class AgentRuntimes {
   }
 
   /** The live status of a loaded runtime; for one not loaded, what its row says (errored or hibernated). */
-  statusOf(agent: Pick<AgentRow, "id" | "status">): AgentStatus {
+  statusOf(agent: Pick<AgentRecord, "id" | "status">): AgentStatus {
     const rt = this.loaded.get(agent.id);
     if (rt) return rt.statusFrame().status;
     return agent.status === "errored" ? "errored" : "hibernated";
   }
 
   /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */
-  private cleanupDeps(): { cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined> } {
+  private cleanupDeps(): { cleanup?: (agent: AgentRecord) => Promise<CleanupResult | undefined> } {
     const local = this.d.journal ? localCleanup(this.d.store, this.d.journal) : undefined;
     const docker = this.d.docker
       ? dockerCleanup(this.d.docker.containers, this.d.store)
@@ -400,7 +400,7 @@ export class AgentRuntimes {
           .settingsChanged()
           .catch((err) =>
             this.d.log.error(
-              { err, agent: rt.agent.slug },
+              { err, agent: rt.agent.handle },
               "re-arming after a settings change failed",
             ),
           ),
@@ -495,7 +495,7 @@ export class AgentRuntimes {
       errorKind?: string | null;
       runtime?: string;
       terminatedAt?: Date | null;
-      runtimeJournal?: AgentRow["runtimeJournal"];
+      runtimeJournal?: AgentRecord["runtimeJournal"];
     },
   ): Promise<LiveFields & { stuck?: true }> {
     const rt = await this.get(agentId);

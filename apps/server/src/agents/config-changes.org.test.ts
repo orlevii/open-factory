@@ -1,6 +1,6 @@
-import type { AgentRow } from "@open-factory/db";
 import type { Actor, AnyEvent, ConfigDoc } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { testRef } from "../test/principals.ts";
 import { ConfigChanges } from "./config-changes.ts";
 
@@ -12,31 +12,31 @@ const doc = (template: Record<string, unknown> = {}): ConfigDoc => ({
   mcp: { mcpServers: {} },
 });
 
-const row = (id: string, slug: string, reportsTo: string | null): AgentRow =>
+const row = (id: string, handle: string, reportsTo: string | null): AgentRecord =>
   ({
     id,
-    slug,
+    handle,
     kind: "persistent",
     runtime: "local",
     reportsTo,
     config: {},
     archivedAt: null,
     terminatedAt: null,
-  }) as AgentRow;
+  }) as AgentRecord;
 
 const lead = row("lead-id", "lead", null);
 const dev = row("dev-id", "dev", "lead-id");
 const hrRow = row("hr-id", "hr", "lead-id");
 const solo = row("solo-id", "solo", null);
 
-const agentActor = (r: AgentRow): Actor => ({
+const agentActor = (r: AgentRecord): Actor => ({
   kind: "agent",
   id: r.id,
   ref: testRef(r.id),
-  slug: r.slug,
+  handle: r.handle,
 });
 
-function world(live: AgentRow[] = []) {
+function world(live: AgentRecord[] = []) {
   const restarts: { id: string; wake: boolean }[] = [];
   const reportNotices: { managerId: string; reportId: string; by: string; lines: string[] }[] = [];
   const own: { id: string; lines: string[] }[] = [];

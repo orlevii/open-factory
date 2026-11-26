@@ -177,7 +177,7 @@ test("factory facts merge only with the same fact; the merged envelope keeps fac
 });
 
 test("a differing subject breaks a run and each envelope keeps its own subject", () => {
-  const subject = (relation: "peer" | "report") => ({ slug: "c", displayName: "C", relation });
+  const subject = (relation: "peer" | "report") => ({ handle: "c", displayName: "C", relation });
   const out = groupEnvelopes([
     row({
       id: "u1",

@@ -1,7 +1,7 @@
-import type { AgentRow } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { ApiError } from "../errors.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { ConfigResolver, configOf } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
 
@@ -29,16 +29,18 @@ const resolverWith = (load: Fake["loadValid"]) =>
   new ConfigResolver({ templates: { loadValid: load } as never, library: stubLibrary });
 const resolverFor = (doc: ConfigDoc = baseDoc()) => resolverWith(async () => ({ doc }));
 
-const agent = (over: Omit<Partial<AgentRow>, "config"> & { config?: unknown } = {}): AgentRow =>
+const agent = (
+  over: Omit<Partial<AgentRecord>, "config"> & { config?: unknown } = {},
+): AgentRecord =>
   ({
     id: "a1",
-    slug: "ana",
+    handle: "ana",
     template: "dev",
     kind: "persistent",
     runtime: "local",
     config: {},
     ...over,
-  }) as AgentRow;
+  }) as AgentRecord;
 
 describe("configOf", () => {
   test("parses a doc carrying the derived local_skill_names (I2 §7.2), which the strict yaml schema would refuse", () => {

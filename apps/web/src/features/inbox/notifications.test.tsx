@@ -62,11 +62,11 @@ afterEach(() => {
 });
 
 const chatRow = (
-  over: { slug?: string; name?: string; unread?: number; first?: string; latest?: string } = {},
+  over: { handle?: string; name?: string; unread?: number; first?: string; latest?: string } = {},
 ): ChatRow => ({
   agent: {
-    ref: refFor(over.slug ?? "ada"),
-    handle: over.slug ?? "ada",
+    ref: refFor(over.handle ?? "ada"),
+    handle: over.handle ?? "ada",
     displayName: over.name ?? "Ada",
     template: "ada",
     avatarVersion: null,
@@ -310,7 +310,7 @@ test("what is unread at load never notifies; a later chat message does", async (
   const { api, state } = await boot({ chats: [chatRow()] });
   // The baseline fetch is in flight; this frame becomes its trailing fetch.
   state.page = {
-    chats: [chatRow(), chatRow({ slug: "bo", name: "Bo", first: "bo-1", latest: "bo-1" })],
+    chats: [chatRow(), chatRow({ handle: "bo", name: "Bo", first: "bo-1", latest: "bo-1" })],
   };
   await frame();
   await waitFor(() => expect(shown).toHaveLength(1));

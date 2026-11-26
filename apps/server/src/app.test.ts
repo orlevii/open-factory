@@ -60,23 +60,23 @@ test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () 
   expect(quiet.join("")).not.toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
 });
 
-/** Starts `slug` with a human message and an idle first turn; returns its live token. */
+/** Starts `handle` with a human message and an idle first turn; returns its live token. */
 async function startIdle(
   t: Awaited<ReturnType<typeof makeTestApp>>,
   driver: FakeDriver,
-  slug: string,
+  handle: string,
 ) {
-  const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
+  const { cookie } = await signUp(t.app, { handle: `h-${handle}` });
   await t.app.inject({
     method: "POST",
     url: `/api/messages`,
     headers: { cookie },
-    payload: { to: [slug], body: "hi" },
+    payload: { to: [handle], body: "hi" },
   });
-  const p = driver.startsOf(slug).at(-1);
-  if (!p) throw new Error(`${slug} not started`);
+  const p = driver.startsOf(handle).at(-1);
+  if (!p) throw new Error(`${handle} not started`);
   p.emit(...ev.fullTurn());
-  await (await runtimeOf(t.app, slug))?.settled();
+  await (await runtimeOf(t.app, handle))?.settled();
   return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
 }
 
@@ -106,17 +106,17 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   const t = await makeTestApp({ harnessDriver: driver });
   try {
     await t.seedAgent({
-      slug: "lead",
+      handle: "lead",
       config: { template: { can_spawn: ["tech-lead", "developer"] } },
     });
-    await t.seedAgent({ slug: "solo" });
+    await t.seedAgent({ handle: "solo" });
     await t.seedAgent({
-      slug: "second",
+      handle: "second",
       config: { template: { can_spawn: ["developer"] } },
     });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
-    const names = async (slug: string) => {
-      const { token } = await startIdle(t, driver, slug);
+    const names = async (handle: string) => {
+      const { token } = await startIdle(t, driver, handle);
       const r = await mcpCall(url, token, "tools/list", {});
       return r.json.result.tools as {
         name: string;
@@ -148,7 +148,7 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
       { template: "developer", suffix: "e1", description: "Builds it", prompt: "Build it" },
       null,
     );
-    expect(spawned).toMatchObject({ ok: true, slug: "developer-e1" });
+    expect(spawned).toMatchObject({ ok: true, handle: "developer-e1" });
     // The brief wakes it: take that process's token once its first turn is over.
     await vi.waitFor(() => expect(driver.startsOf("developer-e1").length > 0).toBe(true));
     const p = driver.startsOf("developer-e1").at(-1);
@@ -171,7 +171,7 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     logStream: { write: (l) => void lines.push(l) },
   });
   try {
-    await t.seedAgent({ slug: "dev" });
+    await t.seedAgent({ handle: "dev" });
     const { token } = await startIdle(t, driver, "dev");
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
@@ -201,8 +201,8 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   try {
-    const lead = await t.seedAgent({ slug: "lead" });
-    const dev = await t.seedAgent({ slug: "dev" });
+    const lead = await t.seedAgent({ handle: "lead" });
+    const dev = await t.seedAgent({ handle: "dev" });
     await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
     const { proc } = await startIdle(t, driver, "lead");
     const row = await t.app.store.createOrgRow({
@@ -226,8 +226,8 @@ test("a report's text reaches its manager naming the request it answers", async 
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   try {
-    const lead = await t.seedAgent({ slug: "lead" });
-    const dev = await t.seedAgent({ slug: "dev" });
+    const lead = await t.seedAgent({ handle: "lead" });
+    const dev = await t.seedAgent({ handle: "dev" });
     await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
     const { proc: leadProc } = await startIdle(t, driver, "lead");
     const { cookie } = await signUp(t.app, { handle: "asker" });

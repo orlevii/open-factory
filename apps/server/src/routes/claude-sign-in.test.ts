@@ -284,7 +284,7 @@ describe.skipIf(!hasPython)("claude sign-in routes (fake CLI)", () => {
       .from(schema.credentials)
       .where(eq(schema.credentials.name, "work"));
     if (!row) throw new Error("no credential row");
-    const agent = await t.seedAgent({ slug: "dev" });
+    const agent = await t.seedAgent({ handle: "dev" });
     await t.db
       .update(schema.agents)
       .set({ credentialId: row.id })

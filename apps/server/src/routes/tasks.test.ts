@@ -15,7 +15,7 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   or = await signUp(h.app, { handle: "or" });
   sam = await signUp(h.app, { handle: "sam" });
-  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
+  for (const handle of ["lead", "dev", "qa"]) ids[handle] = (await h.seedAgent({ handle })).id;
 });
 afterEach(() => h.close());
 
@@ -89,7 +89,7 @@ test("validation: a javascript: link is a 400 on links; an unknown dependency on
   expect(bad.json().error.fields.links).toBe("Links must be http(s) URLs.");
   const dep = await call("POST", "/api/tasks", { title: "x", dependsOn: ["T-9"] });
   expect(dep.json().error.fields).toEqual({ dependsOn: "No task T-9." });
-  await h.sql`update agents set archived_at = now() where slug = 'qa'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'qa')`;
   const ended = await call("POST", "/api/tasks", { title: "x", assignee: "qa" });
   expect(ended.statusCode).toBe(409);
   expect(ended.json().error).toMatchObject({
@@ -218,7 +218,7 @@ test("GET detail: activity oldest first with comments and history interleaved; b
       author: { kind: "human", ref: expect.any(String), handle: "or" },
       body: `<@${dev?.ref}> look at this`,
     },
-    deliveredTo: ["dev"],
+    deliveredTo: [{ ref: dev?.ref, handle: "dev" }],
     mentionedHumans: [],
     notReached: [],
   });
@@ -247,7 +247,7 @@ test("a comment's tag reaches the tagged agent", async () => {
   });
   expect(r.statusCode).toBe(201);
   expect(r.json()).toMatchObject({
-    deliveredTo: expect.arrayContaining(["dev"]),
+    deliveredTo: expect.arrayContaining([expect.objectContaining({ handle: "dev" })]),
     mentionedHumans: [{ ref: samP?.ref, handle: "sam" }],
     notReached: [],
   });

@@ -24,17 +24,17 @@ const post = (url: string, payload?: Record<string, unknown>) =>
   t.app.inject({ method: "POST", url, headers: { cookie }, ...(payload ? { payload } : {}) });
 
 let n = 0;
-/** A fresh agent (its own slug) and its runtime. */
-async function agent(): Promise<{ slug: string; rt: AgentRuntime }> {
+/** A fresh agent (its own handle) and its runtime. */
+async function agent(): Promise<{ handle: string; rt: AgentRuntime }> {
   n += 1;
-  const slug = `rec${n}`;
-  await t.seedAgent({ slug });
-  const rt = await runtimeOf(t.app, slug);
+  const handle = `rec${n}`;
+  await t.seedAgent({ handle });
+  const rt = await runtimeOf(t.app, handle);
   if (!rt) throw new Error("no runtime");
-  return { slug, rt };
+  return { handle, rt };
 }
-const send = async (slug: string, body: string) => {
-  const r = await post(`/api/messages`, { to: [slug], body, urgent: false });
+const send = async (handle: string, body: string) => {
+  const r = await post(`/api/messages`, { to: [handle], body, urgent: false });
   expect(r.statusCode).toBe(202);
 };
 const procsOf = (rt: AgentRuntime): FakeProcess[] =>
@@ -54,7 +54,7 @@ const row = async (rt: AgentRuntime) =>
 /** Errored with an ordinary resume failure; "hi" stays pending. */
 async function resumeErrored(message = "API Error: 500 overloaded") {
   const a = await agent();
-  await send(a.slug, "hi");
+  await send(a.handle, "hi");
   lastProc(a.rt).emit({ type: "error", source: "resume", message });
   await a.rt.settled();
   expect(a.rt.live().status).toBe("errored");
@@ -64,10 +64,10 @@ async function resumeErrored(message = "API Error: 500 overloaded") {
 test("restart: an errored agent gets the restart notice first, control event, one attempt", async () => {
   expect((await post(`/api/agents/${UNKNOWN_REF}/restart`)).statusCode).toBe(404);
 
-  const { slug, rt } = await resumeErrored();
+  const { handle, rt } = await resumeErrored();
   expect(rt.live().errorKind).toBe("resume");
   const before = procsOf(rt).length;
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(r.statusCode).toBe(202);
   await rt.settled();
   expect(procsOf(rt)).toHaveLength(before + 1); // one attempt
@@ -96,13 +96,13 @@ test("restart: an errored agent gets the restart notice first, control event, on
 });
 
 test("restart while an attempt runs: 409 attempt_in_progress", async () => {
-  const { slug, rt } = await resumeErrored();
-  expect((await post(`/api/agents/${await t.refOf(slug)}/restart`)).statusCode).toBe(202);
+  const { handle, rt } = await resumeErrored();
+  expect((await post(`/api/agents/${await t.refOf(handle)}/restart`)).statusCode).toBe(202);
   await rt.settled();
-  const again = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const again = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(again.statusCode).toBe(409);
   expect(again.json().error.code).toBe("attempt_in_progress");
-  const reset = await post(`/api/agents/${await t.refOf(slug)}/reset-session`);
+  const reset = await post(`/api/agents/${await t.refOf(handle)}/reset-session`);
   expect(reset.statusCode).toBe(409);
   expect(reset.json().error.code).toBe("attempt_in_progress");
   lastProc(rt).emit(ev.session(), ev.turn(), ev.end());
@@ -110,24 +110,24 @@ test("restart while an attempt runs: 409 attempt_in_progress", async () => {
 });
 
 test("restart of resume_unrecoverable: 409 with the new-session hint", async () => {
-  const { slug, rt } = await resumeErrored("No conversation found with session ID sess-x");
+  const { handle, rt } = await resumeErrored("No conversation found with session ID sess-x");
   expect(rt.live().errorKind).toBe("resume_unrecoverable");
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toEqual({
     code: "resume_unrecoverable",
-    message: `@${slug}'s session can't be resumed; a human must start a new session.`,
+    message: `@${handle}'s session can't be resumed; a human must start a new session.`,
   });
 });
 
 test("restart with the local runtime gate off: 409 runtime_disabled", async () => {
-  const { slug, rt } = await resumeErrored();
+  const { handle, rt } = await resumeErrored();
   const config = t.app.config as { allowLocalRuntime: boolean };
   expect(rt.live().runtimeDisabled).toBeUndefined();
   config.allowLocalRuntime = false;
   try {
     expect(rt.live().runtimeDisabled).toBe("The local runtime is disabled on this factory.");
-    const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+    const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("runtime_disabled");
   } finally {
@@ -136,8 +136,8 @@ test("restart with the local runtime gate off: 409 runtime_disabled", async () =
 });
 
 test("restart of stop_failed releases its slot and the restart's wake follows; a failed second escalation stays stop_failed with no wake", async () => {
-  const { slug, rt } = await agent();
-  await send(slug, "hi");
+  const { handle, rt } = await agent();
+  await send(handle, "hi");
   const p = lastProc(rt);
   p.emit(...ev.fullTurn(), ev.cron("c1", { humanSchedule: "every 5 minutes" }));
   await rt.settled();
@@ -152,7 +152,7 @@ test("restart of stop_failed releases its slot and the restart's wake follows; a
   const running = t.app.runtimes.supervisor.running().count; // includes the slot it still holds
 
   // The second escalation fails too: still stop_failed, no wake, the slot still held.
-  expect((await post(`/api/agents/${await t.refOf(slug)}/restart`)).statusCode).toBe(202);
+  expect((await post(`/api/agents/${await t.refOf(handle)}/restart`)).statusCode).toBe(202);
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
   expect(rt.live().lastError).toBe(
@@ -167,7 +167,7 @@ test("restart of stop_failed releases its slot and the restart's wake follows; a
   p.forceKill = async () => {
     p.exit(137);
   };
-  expect((await post(`/api/agents/${await t.refOf(slug)}/restart`)).statusCode).toBe(202);
+  expect((await post(`/api/agents/${await t.refOf(handle)}/restart`)).statusCode).toBe(202);
   await rt.settled();
   expect(procsOf(rt)).toHaveLength(2);
   expect(t.app.runtimes.supervisor.running().count).toBe(running);
@@ -193,13 +193,13 @@ test("restart of stop_failed releases its slot and the restart's wake follows; a
 });
 
 test("reset-session: clears session_id, appends session_reset, deletes pending notices, delivers pending human messages as the first turn without --resume", async () => {
-  const { slug, rt } = await agent();
-  await send(slug, "hi");
+  const { handle, rt } = await agent();
+  await send(handle, "hi");
   lastProc(rt).emit(...ev.fullTurn("sess-A"));
   await rt.settled();
   await rt.hibernate("apply_changes");
   await rt.settled();
-  await send(slug, "again");
+  await send(handle, "again");
   expect(lastProc(rt).opts.resumeSessionId).toBe("sess-A");
   lastProc(rt).emit({
     type: "error",
@@ -211,7 +211,7 @@ test("reset-session: clears session_id, appends session_reset, deletes pending n
   await rt.postNotice("restart", `Restarted by ${orTag} after an error.`);
   const before = procsOf(rt).length;
 
-  const r = await post(`/api/agents/${await t.refOf(slug)}/reset-session`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/reset-session`);
   expect(r.statusCode).toBe(202);
   await rt.settled();
   expect(await row(rt)).toMatchObject({ session_id: null, status: "hibernated" });
@@ -240,26 +240,26 @@ test("reset-session: clears session_id, appends session_reset, deletes pending n
 
 test("reset-session only for resume / resume_unrecoverable", async () => {
   const healthy = await agent();
-  const r0 = await post(`/api/agents/${await t.refOf(healthy.slug)}/reset-session`);
+  const r0 = await post(`/api/agents/${await t.refOf(healthy.handle)}/reset-session`);
   expect(r0.statusCode).toBe(409);
   expect(r0.json().error.code).toBe("reset_not_allowed");
 
   // Errored by a crash (the automatic attempt failed too): Restart, not a new session.
   const crashed = await agent();
-  await send(crashed.slug, "hi");
+  await send(crashed.handle, "hi");
   lastProc(crashed.rt).emit(...ev.fullTurn(), ev.turn());
   lastProc(crashed.rt).exit(137);
   await crashed.rt.settled();
   lastProc(crashed.rt).exit(1); // the recovery attempt crashes too
   await crashed.rt.settled();
   expect(crashed.rt.live()).toMatchObject({ status: "errored", errorKind: "crash" });
-  const r1 = await post(`/api/agents/${await t.refOf(crashed.slug)}/reset-session`);
+  const r1 = await post(`/api/agents/${await t.refOf(crashed.handle)}/reset-session`);
   expect(r1.statusCode).toBe(409);
   expect(r1.json().error.code).toBe("reset_not_allowed");
 
   // An ordinary resume failure: allowed.
-  const { slug, rt } = await resumeErrored();
-  const r2 = await post(`/api/agents/${await t.refOf(slug)}/reset-session`);
+  const { handle, rt } = await resumeErrored();
+  const r2 = await post(`/api/agents/${await t.refOf(handle)}/reset-session`);
   expect(r2.statusCode).toBe(202);
   await rt.settled();
   expect(rt.live().errorKind).toBeUndefined();
@@ -269,7 +269,7 @@ test("reset-session only for resume / resume_unrecoverable", async () => {
 /** Errored by a resume failure whose process is still there (its stop doesn't produce the exit yet). */
 async function resumeErroredProcessLeft(message = "API Error: 500 overloaded") {
   const a = await agent();
-  await send(a.slug, "hi");
+  await send(a.handle, "hi");
   const p = lastProc(a.rt);
   p.emitExitOnStop = false;
   p.emit({ type: "error", source: "resume", message });
@@ -280,8 +280,8 @@ async function resumeErroredProcessLeft(message = "API Error: 500 overloaded") {
 }
 
 test("restart with the failed start's process left: force stop, and its exit makes the one attempt", async () => {
-  const { slug, rt, p } = await resumeErroredProcessLeft();
-  expect((await post(`/api/agents/${await t.refOf(slug)}/restart`)).statusCode).toBe(202);
+  const { handle, rt, p } = await resumeErroredProcessLeft();
+  expect((await post(`/api/agents/${await t.refOf(handle)}/restart`)).statusCode).toBe(202);
   await rt.settled();
   expect(await events(rt)).toContainEqual({ type: "control", cmd: "restart", by: orTag });
   expect(procsOf(rt)).toHaveLength(1); // nothing starts before the exit
@@ -304,11 +304,11 @@ test("restart with the failed start's process left: force stop, and its exit mak
 });
 
 test("reset-session with the failed start's process left: its exit starts the new session with the human messages", async () => {
-  const { slug, rt, p } = await resumeErroredProcessLeft(
+  const { handle, rt, p } = await resumeErroredProcessLeft(
     "No conversation found with session ID sess-x",
   );
   await t.sql`update agents set session_id = 'sess-x' where id = ${rt.agent.id}`;
-  expect((await post(`/api/agents/${await t.refOf(slug)}/reset-session`)).statusCode).toBe(202);
+  expect((await post(`/api/agents/${await t.refOf(handle)}/reset-session`)).statusCode).toBe(202);
   await rt.settled();
   expect(procsOf(rt)).toHaveLength(1);
   expect(await row(rt)).toMatchObject({ attempting: true, session_id: null });
@@ -325,14 +325,14 @@ test("reset-session with the failed start's process left: its exit starts the ne
 
 test("reset-session with the process left and no human message: its exit starts nothing", async () => {
   // A compact started it (no human message pending); the resume failed and its process is still there.
-  const { slug, rt } = await agent();
-  expect((await post(`/api/agents/${await t.refOf(slug)}/compact`, {})).statusCode).toBe(202);
+  const { handle, rt } = await agent();
+  expect((await post(`/api/agents/${await t.refOf(handle)}/compact`, {})).statusCode).toBe(202);
   const p = lastProc(rt);
   p.emitExitOnStop = false;
   p.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
   await rt.settled();
   expect(rt.live().errorKind).toBe("resume");
-  expect((await post(`/api/agents/${await t.refOf(slug)}/reset-session`)).statusCode).toBe(202);
+  expect((await post(`/api/agents/${await t.refOf(handle)}/reset-session`)).statusCode).toBe(202);
   await rt.settled();
   expect(await row(rt)).toMatchObject({ attempting: false });
   p.exit(0);
@@ -344,13 +344,13 @@ test("reset-session with the process left and no human message: its exit starts 
 
 test("restart during a stop in progress: 503 agent_start_failed", async () => {
   const a = await agent();
-  await send(a.slug, "hi");
+  await send(a.handle, "hi");
   const p = lastProc(a.rt);
   p.holdStop = true;
   p.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
   await a.rt.settled();
   const stopping = a.rt.stop({ graceMs: 0 });
-  const r = await post(`/api/agents/${await t.refOf(a.slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(a.handle)}/restart`);
   expect(r.statusCode).toBe(503);
   expect(r.json().error).toEqual({
     code: "agent_start_failed",
@@ -361,10 +361,10 @@ test("restart during a stop in progress: 503 agent_start_failed", async () => {
 });
 
 test("restart and reset-session of an archived agent: 409 agent_archived", async () => {
-  const { slug } = await resumeErrored();
-  expect((await post(`/api/agents/${await t.refOf(slug)}/archive`)).statusCode).toBe(200);
+  const { handle } = await resumeErrored();
+  expect((await post(`/api/agents/${await t.refOf(handle)}/archive`)).statusCode).toBe(200);
   for (const action of ["restart", "reset-session"]) {
-    const r = await post(`/api/agents/${await t.refOf(slug)}/${action}`);
+    const r = await post(`/api/agents/${await t.refOf(handle)}/${action}`);
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("agent_archived");
   }
@@ -379,7 +379,7 @@ const park = async (rt: AgentRuntime) => {
 /** A running agent that has finished its first turn, with one live background task (lost work on a restart). */
 async function runningWithBackgroundTask() {
   const a = await agent();
-  await send(a.slug, "hi");
+  await send(a.handle, "hi");
   lastProc(a.rt).emit(
     ...ev.fullTurn(),
     ev.background([{ taskId: "t1", description: "pnpm test" }]),
@@ -390,9 +390,9 @@ async function runningWithBackgroundTask() {
 }
 
 test("restart of a running agent with background work and no force: 409 lost_work, its tasks in error.data, nothing stopped", async () => {
-  const { slug, rt } = await runningWithBackgroundTask();
+  const { handle, rt } = await runningWithBackgroundTask();
   const before = procsOf(rt).length;
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({
     code: "lost_work",
@@ -405,9 +405,9 @@ test("restart of a running agent with background work and no force: 409 lost_wor
 });
 
 test("restart of a running agent with background work and force: true: 202 restarting, then a new process", async () => {
-  const { slug, rt } = await runningWithBackgroundTask();
+  const { handle, rt } = await runningWithBackgroundTask();
   const before = procsOf(rt).length;
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`, { force: true });
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`, { force: true });
   expect(r.statusCode).toBe(202);
   expect(r.json()).toEqual({ status: "restarting" });
   await rt.settled();
@@ -416,32 +416,32 @@ test("restart of a running agent with background work and force: true: 202 resta
 });
 
 test("restart of an idle running agent with nothing lost: 202 restarted_idle", async () => {
-  const { slug, rt } = await agent();
-  await send(slug, "hi");
+  const { handle, rt } = await agent();
+  await send(handle, "hi");
   lastProc(rt).emit(...ev.fullTurn());
   await rt.settled();
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(r.statusCode).toBe(202);
   expect(r.json()).toEqual({ status: "restarted_idle" });
   await park(rt);
 });
 
 test("restart of a hibernated agent: 202 not_running", async () => {
-  const { slug, rt } = await agent();
-  await send(slug, "hi");
+  const { handle, rt } = await agent();
+  await send(handle, "hi");
   lastProc(rt).emit(...ev.fullTurn());
   await rt.settled();
   await rt.hibernate("warm_window");
   await rt.settled();
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`);
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`);
   expect(r.statusCode).toBe(202);
   expect(r.json()).toEqual({ status: "not_running" });
   await park(rt);
 });
 
 test("restart with a force that isn't a boolean: 400", async () => {
-  const { slug, rt } = await runningWithBackgroundTask();
-  const r = await post(`/api/agents/${await t.refOf(slug)}/restart`, { force: "yes" });
+  const { handle, rt } = await runningWithBackgroundTask();
+  const r = await post(`/api/agents/${await t.refOf(handle)}/restart`, { force: "yes" });
   expect(r.statusCode).toBe(400);
   await park(rt);
 });

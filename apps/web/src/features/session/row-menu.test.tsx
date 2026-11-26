@@ -361,7 +361,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
       kind: left ? "peer_left" : "peer_joined",
       urgent: false,
       body: "",
-      subject: { slug: "bob", displayName: "Bob", relation: "peer", left },
+      subject: { handle: "bob", displayName: "Bob", relation: "peer", left },
     }),
   });
   expect(rowMenuTitle(peer(), "dev")).toBe("@bob joined");

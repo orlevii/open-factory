@@ -292,9 +292,11 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
       /^<factory-message from="@factory" from_kind="factory" kind="system"/,
     );
     expect(await notices()).toEqual([{ state: "delivered" }]);
-    expect((await w.sql`select attempting from agents where slug = 'dev'`)[0]?.attempting).toBe(
-      false,
-    );
+    expect(
+      (
+        await w.sql`select attempting from agents where id = (select id from principals where handle = 'dev')`
+      )[0]?.attempting,
+    ).toBe(false);
 
     // Delivered once: a further restart has nothing to resume.
     await next.app.close();

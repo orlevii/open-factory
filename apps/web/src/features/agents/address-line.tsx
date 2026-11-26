@@ -2,7 +2,7 @@ import { type FocusEvent, useEffect, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { FormField } from "@/components/form-field";
 import { IN_FORM } from "@/components/ui/button";
-import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 
 const EMPTY: ReadonlySet<string> = new Set();
 const SETTLE_MS = 300;
@@ -19,30 +19,30 @@ function useDeferredSettle(value: string, ms: number): [string, () => void] {
 
 export function AddressLine({
   name,
-  slug,
-  slugTouched,
-  onSlug,
+  handle,
+  handleTouched,
+  onHandle,
   onBlur,
   error,
   forceOpen,
   onOpened,
 }: {
   name: string;
-  slug: string;
-  slugTouched: boolean;
-  onSlug: (slug: string) => void;
-  /** Leaving the slug input, with its event (the form's validate-on-blur). */
+  handle: string;
+  handleTouched: boolean;
+  onHandle: (handle: string) => void;
+  /** Leaving the handle input, with its event (the form's validate-on-blur). */
   onBlur?: (e: FocusEvent<HTMLInputElement>) => void;
-  /** The slug's error; it opens the line, so the note under the input can show it. */
+  /** The handle's error; it opens the line, so the note under the input can show it. */
   error?: string;
   forceOpen?: boolean;
   onOpened?: () => void;
 }) {
   // Until the taken-sets answer, the derivation shows without a suffix (§6.3).
   const taken = useTakenNames(true);
-  const shown = slugTouched ? slug : deriveSlug(name, taken ?? EMPTY);
+  const shown = handleTouched ? handle : deriveHandle(name, taken ?? EMPTY);
   const [open, setOpen] = useState(false);
-  const [avatarSlug, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
+  const [avatarHandle, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -59,11 +59,11 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar agentRef={avatarSlug} color={null} size={20} />
+          <AgentAvatar agentRef={avatarHandle} color={null} size={20} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
-            name="slug"
+            name="handle"
             label="Slug"
             prefix="@"
             ref={inputRef}
@@ -74,7 +74,7 @@ export function AddressLine({
             help="How others address this agent, like @team-lead. Lowercase letters, numbers and hyphens. Can't be changed later."
             error={error}
             value={shown}
-            onChange={(e) => onSlug(e.target.value)}
+            onChange={(e) => onHandle(e.target.value)}
             onBlur={(e) => {
               settleAvatar();
               onBlur?.(e);
@@ -86,7 +86,7 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar agentRef={avatarSlug} color={null} size={20} />
+      <AgentAvatar agentRef={avatarHandle} color={null} size={20} />
       <span className="min-w-0">
         {shown ? (
           <>

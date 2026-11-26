@@ -1,12 +1,17 @@
 import { stat } from "node:fs/promises";
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { renderTags } from "@open-factory/shared/tags";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
-import { principalById, principalsByIds } from "../principals/principal-store.ts";
+import {
+  type AgentRecord,
+  agentRecords,
+  principalById,
+  principalsByIds,
+} from "../principals/principal-store.ts";
 import { tagLookupFor } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
@@ -52,13 +57,13 @@ export type StartedOf = (agentId: string) => Effective | undefined;
  * adds it to every start, so no caller can leave it out.
  */
 export type PrepareStart = (
-  agent: AgentRow,
+  agent: AgentRecord,
   extra: { agentToken: string; loaded: StartedOf },
 ) => Promise<PreparedSpec>;
 
 /** What a runtime calls: `PrepareStart` with `loaded` already bound by `AgentRuntimes`. */
 export type StartPreparer = (
-  agent: AgentRow,
+  agent: AgentRecord,
   extra: { agentToken: string },
 ) => Promise<PreparedSpec>;
 
@@ -122,18 +127,18 @@ export async function deriveInheritance(
     resolver: ConfigResolver;
     loaded: StartedOf;
   },
-  agent: AgentRow,
+  agent: AgentRecord,
   effective: Effective,
-): Promise<{ spawner: AgentRow; inherited: Granted }> {
-  const child = `@${agent.slug}`;
+): Promise<{ spawner: AgentRecord; inherited: Granted }> {
+  const child = `@${agent.handle}`;
   const [spawner] = agent.reportsTo
-    ? await d.db.select().from(schema.agents).where(eq(schema.agents.id, agent.reportsTo))
+    ? await agentRecords(d.db).where(eq(schema.agents.id, agent.reportsTo))
     : [];
   if (!spawner)
     throw new AgentStartError(
       `The agent that spawned ${child} no longer exists, so ${child} can't start.`,
     );
-  const by = `@${spawner.slug}, which spawned ${child},`;
+  const by = `@${spawner.handle}, which spawned ${child},`;
   if (spawner.archivedAt || spawner.terminatedAt || !spawner.credentialId)
     throw new AgentStartError(`${by} isn't active, so ${child} can't start.`);
   let current: Effective;
@@ -195,12 +200,12 @@ export function createPrepareStart(d: {
   return async (stale, { agentToken, loaded }) => {
     // The lock is named by the ref, which `principals` holds and a rename never changes.
     const lockPrincipal = await principalById(d.db, stale.id);
-    if (!lockPrincipal) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
+    if (!lockPrincipal) throw new AgentStartError(`Agent @${stale.handle} no longer exists.`);
     const lockRef = lockPrincipal.ref;
     return d.lock.run(lockRef, async () => {
-      const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
-      if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
-      if (agent.archivedAt) throw new AgentArchivedError(agent.slug);
+      const [agent] = await agentRecords(d.db).where(eq(schema.agents.id, stale.id));
+      if (!agent) throw new AgentStartError(`Agent @${stale.handle} no longer exists.`);
+      if (agent.archivedAt) throw new AgentArchivedError(agent.handle);
       // The local gate fails closed before anything else: no prepare, no mounts, no process (spec §13).
       if (agent.runtime === "local" && !d.config.allowLocalRuntime)
         throw new AgentStartError(LOCAL_RUNTIME_START_MESSAGE, "runtime");
@@ -271,7 +276,7 @@ export function createPrepareStart(d: {
 
       const hood = await d.neighborhood.of(agent.id);
       const humans = await d.neighborhood.humans();
-      // Every principal this file names, in one query: tags show the current handle, whatever `agents.slug` says.
+      // Every principal this file names, in one query: tags show the current handle.
       const spawnerId = spawned?.spawner.id;
       const named = await principalsByIds(d.db, [
         ...new Set([
@@ -306,7 +311,9 @@ export function createPrepareStart(d: {
         if (u) manager = { kind: "human", ...tagged(agent.reportsTo), ...u };
       }
       if (!manager)
-        throw new AgentStartError(`@${agent.slug}'s manager no longer exists, so it can't start.`);
+        throw new AgentStartError(
+          `@${agent.handle}'s manager no longer exists, so it can't start.`,
+        );
       // Descriptions are stored with `<@ref>` tags: rendered once for the whole file.
       const descriptions = await tagLookupFor(d.db, [
         agent.description,
@@ -315,8 +322,8 @@ export function createPrepareStart(d: {
       ]);
       const show = (text: string) => renderTags(text, descriptions, "agent");
       // The writer of a description is `description_by`, so a rename keeps the quoting (I7 §10).
-      const writtenBy = (a: AgentRow) => (a.descriptionBy ? tagged(a.descriptionBy) : undefined);
-      const entry = (a: AgentRow) => {
+      const writtenBy = (a: AgentRecord) => (a.descriptionBy ? tagged(a.descriptionBy) : undefined);
+      const entry = (a: AgentRecord) => {
         // A spawned agent's description was written by its spawner: every peer shares this agent's manager, so the
         // principal is always among the ones read above.
         const writer = a.kind === "ephemeral" ? tagged(a.reportsTo) : writtenBy(a);

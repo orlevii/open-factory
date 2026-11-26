@@ -39,7 +39,7 @@ async function makeRuntime(
   agentId = `a${n}`;
   await insertAgent(t.sql, {
     id: agentId,
-    slug: `dev${n}`,
+    handle: `dev${n}`,
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.status ? { status: opts.status } : {}),
   });
@@ -532,7 +532,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
 test("after a rename, a new delivery shows the new handle in from and in a body tag", async () => {
   await t.sql.unsafe(principalSql("rn-human", "human", "rn-old"));
   await t.sql`insert into users (id, name, email) values ('rn-human', 'Rn', 'rn@x.io')`;
-  await insertAgent(t.sql, { id: "rn-peer", slug: "rn-peer-old" });
+  await insertAgent(t.sql, { id: "rn-peer", handle: "rn-peer-old" });
   const body = `ask <@${testRef("rn-peer")}> about it`;
   const human = `<@${testRef("rn-human")}`;
   const peer = `<@${testRef("rn-peer")}`;
@@ -543,7 +543,7 @@ test("after a rename, a new delivery shows the new handle in from and in a body 
   });
   driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
   await rt.settled();
-  // The endpoint comes in a later task: a rename is a write to principals.handle (agents.slug stays as it was).
+  // The endpoint comes in a later task: a rename is a write to principals.handle (agents.handle stays as it was).
   await t.sql`update principals set handle = 'rn-new' where id = 'rn-human'`;
   await t.sql`update principals set handle = 'rn-peer-new' where id = 'rn-peer'`;
   await sendAs(store, rt, { fromUserId: "rn-human", body, urgent: false });

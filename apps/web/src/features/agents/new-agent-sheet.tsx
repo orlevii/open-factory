@@ -43,7 +43,7 @@ import {
   type ModelEffort,
   saveModelEffort,
 } from "@/features/agents/api";
-import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ManagerCombobox } from "@/features/agents/manager-combobox";
 import { ModelEffortFields } from "@/features/agents/model-effort-fields";
@@ -126,13 +126,13 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     queries: TAKEN_LISTS,
     combine: (r) => r.some((q) => q.isError),
   });
-  const slugFor = useCallback((name: string) => deriveSlug(name, taken ?? EMPTY), [taken]);
+  const handleFor = useCallback((name: string) => deriveHandle(name, taken ?? EMPTY), [taken]);
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({
     mode: "create",
     draftKey: "new-agent",
     prefill: spec.template ? { template: spec.template } : undefined,
-    slugFor,
+    handleFor,
     form,
   });
   const { values, shown, errors, set, blur, claim, pending, config } = s;
@@ -387,7 +387,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
 
   // Until the taken names have answered the derivation has no suffix, so submit waits for them (§6.3).
   const [queued, setQueued] = useState(false);
-  const waitForTaken = !values.touched.slug && !taken && !takenFailed;
+  const waitForTaken = !values.touched.handle && !taken && !takenFailed;
   const run = () => void s.submit(create);
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -441,18 +441,18 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               }}
               onBlur={(e) => {
                 blur("displayName", e);
-                if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug)
+                if (!values.touched.handle && shown.displayName.trim() !== "" && !shown.handle)
                   setForceRef(true);
               }}
               autoComplete="off"
             />
             <AddressLine
               name={shown.displayName}
-              slug={values.slug}
-              slugTouched={Boolean(values.touched.slug)}
-              onSlug={(v) => set("slug", v)}
-              onBlur={(e) => blur("slug", e)}
-              error={errors.slug}
+              handle={values.handle}
+              handleTouched={Boolean(values.touched.handle)}
+              onHandle={(v) => set("handle", v)}
+              onBlur={(e) => blur("handle", e)}
+              error={errors.handle}
               forceOpen={forceRef}
               onOpened={onRefOpened}
             />

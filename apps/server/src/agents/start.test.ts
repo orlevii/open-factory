@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { and, eq } from "drizzle-orm";
@@ -19,6 +19,7 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import { type AgentRecord, agentRecords } from "../principals/principal-store.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
@@ -43,7 +44,7 @@ let factoryConfig: Config;
 let resolver: ConfigResolver;
 /** Stands in for the runtimes' `started`: what a loaded spawner's process started with. */
 const loaded = new Map<string, Effective>();
-let agent: AgentRow;
+let agent: AgentRecord;
 let seq = 0;
 const vault = new Vault(KEY);
 
@@ -61,8 +62,8 @@ function writeYaml(name: string, doc: Record<string, unknown>) {
 const writeTemplateFile = (name: string, file: string, text: string) =>
   writeFileSync(path.join(home, "templates", name, file), text);
 
-async function reload(id: string): Promise<AgentRow> {
-  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, id));
+async function reload(id: string): Promise<AgentRecord> {
+  const [row] = await agentRecords(t.db).where(eq(schema.agents.id, id));
   if (!row) throw new Error("no agent");
   return row;
 }
@@ -79,7 +80,7 @@ async function seedStartFixture() {
   home = mkdtempSync(path.join(tmpdir(), "of-start-"));
   hs = mkdtempSync(path.join(tmpdir(), "hs-"));
   repo = mkdtempSync(path.join(tmpdir(), "repo-"));
-  const slug = `lead-${seq}`;
+  const handle = `lead-${seq}`;
   const config = templateYamlSchema.parse({
     name: "lead",
     display_name: "Lead",
@@ -109,12 +110,11 @@ async function seedStartFixture() {
     valueEnc: vault.seal("gh-1", "secrets:s1"),
   });
   await t.db.insert(schema.projects).values({ id: "p1", name: "app", hostPath: repo });
-  await seedTestPrincipal(t.db, "agent", slug, `a-${seq}`);
+  await seedTestPrincipal(t.db, "agent", handle, `a-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
       id: `a-${seq}`,
-      slug,
       displayName: "Lead",
       template: "lead",
       config: {},
@@ -124,7 +124,7 @@ async function seedStartFixture() {
     })
     .returning();
   if (!row) throw new Error("seed failed");
-  agent = row;
+  agent = { ...row, handle };
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
   const _fake = createFakeClaude({ scenario: "reply" });
@@ -142,7 +142,7 @@ async function seedStartFixture() {
     testRef(agent.id),
     { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } },
     {
-      handle: slug,
+      handle: handle,
       displayName: "Lead",
       description: "",
       template: "lead",
@@ -233,7 +233,6 @@ test("the manager is described in CLAUDE.md", async () => {
     .insert(schema.agents)
     .values({
       id: "mgr",
-      slug: "boss",
       displayName: "The Boss",
       template: "lead",
       config: {},
@@ -250,14 +249,13 @@ test("the manager is described in CLAUDE.md", async () => {
   expect(md).toContain(`- Manager: <@${testRef("mgr")}|boss> (The Boss)`);
 });
 
-test("a peer's description an agent wrote is quoted with that agent's current slug; a human-written one is not", async () => {
-  for (const slug of ["ceo", "dev", "qa"])
-    await seedTestPrincipal(t.db, "agent", slug, `${slug}-id`);
+test("a peer's description an agent wrote is quoted with that agent's current handle; a human-written one is not", async () => {
+  for (const handle of ["ceo", "dev", "qa"])
+    await seedTestPrincipal(t.db, "agent", handle, `${handle}-id`);
   const [mgr] = await t.db
     .insert(schema.agents)
     .values({
       id: "ceo-id",
-      slug: "ceo",
       displayName: "CEO",
       template: "lead",
       config: {},
@@ -272,7 +270,6 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
     {
       ...sibling,
       id: "dev-id",
-      slug: "dev",
       displayName: "Dev",
       description: "Builds.",
       descriptionBy: agent.id,
@@ -281,7 +278,6 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
     {
       ...sibling,
       id: "qa-id",
-      slug: "qa",
       displayName: "QA",
       description: "Tests.",
       reportsTo: mgr?.id as string,
@@ -290,7 +286,7 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const text = md(agent);
   expect(text).toContain(
-    `- <@${testRef("dev-id")}|dev> (Dev), written by <@${testRef(agent.id)}|${agent.slug}>: "Builds."`,
+    `- <@${testRef("dev-id")}|dev> (Dev), written by <@${testRef(agent.id)}|${agent.handle}>: "Builds."`,
   );
   expect(text).toContain(`- <@${testRef("qa-id")}|qa> (QA): Tests.`);
 });
@@ -342,11 +338,11 @@ test("archived agents never start", async () => {
   await t.sql`update agents set archived_at = now()`;
   await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentArchivedError",
-    message: `@${agent.slug} is archived. Restore it first.`,
+    message: `@${agent.handle} is archived. Restore it first.`,
   });
 });
 
-test("prepare runs under the workspace lock for the agent's slug", async () => {
+test("prepare runs under the workspace lock for the agent's handle", async () => {
   let release = () => {};
   const held = lock.run(
     testRef(agent.id),
@@ -375,7 +371,7 @@ test("an invalid overlay is an AgentStartError with the config fix", async () =>
     .where(eq(schema.agents.id, agent.id));
   await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
-    message: `The configuration of @${agent.slug} is invalid. Fix it in Configuration.`,
+    message: `The configuration of @${agent.handle} is invalid. Fix it in Configuration.`,
     fix: "config",
   });
 });
@@ -481,7 +477,7 @@ const settingsOf = (a: { id: string }) =>
   );
 
 /** The fixture's lead (secrets [GH_TOKEN], grant `app`, template deny `Bash(rm:*)`) spawned a child. */
-async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> {
+async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRecord> {
   writeFileSync(
     leadTemplateSettings(),
     JSON.stringify({
@@ -520,13 +516,12 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     "settings.json",
     JSON.stringify({ permissions: { deny: ["Bash(curl:*)"] } }),
   );
-  const slug = `dev-ab${seq}`;
-  await seedTestPrincipal(t.db, "agent", slug, `child-${seq}`);
+  const handle = `dev-ab${seq}`;
+  await seedTestPrincipal(t.db, "agent", handle, `child-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
       id: `child-${seq}`,
-      slug,
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
@@ -548,16 +543,16 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       tplMcp: { mcpServers: {} },
     },
     {
-      handle: slug,
+      handle: handle,
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
       config,
-      manager: { kind: "agent", ref: "k7x2m9qd", handle: agent.slug, displayName: "Lead" },
+      manager: { kind: "agent", ref: "k7x2m9qd", handle: agent.handle, displayName: "Lead" },
       grants: [{ name: "app", hostPath: repo }],
     },
   );
-  return row;
+  return { ...row, handle };
 }
 
 test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants = spawner's current", async () => {
@@ -702,12 +697,12 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
   const lead = md(agent);
   expect(lead).toContain("## Spawning");
   expect(lead).toContain(
-    `- <@${testRef(child.id)}|${child.slug}> (Dev · ab), written by <@${testRef(agent.id)}|${agent.slug}>: "Ship 'it' now"`,
+    `- <@${testRef(child.id)}|${child.handle}> (Dev · ab), written by <@${testRef(agent.id)}|${agent.handle}>: "Ship 'it' now"`,
   );
   await prepareStart(child, { agentToken: "tok" });
   const own = md(child);
   expect(own).toContain(
-    `You are a spawned agent: <@${testRef(agent.id)}|${agent.slug}> spawned you for one piece of work.`,
+    `You are a spawned agent: <@${testRef(agent.id)}|${agent.handle}> spawned you for one piece of work.`,
   );
   expect(own).toContain("## Your lifecycle");
   expect(own).not.toContain("## Spawning");
@@ -757,7 +752,7 @@ test("deriveInheritance fails closed with no fix when the spawner row doesn't ex
       ),
     ).rejects.toMatchObject({
       name: "AgentStartError",
-      message: `The agent that spawned @${child.slug} no longer exists, so @${child.slug} can't start.`,
+      message: `The agent that spawned @${child.handle} no longer exists, so @${child.handle} can't start.`,
       fix: undefined,
     });
     expect(prepare).not.toHaveBeenCalled();
@@ -776,7 +771,6 @@ test.each([
   await seedTestPrincipal(t.db, "agent", `top-${seq}`, `top-${seq}`);
   await t.db.insert(schema.agents).values({
     id: `top-${seq}`,
-    slug: `top-${seq}`,
     displayName: "Top",
     template: "lead",
     config: {},
@@ -797,7 +791,7 @@ test.each([
   try {
     await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
       name: "AgentStartError",
-      message: `@${agent.slug}, which spawned @${child.slug}, isn't active, so @${child.slug} can't start.`,
+      message: `@${agent.handle}, which spawned @${child.handle}, isn't active, so @${child.handle} can't start.`,
       fix: undefined,
     });
     expect(prepare).not.toHaveBeenCalled();
@@ -888,7 +882,7 @@ test("a spawner whose template is invalid fails the child's start generically, w
   const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
   expect(err).toBeInstanceOf(AgentStartError);
   expect(err).toMatchObject({
-    message: `The configuration of @${agent.slug}, which spawned @${child.slug}, can't be read, so @${child.slug} can't start.`,
+    message: `The configuration of @${agent.handle}, which spawned @${child.handle}, can't be read, so @${child.handle} can't start.`,
     fix: undefined,
   });
   expect((err as Error).message).not.toContain("Template lead");

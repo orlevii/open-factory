@@ -53,7 +53,7 @@ export function PageHeader({
         <h1
           className={cn(
             "font-heading text-base leading-5 font-semibold tracking-[-0.01em]",
-            // Give-way order: the meta slug (it never takes room from the title), then a data title (to a
+            // Give-way order: the meta name (it never takes room from the title), then a data title (to a
             // floor), then nothing else shrinks.
             // Below a 22rem header the floor drops to 1.5rem: at 320px a long name, the Hibernated badge and
             // three icon actions don't fit beside a 4rem floor, and the actions would leave the screen.
@@ -69,7 +69,7 @@ export function PageHeader({
         >
           {heading ?? title}
         </h1>
-        {/* No box of its own: the badge and slug are the header's items, so a truncating title can't
+        {/* No box of its own: the badge and name are the header's items, so a truncating title can't
             squeeze a wrapper to 0px under a shrink-0 badge (the actions would paint over it). */}
         {meta && <div className="contents">{meta}</div>}
         {/* On coarse pointers neighbouring icon actions are 40px boxes 4px apart, not overlapping expanders
@@ -96,10 +96,10 @@ export function PageHeader({
  * means it only takes the room the title and badge leave, so it truncates to nothing before the title shrinks.
  * It hides on a narrow header.
  */
-export function HeaderSlug({ value }: { value: string }) {
+export function HeaderName({ value }: { value: string }) {
   return (
     <span
-      data-slot="header-slug"
+      data-slot="header-name"
       title={value}
       className="min-w-0 max-w-max grow basis-0 truncate font-mono text-muted-foreground @max-[32rem]:hidden"
     >

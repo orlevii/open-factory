@@ -243,7 +243,7 @@ export function PeerLine({
   const s = envelope.subject;
   const who = s ? (
     <>
-      <span className="font-mono text-foreground">@{s.slug}</span> · {s.displayName}
+      <span className="font-mono text-foreground">@{s.handle}</span> · {s.displayName}
     </>
   ) : null;
   let what: ReactNode = "Your neighborhood changed";

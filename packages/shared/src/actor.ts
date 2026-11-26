@@ -4,7 +4,7 @@
  */
 export type Actor =
   | { kind: "human"; ref: string; handle: string }
-  | { kind: "agent"; id: string; ref: string; slug: string };
+  | { kind: "agent"; id: string; ref: string; handle: string };
 
 /** How the actor is named in a stored body or event: its tag, `<@ref>`, so the handle shown is always current. */
 export const actorTag = (a: Actor): string => `<@${a.ref}>`;

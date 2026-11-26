@@ -1,10 +1,10 @@
 import { expect, test } from "vitest";
-import { spawnSlug } from "./slug.ts";
+import { spawnHandle } from "./handle.ts";
 
 const r = () => "abcd";
 test.each([
-  ["tech-lead", undefined, { ok: true, slug: "tech-lead-abcd", explicit: false }],
-  ["tech-lead", "issue17", { ok: true, slug: "tech-lead-issue17", explicit: true }],
+  ["tech-lead", undefined, { ok: true, handle: "tech-lead-abcd", explicit: false }],
+  ["tech-lead", "issue17", { ok: true, handle: "tech-lead-issue17", explicit: true }],
   ["tech-lead", "x-", { ok: false, message: "A suffix can't end with a hyphen." }],
   [
     "tech-lead",
@@ -28,5 +28,5 @@ test.each([
     { ok: false, message: `Template ${"t".repeat(39)}'s name is too long to spawn from.` },
   ],
 ])("%s + %s", (template, suffix, want) => {
-  expect(spawnSlug(template, suffix, r)).toEqual(want);
+  expect(spawnHandle(template, suffix, r)).toEqual(want);
 });

@@ -37,12 +37,11 @@ test("the database store reads live sources and live agents, and usedBy counts t
     .insert(schema.credentials)
     .values({ id: randomUUID(), name: "c", kind: "api_key", valueEnc: Buffer.from("x") })
     .returning();
-  const agent = async (slug: string, o: { archivedAt?: Date; config?: object } = {}) => {
-    const principal = await seedTestPrincipal(db, "agent", slug);
+  const agent = async (handle: string, o: { archivedAt?: Date; config?: object } = {}) => {
+    const principal = await seedTestPrincipal(db, "agent", handle);
     await db.insert(schema.agents).values({
       id: principal.id,
-      slug,
-      displayName: slug,
+      displayName: handle,
       template: "dev",
       config: o.config ?? {},
       runtime: "local",

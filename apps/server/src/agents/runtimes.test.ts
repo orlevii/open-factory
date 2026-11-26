@@ -13,7 +13,8 @@ beforeAll(async () => {
 afterAll(() => t.close());
 
 test("get never creates a runtime; byRef caches one per agent; liveFields has defaults without one", async () => {
-  const [row] = await t.sql`select id, status from agents where slug = 'dev'`;
+  const [row] =
+    await t.sql`select id, status from agents where id = (select id from principals where handle = 'dev')`;
   const id = String(row?.id);
   expect(await t.app.runtimes.get(id)).toBeUndefined();
   expect(await t.app.runtimes.liveFields(id, { status: "hibernated" })).toEqual({
@@ -42,9 +43,10 @@ test("get never creates a runtime; byRef caches one per agent; liveFields has de
 });
 
 test("the first GET /api/agents after boot carries runtimeDisabled for a local agent no runtime has loaded (spec §8.2)", async () => {
-  await t.seedAgent({ slug: "gated" });
+  await t.seedAgent({ handle: "gated" });
   const { cookie } = await t.signUpUser({ handle: "gate" });
-  const [row] = await t.sql`select id from agents where slug = 'gated'`;
+  const [row] =
+    await t.sql`select id from agents where id = (select id from principals where handle = 'gated')`;
   const config = t.app.config as { allowLocalRuntime: boolean };
   const list = async () => {
     const r = await t.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
@@ -83,12 +85,12 @@ test("app.close stops running agents gracefully", async () => {
 });
 
 test("a rejected init is evicted, so the next lookup retries", async () => {
-  await insertAgent(t.sql, { id: "agent-b", slug: "b" });
+  await insertAgent(t.sql, { id: "agent-b", handle: "b" });
   const spy = vi.spyOn(t.app.store, "pendingQueue").mockRejectedValueOnce(new Error("db blip"));
   try {
     await expect(runtimeOf(t.app, "b")).rejects.toThrow("db blip");
     const rt = await runtimeOf(t.app, "b");
-    expect(rt?.agent.slug).toBe("b");
+    expect(rt?.agent.handle).toBe("b");
     expect(spy).toHaveBeenCalledTimes(2);
   } finally {
     spy.mockRestore();
@@ -96,7 +98,7 @@ test("a rejected init is evicted, so the next lookup retries", async () => {
 });
 
 test("stopAll still stops healthy runtimes when another init fails", async () => {
-  await insertAgent(t.sql, { id: "agent-c", slug: "c" });
+  await insertAgent(t.sql, { id: "agent-c", handle: "c" });
   let rejectInit: ((e: Error) => void) | undefined;
   const spy = vi.spyOn(t.app.store, "pendingQueue").mockImplementationOnce(
     () =>

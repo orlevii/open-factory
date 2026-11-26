@@ -50,7 +50,7 @@ test("row 2: a process that hasn't confirmed its session is starting", async () 
   const e = await refusal(call());
   expect(e).toMatchObject({
     code: "starting",
-    message: `@${rt.agent.slug} is starting; try again shortly.`,
+    message: `@${rt.agent.handle} is starting; try again shortly.`,
   });
   expect(h.driver.last.stopped).toBe(false);
 });
@@ -62,7 +62,7 @@ test("row 3: a warm hibernate under way is stopping", async () => {
   const e = await refusal(call());
   expect(e).toMatchObject({
     code: "stopping",
-    message: `@${rt.agent.slug} is stopping; try again shortly.`,
+    message: `@${rt.agent.handle} is stopping; try again shortly.`,
   });
   h.driver.last.releaseStop();
   await rt.settled();
@@ -85,7 +85,7 @@ test("row 4: a compaction is compacting", async () => {
   const e = await refusal(call());
   expect(e).toMatchObject({
     code: "compacting",
-    message: `@${rt.agent.slug} is compacting; try again when it finishes.`,
+    message: `@${rt.agent.handle} is compacting; try again when it finishes.`,
   });
 });
 
@@ -94,7 +94,7 @@ test("row 5: a session that can't be resumed is refused, even for a forced resta
   const e = await refusal(call({ force: true }));
   expect(e).toMatchObject({
     code: "resume_unrecoverable",
-    message: `@${rt.agent.slug}'s session can't be resumed; a human must start a new session.`,
+    message: `@${rt.agent.handle}'s session can't be resumed; a human must start a new session.`,
   });
   expect(h.driver.starts).toHaveLength(0);
 });
@@ -156,7 +156,7 @@ test("row 8: lost work refuses without force, names it, and leaves the target ru
   const e = await refusal(call());
   expect(e).toMatchObject({
     code: "lost_work",
-    message: `@${rt.agent.slug} has 2 background tasks (\`pnpm test\`, \`vite dev\`) and 1 cron; pass force: true to restart anyway.`,
+    message: `@${rt.agent.handle} has 2 background tasks (\`pnpm test\`, \`vite dev\`) and 1 cron; pass force: true to restart anyway.`,
     data: { tasks: ["pnpm test", "vite dev"], crons: ["every 5 minutes"] },
   });
   expect(rt.live().status).not.toBe("errored");
@@ -192,7 +192,7 @@ test("row 11: owed notifications only set restart-when-idle and say so", async (
   const out = await call({ changes: ["model: a → b"] });
   expect(out).toEqual({
     status: "restart_pending",
-    note: `@${rt.agent.slug} restarts in a moment, once a finished task's result is delivered.`,
+    note: `@${rt.agent.handle} restarts in a moment, once a finished task's result is delivered.`,
   });
   expect(rt.live()).toMatchObject({ restartPending: true, restartChanges: ["model: a → b"] });
   expect(h.driver.last.stopped).toBe(false);

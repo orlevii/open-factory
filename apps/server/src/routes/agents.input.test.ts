@@ -218,7 +218,7 @@ describe("I1 §5.1: raw session input", () => {
   });
 
   test("an errored agent answers 202 with the input queued", async () => {
-    await s.seedAgent({ slug: "err" });
+    await s.seedAgent({ handle: "err" });
     const rt = await runtimeOf(s.app, "err");
     if (!rt) throw new Error("no runtime");
     await call(or, "POST", "/api/messages", { to: ["err"], body: "hi", urgent: false });

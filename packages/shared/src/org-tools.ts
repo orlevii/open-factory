@@ -17,11 +17,11 @@ const principalRef = z
 
 export const getTemplateToolSchema = z.object({ name: ref.describe("The template's name") });
 
-export const getAgentToolSchema = z.object({ slug: principalRef });
+export const getAgentToolSchema = z.object({ target: principalRef });
 
 export const createAgentToolSchema = z.object({
   template: ref.describe("The template's name"),
-  name: ref.describe("The new agent's handle"),
+  handle: ref.describe("The new agent's handle"),
   display_name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500),
   reports_to: ref.describe(
@@ -34,7 +34,7 @@ export const createAgentToolSchema = z.object({
 
 export const updateAgentToolSchema = z
   .object({
-    slug: principalRef,
+    target: principalRef,
     display_name: z.string().trim().min(1).max(80).optional(),
     description: z.string().trim().max(500).optional(),
     reports_to: ref

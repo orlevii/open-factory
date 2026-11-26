@@ -1,4 +1,4 @@
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import {
   type Actor,
   type AgentOverlay,
@@ -11,6 +11,7 @@ import {
   mergeConfig,
 } from "@open-factory/shared";
 import { and, asc, eq, isNull } from "drizzle-orm";
+import { type AgentRecord, agentRecords } from "../principals/principal-store.ts";
 import { readDenyRules } from "../spawning/inherit.ts";
 import { FILE_CHANGE, type TemplateChange } from "../templates/template-index.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
@@ -55,12 +56,12 @@ type Applied = { changes: string[]; restartChecked: boolean; done: Promise<void>
 
 /** The agent reads the change path needs (a port, so the flow is testable without a database). */
 export interface ConfigChangeAgents {
-  /** The agents of a template that are neither archived nor terminated, persistent and spawned, by slug. */
-  liveOfTemplate(template: string): Promise<AgentRow[]>;
+  /** The agents of a template that are neither archived nor terminated, persistent and spawned, by handle. */
+  liveOfTemplate(template: string): Promise<AgentRecord[]>;
   /** A spawner's live spawned children's ids. */
   liveChildren(spawnerId: string): Promise<string[]>;
-  /** Every agent that is neither archived nor terminated (persistent or spawned), by slug: what a library change checks. */
-  allLive(): Promise<AgentRow[]>;
+  /** Every agent that is neither archived nor terminated (persistent or spawned), by handle: what a library change checks. */
+  allLive(): Promise<AgentRecord[]>;
   /**
    * The agent's effective doc and Library now: its row read fresh, then the resolver. Undefined when it can't be
    * resolved (gone, a missing or broken template, an invalid overlay). The runtime calls it inside its job to decide a
@@ -75,9 +76,7 @@ export function dbConfigChangeAgents(
 ): ConfigChangeAgents {
   return {
     liveOfTemplate: (template) =>
-      db
-        .select()
-        .from(schema.agents)
+      agentRecords(db)
         .where(
           and(
             eq(schema.agents.template, template),
@@ -85,7 +84,7 @@ export function dbConfigChangeAgents(
             isNull(schema.agents.terminatedAt),
           ),
         )
-        .orderBy(asc(schema.agents.slug)),
+        .orderBy(asc(schema.principals.handle)),
     liveChildren: async (spawnerId) =>
       (
         await db
@@ -101,13 +100,11 @@ export function dbConfigChangeAgents(
           .orderBy(asc(schema.agents.id))
       ).map((r) => r.id),
     allLive: () =>
-      db
-        .select()
-        .from(schema.agents)
+      agentRecords(db)
         .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt)))
-        .orderBy(asc(schema.agents.slug)),
+        .orderBy(asc(schema.principals.handle)),
     currentEffective: async (agentId) => {
-      const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+      const [row] = await agentRecords(db).where(eq(schema.agents.id, agentId));
       if (!row) return undefined;
       try {
         const { doc, library } = await resolver.effective(row);
@@ -189,7 +186,7 @@ export class ConfigChanges {
         );
         done.push(r.done);
       } catch (err) {
-        this.d.log.error({ err, agent: agent.slug }, "applying a template change failed");
+        this.d.log.error({ err, agent: agent.handle }, "applying a template change failed");
       }
     }
     await Promise.all(done);
@@ -203,7 +200,7 @@ export class ConfigChanges {
    * event alone: its next start reads everything fresh.
    */
   async overlaySaved(
-    agent: AgentRow,
+    agent: AgentRecord,
     actor: Actor,
     before: ConfigDoc,
     after: ConfigDoc,
@@ -270,14 +267,14 @@ export class ConfigChanges {
         const r = await this.apply(agent, e.by, before, now, null);
         done.push(r.done);
       } catch (err) {
-        this.d.log.error({ err, agent: agent.slug }, "applying a library change failed");
+        this.d.log.error({ err, agent: agent.handle }, "applying a library change failed");
       }
     }
     await Promise.all(done);
   }
 
   private async apply(
-    agent: AgentRow,
+    agent: AgentRecord,
     by: string,
     before: ConfigSnapshot | null,
     after: ConfigSnapshot,
@@ -343,18 +340,21 @@ export class ConfigChanges {
     await Promise.all(kids.map((id) => this.d.runtimes.requestRestart(id)));
   }
 
-  /** Scheduled work never rejects: a failure is logged by slug (never with a config value). */
-  private settle(agent: AgentRow, work: Promise<unknown>[]): Promise<void> {
+  /** Scheduled work never rejects: a failure is logged by handle (never with a config value). */
+  private settle(agent: AgentRecord, work: Promise<unknown>[]): Promise<void> {
     return Promise.allSettled(work).then((results) => {
       for (const r of results)
         if (r.status === "rejected")
-          this.d.log.error({ err: r.reason, agent: agent.slug }, "applying a config change failed");
+          this.d.log.error(
+            { err: r.reason, agent: agent.handle },
+            "applying a config change failed",
+          );
     });
   }
 }
 
 /** A spawned agent's overlay is always empty (spec §6.1); undefined for an overlay that fails its schema. */
-function overlayOf(agent: AgentRow): AgentOverlay | undefined {
+function overlayOf(agent: AgentRecord): AgentOverlay | undefined {
   if (agent.kind === "ephemeral") return {};
   const parsed = agentOverlaySchema.safeParse(agent.config);
   return parsed.success ? parsed.data : undefined;

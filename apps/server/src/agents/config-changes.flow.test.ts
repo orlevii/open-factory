@@ -1,6 +1,6 @@
-import type { AgentRow } from "@open-factory/db";
 import type { AnyEvent, ConfigDoc, ConfigSnapshot, ServerMessage } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { FILE_CHANGE } from "../templates/template-index.ts";
 import { testRef } from "../test/principals.ts";
 import { ConfigChanges } from "./config-changes.ts";
@@ -22,11 +22,11 @@ const doc = (template: Record<string, unknown> = {}, more: Partial<ConfigDoc> = 
 });
 
 let n = 0;
-const row = (o: Partial<AgentRow> = {}): AgentRow => {
+const row = (o: Partial<AgentRecord> = {}): AgentRecord => {
   n += 1;
   return {
     id: `a${n}`,
-    slug: `dev-${n}`,
+    handle: `dev-${n}`,
     displayName: "Dev",
     description: "",
     sessionId: null,
@@ -52,7 +52,7 @@ const row = (o: Partial<AgentRow> = {}): AgentRow => {
     createdAt: new Date(),
     updatedAt: new Date(),
     ...o,
-  } as AgentRow;
+  } as AgentRecord;
 };
 
 type Rt = {
@@ -70,7 +70,7 @@ const resolvedTo =
     return { skills: Object.fromEntries(listed.map((n) => [n, refs[n] ?? "host"])) };
   };
 
-function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } = {}) {
+function world(o: { agents?: AgentRecord[]; children?: Record<string, string[]> } = {}) {
   const runtimes = new Map<string, Rt>();
   const appendedToStore: { agentId: string; event: AnyEvent }[] = [];
   const notices: { id: string; lines: string[] }[] = [];
@@ -144,7 +144,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     bus: { publishAll: (m: ServerMessage) => void frames.push(m) },
     log: { error: (obj: unknown) => void logged.push(obj) },
   });
-  const load = (a: AgentRow, running: boolean, stuck = false) => {
+  const load = (a: AgentRecord, running: boolean, stuck = false) => {
     const rt: Rt = { running, appended: [], stuck };
     runtimes.set(a.id, rt);
     return rt;
@@ -368,8 +368,8 @@ test("an overlay save asks for a wake only when the agent edited its own configu
   w.load(a, true);
   const save = (actor: Parameters<typeof w.changes.overlaySaved>[1]) =>
     w.changes.overlaySaved(a, actor, doc(), doc({ model: "opus" }));
-  await save({ kind: "agent", id: a.id, ref: testRef(a.id), slug: a.slug });
-  await save({ kind: "agent", id: "someone-else", ref: testRef("someone-else"), slug: "hr-bot" });
+  await save({ kind: "agent", id: a.id, ref: testRef(a.id), handle: a.handle });
+  await save({ kind: "agent", id: "someone-else", ref: testRef("someone-else"), handle: "hr-bot" });
   await save({ kind: "human", ref: "k7x2m9qd", handle: "or" });
   await new Promise((r) => setImmediate(r));
   expect(w.restarts.map((r) => r.wake)).toEqual([true, undefined, undefined]);

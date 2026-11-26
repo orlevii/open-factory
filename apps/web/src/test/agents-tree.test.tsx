@@ -259,15 +259,15 @@ describe("usage in the tree (S10 §12.1)", () => {
     turns,
   });
   const usageRow = (
-    slug: string,
+    handle: string,
     kind: "persistent" | "ephemeral",
     own: ReturnType<typeof t>,
     spawned?: ReturnType<typeof t>,
     total = own,
   ) => ({
-    ref: refFor(slug),
-    handle: slug,
-    displayName: slug,
+    ref: refFor(handle),
+    handle: handle,
+    displayName: handle,
     kind,
     archived: false,
     terminated: false,
@@ -370,11 +370,11 @@ describe("usage in the tree (S10 §12.1)", () => {
 });
 
 describe("Agents page identity and tree lines (U2 §7)", () => {
-  const A = (slug: string, over: Parameters<typeof agentSummary>[0] = {}) =>
-    agentSummary({ handle: slug, displayName: slug, ...over });
+  const A = (handle: string, over: Parameters<typeof agentSummary>[0] = {}) =>
+    agentSummary({ handle: handle, displayName: handle, ...over });
   const lines = (l: HTMLElement) => l.querySelectorAll("[data-tree-line]").length;
 
-  test("template shown only when it differs from the slug stem", async () => {
+  test("template shown only when it differs from the handle stem", async () => {
     mockWorld({
       agents: [A("dev-abcd", { template: "dev" }), A("lead", { template: "ceo" })],
     });

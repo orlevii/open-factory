@@ -35,7 +35,7 @@ export class TerminateService implements TerminatePort {
     callerId: string,
     targetArg: string,
   ): Promise<
-    { ok: true; slug: string; tag: string; warning?: string } | { ok: false; message: string }
+    { ok: true; handle: string; tag: string; warning?: string } | { ok: false; message: string }
   > {
     const found = await this.d.store.agentByArg(targetArg);
     if (found.kind === "unknown_ref") return { ok: false, message: unknownRefError(found.ref) };
@@ -50,12 +50,12 @@ export class TerminateService implements TerminatePort {
       if (!caller) throw new Error(`caller ${callerId} is not a principal`);
       await this.terminate(a.id, caller);
     } catch (err) {
-      this.d.log.error({ err, agent: a.slug }, "terminating a spawned agent failed");
-      return { ok: false, message: `@${a.slug} couldn't be terminated; try again.` };
+      this.d.log.error({ err, agent: a.handle }, "terminating a spawned agent failed");
+      return { ok: false, message: `@${a.handle} couldn't be terminated; try again.` };
     }
     return {
       ok: true,
-      slug: a.slug,
+      handle: a.handle,
       tag: await this.d.store.agentTag(a.id),
       ...(found.kind === "agent" && found.warning ? { warning: found.warning } : {}),
     };
@@ -130,7 +130,7 @@ export class TerminateService implements TerminatePort {
     rt.chatChanged(
       await this.d.store.rejectPending(agentId).catch((err: unknown) => {
         this.d.log.error(
-          { err, agent: rt.agent.slug },
+          { err, agent: rt.agent.handle },
           "rejecting late rows to a terminated agent failed",
         );
         return [];
@@ -141,7 +141,7 @@ export class TerminateService implements TerminatePort {
     void rt
       .terminateStop(terminator)
       .catch((err: unknown) =>
-        this.d.log.error({ err, agent: rt.agent.slug }, "stopping a terminated agent failed"),
+        this.d.log.error({ err, agent: rt.agent.handle }, "stopping a terminated agent failed"),
       );
     return { status: "terminated" };
   }

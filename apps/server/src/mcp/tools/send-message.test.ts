@@ -11,8 +11,8 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   await signUp(h.app, { handle: "or" });
-  const ada = await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  const ada = await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
   tok = h.app.agentTokens.mint(ada.id).token;
 });
 afterEach(() => h.close());

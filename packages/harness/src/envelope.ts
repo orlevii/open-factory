@@ -82,7 +82,7 @@ export type BatchRow = {
   about?: string;
   /** A report's `member_update`: the requests of its turn when it wrote the text. */
   re?: Envelope["re"];
-  /** The report's slug for member updates. */
+  /** The report's handle for member updates. */
   groupKey?: string;
   fact?: string;
   subject?: NonNullable<Envelope["subject"]>;
@@ -90,7 +90,7 @@ export type BatchRow = {
   taskKey?: string;
   taskTitle?: string;
   commentId?: string;
-  /** S9: a `scheduled` row. `by` is its author's `@handle` or slug, `due` is ISO 8601 with the schedule zone's offset. */
+  /** S9: a `scheduled` row. `by` is its author's `@handle`, `due` is ISO 8601 with the schedule zone's offset. */
   scheduleKey?: string;
   by?: string;
   /** UI-only: what `by` is; `one()` never renders it. */

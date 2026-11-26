@@ -4,9 +4,9 @@ import {
   type CreateAgentBody,
   type CredentialSummary,
   createAgentBodySchema,
+  handleSchema,
   MSG,
   type PatchAgentBody,
-  slugSchema,
   type TemplateConfig,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -30,7 +30,7 @@ import { sessionQueryOptions } from "@/lib/session";
 
 export const FIELDS = [
   "template",
-  "slug",
+  "handle",
   "displayName",
   "color",
   "description",
@@ -43,7 +43,7 @@ export type Field = (typeof FIELDS)[number];
 export type Touched = Partial<Record<Field, boolean>>;
 export type Values = {
   template: string;
-  slug: string;
+  handle: string;
   displayName: string;
   /** Identity colour 1..12, null is Auto. */
   color: number | null;
@@ -92,7 +92,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 const storedOf = (a: AgentSummary): Stored => ({
   template: a.template,
-  slug: a.handle,
+  handle: a.handle,
   displayName: a.displayName,
   color: a.color,
   description: a.description,
@@ -119,7 +119,7 @@ const overrideOf = (o: unknown, field: keyof ModelEffort): string => {
 
 const blank = (prefill?: { template?: string }): Stored => ({
   template: prefill?.template ?? "",
-  slug: "",
+  handle: "",
   displayName: "",
   color: null,
   description: "",
@@ -143,15 +143,15 @@ export function useAgentFormState({
   agent,
   draftKey,
   prefill,
-  slugFor,
+  handleFor,
   form,
 }: {
   mode: "create" | "edit";
   agent?: AgentSummary;
   draftKey: DraftKey;
   prefill?: { template?: string };
-  /** New agent: the address derived from the display name, used until the user edits the slug (§6.3). */
-  slugFor?: (displayName: string) => string;
+  /** New agent: the address derived from the display name, used until the user edits the handle (§6.3). */
+  handleFor?: (displayName: string) => string;
   /** The form root: `useFieldErrors` focuses the first invalid field in it. */
   form: RefObject<HTMLElement | null>;
 }) {
@@ -319,7 +319,7 @@ export function useAgentFormState({
         credential: base0.credential || defaultCredential(),
         projects:
           values.touched.projects || !templatePrefill ? base0.projects : templatePrefill.projects,
-        slug: values.touched.slug || !slugFor ? base0.slug : slugFor(displayName),
+        handle: values.touched.handle || !handleFor ? base0.handle : handleFor(displayName),
       };
   // The detail lands asynchronously, so a field the user enters while it is still on the way is theirs as it stands:
   // filling it would mix the prefill into what they are about to type.
@@ -340,10 +340,10 @@ export function useAgentFormState({
         if (t && t.errors > 0) return FORM_MSG.templateErrors;
         return undefined;
       }
-      case "slug": {
+      case "handle": {
         if (!create) return undefined;
-        if (v.slug === "") return FORM_MSG.enterSlug;
-        const r = slugSchema.safeParse(v.slug);
+        if (v.handle === "") return FORM_MSG.enterHandle;
+        const r = handleSchema.safeParse(v.handle);
         return r.success ? undefined : r.error.issues[0]?.message;
       }
       case "displayName": {
@@ -416,7 +416,7 @@ export function useAgentFormState({
     if (create) {
       return {
         template: shown.template,
-        slug: shown.slug,
+        handle: shown.handle,
         displayName,
         description,
         reportsTo: shown.reportsTo,

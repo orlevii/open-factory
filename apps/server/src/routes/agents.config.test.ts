@@ -2,9 +2,10 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { overlayVersion } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp, runtimeOf, TEST_TEMPLATE_YAML } from "../test/helpers.ts";
 import { UNKNOWN_REF } from "../test/principals.ts";
 
@@ -22,17 +23,20 @@ afterAll(() => t.close());
 
 const call = (method: "GET" | "POST" | "PUT", url: string, payload?: Record<string, unknown>) =>
   t.app.inject({ method, url, headers: { cookie }, ...(payload ? { payload } : {}) });
-const get = async (slug = "dev") => call("GET", `/api/agents/${await t.refOf(slug)}/config`);
-const put = async (overlay: unknown, baseVersion: string, slug = "dev") =>
-  call("PUT", `/api/agents/${await t.refOf(slug)}/config`, { overlay, baseVersion } as Record<
+const get = async (handle = "dev") => call("GET", `/api/agents/${await t.refOf(handle)}/config`);
+const put = async (overlay: unknown, baseVersion: string, handle = "dev") =>
+  call("PUT", `/api/agents/${await t.refOf(handle)}/config`, { overlay, baseVersion } as Record<
     string,
     unknown
   >);
 const templateYaml = () => path.join(t.factoryHome, "templates", "test", "template.yaml");
 
 const SECRET = "sk-ant-SECRET0123456789";
-const reset = async (slug = "dev") => {
-  await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, slug));
+const reset = async (handle = "dev") => {
+  await t.db
+    .update(schema.agents)
+    .set({ config: {} })
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${handle})`));
 };
 
 describe("GET", () => {
@@ -184,13 +188,13 @@ describe("PUT", () => {
   });
 
   test("a spawned agent can't be configured", async () => {
-    await t.seedAgent({ slug: "kid" });
-    const [lead] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
+    await t.seedAgent({ handle: "kid" });
+    const [lead] = await agentRecords(t.db).where(eq(schema.principals.handle, "dev"));
     // A spawned agent always reports to its spawner (agents_manager).
     await t.db
       .update(schema.agents)
       .set({ kind: "ephemeral", reportsTo: lead?.id })
-      .where(eq(schema.agents.slug, "kid"));
+      .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"kid"})`));
     const r = await put({}, overlayVersion({}), "kid");
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("ephemeral_agent");

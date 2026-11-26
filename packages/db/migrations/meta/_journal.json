@@ -232,6 +232,13 @@
       "when": 1795714019333,
       "tag": "0032_stiff_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795727594348,
+      "tag": "0033_reflective_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }

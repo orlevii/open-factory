@@ -12,8 +12,8 @@ import type { CredentialVerifier, VerifyResult } from "./verify.ts";
 
 const aad = (id: string) => `credentials:${id}`;
 
-/** Display slugs, deduped: a spawned agent shows as its spawner. */
-const slugs = (list: { slug: string }[]) => [...new Set(list.map((a) => a.slug))];
+/** Display handles, deduped: a spawned agent shows as its spawner. */
+const handles = (list: { handle: string }[]) => [...new Set(list.map((a) => a.handle))];
 
 /** The 409 for a taken credential name (also raised by the sign-in attempts). */
 export function credentialExists(name: string) {
@@ -37,12 +37,13 @@ export class CredentialService {
     const rows = await this.d.db
       .select({
         id: schema.agents.id,
-        slug: schema.agents.slug,
+        handle: schema.principals.handle,
         archivedAt: schema.agents.archivedAt,
         kind: schema.agents.kind,
         reportsTo: schema.agents.reportsTo,
       })
       .from(schema.agents)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(and(eq(schema.agents.credentialId, credentialId), isNull(schema.agents.terminatedAt)));
     // A live spawned agent counts as its spawner: the human fixes the persistent agent's credential.
     const spawnerIds = [
@@ -52,21 +53,23 @@ export class CredentialService {
       spawnerIds.length
         ? (
             await this.d.db
-              .select({ id: schema.agents.id, slug: schema.agents.slug })
+              .select({ id: schema.agents.id, handle: schema.principals.handle })
               .from(schema.agents)
+              .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
               .where(inArray(schema.agents.id, spawnerIds))
-          ).map((a) => [a.id, a.slug])
+          ).map((a) => [a.id, a.handle])
         : [],
     );
     const named = rows.map((r) => ({
       id: r.id,
-      slug: (r.kind === "ephemeral" && r.reportsTo && spawners.get(r.reportsTo)) || r.slug,
+      handle: (r.kind === "ephemeral" && r.reportsTo && spawners.get(r.reportsTo)) || r.handle,
       archivedAt: r.kind === "ephemeral" ? null : r.archivedAt,
     }));
-    const bySlug = (a: { slug: string }, b: { slug: string }) => a.slug.localeCompare(b.slug);
+    const byHandle = (a: { handle: string }, b: { handle: string }) =>
+      a.handle.localeCompare(b.handle);
     return {
-      active: named.filter((r) => !r.archivedAt).sort(bySlug),
-      archived: named.filter((r) => r.archivedAt).sort(bySlug),
+      active: named.filter((r) => !r.archivedAt).sort(byHandle),
+      archived: named.filter((r) => r.archivedAt).sort(byHandle),
     };
   }
 
@@ -79,8 +82,8 @@ export class CredentialService {
       lastError: row.lastError,
       expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
       rejected: row.rejectedAt !== null,
-      usedBy: slugs(u.active),
-      archivedUsedBy: slugs(u.archived),
+      usedBy: handles(u.active),
+      archivedUsedBy: handles(u.archived),
       ...toRateLimitState(row, this.d.now()),
     };
   }
@@ -97,8 +100,8 @@ export class CredentialService {
   private async inUse(id: string) {
     const u = await this.users(id);
     if (!u.active.length && !u.archived.length) return undefined;
-    const usedBy = slugs(u.active);
-    const archivedUsedBy = slugs(u.archived);
+    const usedBy = handles(u.active);
+    const archivedUsedBy = handles(u.archived);
     const message = [
       usedBy.length ? `Used by ${tags(usedBy)}. Change their credential first.` : "",
       archivedUsedBy.length
@@ -235,14 +238,14 @@ export class CredentialService {
       return { updated: row, wasNotified: before?.expiryNotifiedAt != null };
     });
     if (!updated) throw this.notFoundById();
-    // One failed restart is logged by slug and never aborts the rest or the write.
+    // One failed restart is logged by handle and never aborts the rest or the write.
     const active = (await this.users(id)).active;
     const results = await Promise.allSettled(
       active.map((a) => this.d.runtimes.requestRestart(a.id)),
     );
     results.forEach((r, i) => {
       if (r.status === "rejected")
-        this.d.log?.warn({ slug: active[i]?.slug }, "restart after credential change failed");
+        this.d.log?.warn({ handle: active[i]?.handle }, "restart after credential change failed");
     });
     if (wasNotified) this.d.bus.publishAll({ type: "inbox_changed" });
     return this.summarize(updated);

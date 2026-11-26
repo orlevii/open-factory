@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { refOf } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
@@ -11,6 +11,7 @@ import { liveCredentialId } from "../agents/live-credential.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
@@ -44,7 +45,7 @@ const writeTemplate = (home: string, name: string, y: string) => {
 
 interface Child {
   id: string;
-  slug: string;
+  handle: string;
   ref: string;
   rt: AgentRuntime;
   proc: FakeProcess;
@@ -57,7 +58,7 @@ async function setup() {
   const app = t;
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
-    slug: "lead",
+    handle: "lead",
     config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
@@ -92,7 +93,7 @@ async function setup() {
     const proc = procsOf(r.agentId).at(-1) as FakeProcess;
     proc.emit(...ev.fullTurn(`sess-${suffix}`));
     await rt.settled();
-    return { id: r.agentId, slug: r.slug, ref: refOf(r.agentId), rt, proc };
+    return { id: r.agentId, handle: r.handle, ref: refOf(r.agentId), rt, proc };
   }
   /** Spawned, then hibernated: no process, no slot. */
   async function spawnHibernated(suffix: string): Promise<Child> {
@@ -117,7 +118,7 @@ async function setup() {
     expect(procsOf(c.id).filter((p) => !p.exited)).toEqual([]);
     return c;
   }
-  const row = async (id: string) => (await app.app.store.agentById(id)) as AgentRow;
+  const row = async (id: string) => (await app.app.store.agentById(id)) as AgentRecord;
   /** null while it lives, `@factory` once the TTL sweep ended it (a null `terminated_by` is the factory). */
   const terminatedBy = async (id: string) => {
     const r = await row(id);
@@ -345,7 +346,7 @@ test("a wake requested right after the check can't start a process (latch); a fa
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(s.log.error).toHaveBeenCalledWith(
-    expect.objectContaining({ agent: c.slug }),
+    expect.objectContaining({ agent: c.handle }),
     "terminating an idle spawned agent failed; retrying next sweep",
   );
   expect(await s.terminatedBy(c.id)).toBeNull();
@@ -453,7 +454,7 @@ test("a failing deletion is logged and retried by the next run", async () => {
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(s.log.error).toHaveBeenCalledWith(
-    expect.objectContaining({ agent: c.slug }),
+    expect.objectContaining({ agent: c.handle }),
     "deleting a workspace failed; retrying next sweep",
   );
   expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(true);
@@ -564,7 +565,7 @@ test("the stuck sweep is bounded: 50 long-terminated, cleanly removed agents loa
     ids.push(id);
     await insertAgent(s.t.sql, {
       id,
-      slug: `gone-${i}`,
+      handle: `gone-${i}`,
       reportsTo: s.lead.id,
       terminatedAt: new Date(now - day),
     });
@@ -588,7 +589,7 @@ test("stuck candidates: stop_failed, a kept journal, or a recent termination", a
   for (const [id, r] of rows) {
     await insertAgent(s.t.sql, {
       id,
-      slug: id,
+      handle: id,
       reportsTo: s.lead.id,
       terminatedAt: r.terminatedAt,
       errorKind: r.errorKind ?? null,

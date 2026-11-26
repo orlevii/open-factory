@@ -393,11 +393,11 @@ test("a failing listener is logged and does not stop the next one", async () => 
 });
 
 async function seedUser(
-  slug: string,
+  handle: string,
   o: { archived?: boolean; terminated?: boolean; template: string },
 ) {
-  await seedTestPrincipal(t.db, "agent", slug, `id-${slug}`);
-  const credentialId = `cred-${slug}`;
+  await seedTestPrincipal(t.db, "agent", handle, `id-${handle}`);
+  const credentialId = `cred-${handle}`;
   await t.db.insert(schema.credentials).values({
     id: credentialId,
     name: credentialId,
@@ -405,9 +405,9 @@ async function seedUser(
     valueEnc: Buffer.from("x"),
   });
   if (o.terminated) {
-    const mgrSlug = `mgr-${slug}`;
-    await seedTestPrincipal(t.db, "agent", mgrSlug, `id-${mgrSlug}`);
-    const mgrCred = `cred-${mgrSlug}`;
+    const mgrHandle = `mgr-${handle}`;
+    await seedTestPrincipal(t.db, "agent", mgrHandle, `id-${mgrHandle}`);
+    const mgrCred = `cred-${mgrHandle}`;
     await t.db.insert(schema.credentials).values({
       id: mgrCred,
       name: mgrCred,
@@ -417,9 +417,8 @@ async function seedUser(
     const [mgr] = await t.db
       .insert(schema.agents)
       .values({
-        id: `id-${mgrSlug}`,
-        slug: mgrSlug,
-        displayName: mgrSlug,
+        id: `id-${mgrHandle}`,
+        displayName: mgrHandle,
         template: "mgr-template",
         runtime: "local",
         credentialId: mgrCred,
@@ -427,9 +426,8 @@ async function seedUser(
       })
       .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
-      id: `id-${slug}`,
-      slug,
-      displayName: slug,
+      id: `id-${handle}`,
+      displayName: handle,
       template: o.template,
       runtime: "local",
       kind: "ephemeral",
@@ -439,9 +437,8 @@ async function seedUser(
     return;
   }
   await t.db.insert(schema.agents).values({
-    id: `id-${slug}`,
-    slug,
-    displayName: slug,
+    id: `id-${handle}`,
+    displayName: handle,
     template: o.template,
     runtime: "local",
     credentialId,

@@ -6,7 +6,6 @@ import {
   MSG,
   minGapMinutes,
   nextRun,
-  normaliseRef,
   parseAt,
   parseKey,
   SCHEDULE_BODY_MAX,
@@ -72,10 +71,10 @@ const notFound = (name: string) =>
     404,
     "target",
   );
-const endedSentence = (slug: string, why: "archived" | "terminated") =>
+const endedSentence = (handle: string, why: "archived" | "terminated") =>
   why === "archived"
-    ? `@${slug} is archived and can't receive messages.`
-    : `@${slug} was terminated and can't receive messages.`;
+    ? `@${handle} is archived and can't receive messages.`
+    : `@${handle} was terminated and can't receive messages.`;
 
 export class ScheduleService {
   constructor(
@@ -127,7 +126,7 @@ export class ScheduleService {
             throw new ScheduleError("forbidden", "Spawned agents can't schedule messages.", 403);
         }
         const t = byId.get(target.id);
-        if (!t) throw notFound(target.slug);
+        if (!t) throw notFound(target.handle);
         this.requireLive(t);
         if (isAgent(actor)) {
           const n = await this.d.schedules.countActiveCreatedBy(tx, actor.id);
@@ -208,13 +207,13 @@ export class ScheduleService {
   private async resolveTarget(
     actor: Actor,
     raw: string | undefined,
-  ): Promise<{ id: string; slug: string; warning?: string }> {
+  ): Promise<{ id: string; handle: string; warning?: string }> {
     const name = raw?.trim() ?? "";
     if (isAgent(actor) && (name === "" || name === "me")) {
       const me = await this.d.store.agentById(actor.id);
       if (!me)
         throw new ScheduleError("ended", "You can't schedule messages: you were terminated.", 409);
-      return { id: me.id, slug: me.slug };
+      return { id: me.id, handle: me.handle };
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
     const r = await resolveArg(this.d.db, name);
@@ -225,7 +224,7 @@ export class ScheduleService {
       if (agent)
         return {
           id: agent.id,
-          slug: r.p.handle,
+          handle: r.p.handle,
           ...(r.warning ? { warning: r.warning } : {}),
         };
     }
@@ -247,9 +246,9 @@ export class ScheduleService {
 
   private requireLive(t: LockedAgent) {
     if (t.terminatedAt)
-      throw new ScheduleError("target_ended", endedSentence(t.slug, "terminated"), 409, "target");
+      throw new ScheduleError("target_ended", endedSentence(t.handle, "terminated"), 409, "target");
     if (t.archivedAt)
-      throw new ScheduleError("target_ended", endedSentence(t.slug, "archived"), 409, "target");
+      throw new ScheduleError("target_ended", endedSentence(t.handle, "archived"), 409, "target");
   }
 
   /** A note for an agent's tool result (spec §9). */
@@ -257,7 +256,7 @@ export class ScheduleService {
     if (!isAgent(actor)) return {};
     if (this.d.statusOf?.({ id: target.id, status: target.status }) === "errored")
       return {
-        note: `@${target.slug} is errored; it will see this after it is restarted (restart_agent, or a human).`,
+        note: `@${target.handle} is errored; it will see this after it is restarted (restart_agent, or a human).`,
       };
     if (target.id === actor.id && rec.cron)
       return {
@@ -277,7 +276,7 @@ export class ScheduleService {
     return this.toItem(r);
   }
 
-  /** Humans' list (spec §11; `target` is an agent's ref): active by next run, then paused, then done newest first, then key; at most 500. */
+  /** Humans' list (spec §11; `target` is an agent's normalised ref): active by next run, then paused, then done newest first, then key; at most 500. */
   async list(
     f: { target?: string; done?: boolean } = {},
   ): Promise<{ items: ScheduleItem[]; more: boolean }> {
@@ -286,7 +285,7 @@ export class ScheduleService {
     const at = (r: ScheduleRecord) => r.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
     const doneAt = (r: ScheduleRecord) => (r.lastFiredAt ?? r.runAt)?.getTime() ?? 0;
     const shown = rows
-      .filter((r) => (f.target ? r.target.ref === normaliseRef(f.target) : true))
+      .filter((r) => (f.target ? r.target.ref === f.target : true))
       .filter((r) => (f.done ? true : !isDone(r)))
       .sort(
         (a, b) =>
@@ -389,7 +388,7 @@ export class ScheduleService {
         if (target) {
           const locked = await this.d.schedules.lockAgents(tx, [{ id: target.id, mode: "share" }]);
           const t = locked[0];
-          if (!t) throw notFound(target.slug);
+          if (!t) throw notFound(target.handle);
           this.requireLive(t);
         }
         const row = await this.d.schedules.lockByNumber(tx, n);
@@ -518,8 +517,9 @@ export class ScheduleService {
         const locked = await this.d.schedules.lockAgents(tx, wants);
         const t = locked.find((a) => a.id === probe.targetAgentId);
         if (t?.terminatedAt)
-          throw new ScheduleError("target_ended", `@${t.slug} was terminated.`, 409);
-        if (t?.archivedAt) throw new ScheduleError("target_ended", `@${t.slug} is archived.`, 409);
+          throw new ScheduleError("target_ended", `@${t.handle} was terminated.`, 409);
+        if (t?.archivedAt)
+          throw new ScheduleError("target_ended", `@${t.handle} is archived.`, 409);
         const row = await this.d.schedules.lockByNumber(tx, n);
         if (!row) throw this.gone();
         if (row.deletedAt) {
@@ -534,7 +534,7 @@ export class ScheduleService {
           )
             throw new ScheduleError(
               "schedule_limit",
-              `@${creator.slug} already has ${MAX_AGENT_SCHEDULES} schedules; delete one first.`,
+              `@${creator.handle} already has ${MAX_AGENT_SCHEDULES} schedules; delete one first.`,
               409,
             );
           await this.d.schedules.update(tx, row.id, { deletedAt: null, updatedAt: this.d.now() });

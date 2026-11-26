@@ -1,4 +1,4 @@
-import type { AgentRow, Db } from "@open-factory/db";
+import type { Db } from "@open-factory/db";
 import { restartAgentToolSchema } from "@open-factory/shared";
 import { unknownRefError } from "@open-factory/shared/tags";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
@@ -11,6 +11,7 @@ import type { EventStore } from "../../agents/event-store.ts";
 import { restartChanges, restartRuntimeAllowed } from "../../agents/restart-changes.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Router } from "../../messaging/router.ts";
+import type { AgentRecord } from "../../principals/principal-store.ts";
 import { resolveText, UnknownTagsError } from "../../principals/principal-text.ts";
 import {
   callerOf,
@@ -23,9 +24,9 @@ import {
 
 type RestartAgentDeps = {
   /** The persistent agent holding the token, as the registration built it. */
-  caller: AgentRow;
+  caller: AgentRecord;
   /** The caller read at call time: `manage_org` is decided from the fresh row (I7 §5.2). */
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
   /** The target's row by name, read fresh (a runtime's row can be stale). */
   store: Pick<EventStore, "agentByArg" | "principalTag" | "agentTag">;
   runtimes: AgentRuntimes;
@@ -98,7 +99,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             rt.live().errorKind !== "resume_unrecoverable";
           try {
             const early = noteFirst
-              ? await sendNote(d, row.slug, await d.store.agentTag(row.id), args.note as string)
+              ? await sendNote(d, row.handle, await d.store.agentTag(row.id), args.note as string)
               : undefined;
             const outcome = await rt.restartNow({
               by: await d.store.principalTag(d.caller.id),
@@ -113,7 +114,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             const sent = noteFirst
               ? early
               : args.note
-                ? await sendNote(d, row.slug, await d.store.agentTag(row.id), args.note)
+                ? await sendNote(d, row.handle, await d.store.agentTag(row.id), args.note)
                 : undefined;
             const lost = sent?.lost;
             const warnings = [
@@ -146,11 +147,16 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
 /** Sends the caller's note: a path-free sentence when it wasn't accepted, and the tag warnings. */
 async function sendNote(
   d: RestartAgentDeps,
-  slug: string,
+  handle: string,
   tag: string,
   note: string,
 ): Promise<{ lost?: string; warnings: string[] }> {
-  const { results, warnings } = await d.router.send({ agentId: d.caller.id }, [slug], note, false);
+  const { results, warnings } = await d.router.send(
+    { agentId: d.caller.id },
+    [handle],
+    note,
+    false,
+  );
   const r = results[0];
   if (!r) return { lost: `Your note to ${tag} wasn't delivered.`, warnings };
   if (r.status === "refused") return { lost: `Your note wasn't delivered: ${r.reason}`, warnings };

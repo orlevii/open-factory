@@ -183,7 +183,7 @@ test("a 409 shows who resumed first, from the error body, with no failure line",
         error: {
           code: "conflict",
           message: "Already resumed",
-          resumedBy: "@ana",
+          resumedBy: { ref: refFor("ana"), handle: "ana" },
           resumedAt: new Date(2026, 10, 25, 14, 1).toISOString(),
         },
       },
@@ -230,7 +230,7 @@ test("a 409 with an empty resumedBy reads Resumed · time", async () => {
         error: {
           code: "conflict",
           message: "Already resumed",
-          resumedBy: "",
+          resumedBy: null,
           resumedAt: new Date(2026, 10, 25, 14, 1).toISOString(),
         },
       },

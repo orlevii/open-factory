@@ -31,10 +31,10 @@ async function make(o: { spawned?: boolean } = {}) {
   n += 1;
   id = `p${n}`;
   if (o.spawned) {
-    await insertAgent(t.sql, { id: `lead${n}`, slug: `lead${n}` });
-    await insertAgent(t.sql, { id, slug: `pas${n}`, reportsTo: `lead${n}` });
+    await insertAgent(t.sql, { id: `lead${n}`, handle: `lead${n}` });
+    await insertAgent(t.sql, { id, handle: `pas${n}`, reportsTo: `lead${n}` });
     await t.sql`update agents set kind = 'ephemeral' where id = ${id}`;
-  } else await insertAgent(t.sql, { id, slug: `pas${n}` });
+  } else await insertAgent(t.sql, { id, handle: `pas${n}` });
   driver = new FakeDriver();
   forwarded.length = 0;
   const agent = await store.agentById(id);
@@ -145,7 +145,7 @@ test("the Reaper may reap a spawned agent whose only queued item is the passive 
 });
 
 test("a queued report_config_changed never wakes the manager: not deliverable, no boot wake", async () => {
-  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
+  await insertAgent(t.sql, { id: `rep${n}`, handle: `rep${n}`, reportsTo: id });
   await store.createNotice({
     toAgentId: id,
     notice: "report_config_changed",
@@ -159,7 +159,7 @@ test("a queued report_config_changed never wakes the manager: not deliverable, n
 
 test("recordReportNotice on a running idle manager queues the notice without sending it", async () => {
   await runIdle();
-  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
+  await insertAgent(t.sql, { id: `rep${n}`, handle: `rep${n}`, reportsTo: id });
   await rt.recordReportNotice(`rep${n}`, "<@hr000000>", ["added skill tdd"]);
   expect(driver.last.sent).toHaveLength(1); // only the boot batch
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);

@@ -246,12 +246,12 @@ test("unread rows have an 'Unread, ' name; read rows have none", async () => {
 });
 
 const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
-const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
+const chat = (handle: string, name: string, o: Record<string, unknown> = {}) => ({
   agent: {
-    ref: refFor(slug),
-    handle: slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -260,9 +260,9 @@ const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
     ...((o.agent as object) ?? {}),
   },
   unread: 3,
-  firstUnreadId: `${slug}-m`,
+  firstUnreadId: `${handle}-m`,
   latest: {
-    messageId: `${slug}-m`,
+    messageId: `${handle}-m`,
     preview: `${name} says hi`,
     createdAt: at(14, 20),
     urgent: false,
@@ -274,8 +274,8 @@ const hrefs = () =>
   within(screen.getByRole("list", { name: "Inbox" }))
     .getAllByRole("link")
     .map((a) => a.getAttribute("href"));
-const rowOf = (slug: string) =>
-  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(slug)}"]`);
+const rowOf = (handle: string) =>
+  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(handle)}"]`);
 
 test("a chat row: the agent chip, '· 3 new', Urgent, the time, the preview as its description", async () => {
   mockApi({
@@ -472,7 +472,7 @@ test("below 1024px a click on a chat row navigates to its chat", async () => {
   );
 });
 
-test("at 1024px and up a click selects the chat (?item=chat:<slug>) and marks nothing read", async () => {
+test("at 1024px and up a click selects the chat (?item=chat:<handle>) and marks nothing read", async () => {
   fakeMatchMedia.installWidth(1280);
   const api = mockApi({
     "GET /api/inbox?": () => json({ chats: [chat("ada", "Ada")], items: [], nextCursor: null }),

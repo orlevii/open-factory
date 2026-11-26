@@ -28,7 +28,7 @@ const until = (pred: () => boolean | Promise<boolean>) =>
   });
 
 test("an agent renamed between two starts keeps its workdir and resumes its session", async () => {
-  const agent = await t.seedAgent({ slug: "dev" });
+  const agent = await t.seedAgent({ handle: "dev" });
   const ref = testRef(agent.id);
   const send = (to: string, body: string) =>
     t.app.inject({
@@ -49,7 +49,7 @@ test("an agent renamed between two starts keeps its workdir and resumes its sess
   const sessionId = events.find((e) => e.event.type === "session_started")?.event.sessionId;
   expect(sessionId).toBeTruthy();
 
-  // A rename is a change to the principal's handle only; the agent's row keeps the old slug until the rename endpoint.
+  // A rename is a change to the principal's handle only; the agent's row keeps the old handle until the rename endpoint.
   await t.sql`update principals set handle = 'dev-renamed' where id = ${agent.id}`;
   await t.app.close(); // a graceful stop: the next message starts a new process
   const next = await t.reopen({ env: { FACTORY_CLAUDE_BIN: fake.bin } });

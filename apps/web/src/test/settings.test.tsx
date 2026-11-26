@@ -18,7 +18,7 @@ import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
-const agentRow = (slug: string) => agentSummary({ handle: slug, displayName: slug });
+const agentRow = (handle: string) => agentSummary({ handle: handle, displayName: handle });
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({

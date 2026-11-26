@@ -29,12 +29,12 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
+import { type AnyEvent, type Envelope, refOf, type SessionEvent } from "@open-factory/shared";
 import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
-import { bySlug } from "./by-slug.ts";
+import { byHandle } from "./by-handle.ts";
 
 const LOCAL = process.argv.includes("--local");
 const EARLY = process.argv.includes("--early");
@@ -44,8 +44,8 @@ const PHASES = new Set(
   PHASE_ARG ? PHASE_ARG.split(",") : EARLY ? ["early"] : ["early", "a", "b", "d"],
 );
 const IMAGE = "open-factory-base:dev";
-const SLUGS = ["ceo", "dev"] as const;
-type Slug = (typeof SLUGS)[number];
+const HANDLES = ["ceo", "dev"] as const;
+type Handle = (typeof HANDLES)[number];
 const TOKEN_FILE = path.join(homedir(), ".open-factory-spike", "oauth-token");
 
 let token = "";
@@ -110,7 +110,7 @@ const openMcp = new Map<string, McpRequest>();
 /** Response codes of every request in the run (human server and agent listener). */
 const statusCodes = new Map<number, number>();
 /** Each agent process's system/init tool list, read from the driver's debug log of claude's stdout. */
-const inits: { slug: string; time: number; tools: string[] }[] = [];
+const inits: { handle: string; time: number; tools: string[] }[] = [];
 const serverWarnings: string[] = [];
 const logStream = new Writable({
   write(chunk, _enc, cb) {
@@ -133,7 +133,7 @@ const logStream = new Writable({
         if (o.msg === "claude stdout" && typeof o.line === "string" && o.agent) {
           const l = JSON.parse(o.line) as { type?: string; subtype?: string; tools?: unknown };
           if (l.type === "system" && l.subtype === "init" && Array.isArray(l.tools))
-            inits.push({ slug: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
+            inits.push({ handle: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
         }
         if (o.msg === "incoming request" && o.req?.url?.startsWith("/mcp")) {
           const r: McpRequest = {
@@ -166,7 +166,7 @@ const logStream = new Writable({
 // ---------- app and cleanup ----------
 let app!: Awaited<ReturnType<typeof buildApp>>;
 let appBuilt = false;
-const ids = new Map<Slug, string>();
+const ids = new Map<Handle, string>();
 let tdb: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
 let closeDb: (() => Promise<void>) | undefined;
 let cleaned: Promise<void> | undefined;
@@ -230,14 +230,16 @@ const freePort = () =>
       srv.close(() => resolve(port));
     });
   });
-const idOf = (slug: Slug) => {
-  const id = ids.get(slug);
-  if (!id) throw new Error(`no agent ${slug}`);
+const idOf = (handle: Handle) => {
+  const id = ids.get(handle);
+  if (!id) throw new Error(`no agent ${handle}`);
   return id;
 };
-const since = (slug: Slug, seq = 0): Promise<SessionEvent[]> =>
-  app.store.after(idOf(slug), seq, 10_000);
-const lastSeq = async (slug: Slug) => (await since(slug)).at(-1)?.seq ?? 0;
+/** The ref an agent route is addressed by. */
+const refFor = (handle: Handle) => refOf(idOf(handle));
+const since = (handle: Handle, seq = 0): Promise<SessionEvent[]> =>
+  app.store.after(idOf(handle), seq, 10_000);
+const lastSeq = async (handle: Handle) => (await since(handle)).at(-1)?.seq ?? 0;
 const toolTrace = (es: SessionEvent[]) =>
   es
     .flatMap(({ event: e }) =>
@@ -289,13 +291,13 @@ const api = (method: "GET" | "POST" | "PATCH" | "DELETE", url: string, payload?:
   app.inject({ method, url, headers: { cookie: orCookie }, ...(payload ? { payload } : {}) });
 
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
-async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
+async function turnOf(handle: Handle, id: string, from: number, ms = 240_000) {
   return until(
-    `${slug}'s turn for message ${id}`,
+    `${handle}'s turn for message ${id}`,
     async () => {
-      const es = await since(slug, from);
+      const es = await since(handle, from);
       const err = es.find((e) => e.event.type === "error" && e.event.source !== "api");
-      if (err) throw new Error(`${slug}: ${brief(JSON.stringify(err.event))}`);
+      if (err) throw new Error(`${handle}: ${brief(JSON.stringify(err.event))}`);
       const i = es.findIndex(
         (e) =>
           e.event.type === "message_in" &&
@@ -310,14 +312,14 @@ async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
   );
 }
 /** No open turn and nothing queued for 10 s in a row (the agents may still be talking to each other). */
-async function quiet(slugs: Slug[]) {
+async function quiet(handles: Handle[]) {
   let since0 = 0;
   await until(
-    `${slugs.join(", ")} to go quiet`,
+    `${handles.join(", ")} to go quiet`,
     async () => {
       const busy = [];
-      for (const s of slugs) {
-        const rt = await bySlug(app, s);
+      for (const s of handles) {
+        const rt = await byHandle(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -406,11 +408,11 @@ async function finalChecks() {
     posts.length > 0 && !mcpRequests.some((r) => r.status === 403) && !statusCodes.has(403),
     `/mcp requests by method and status: ${JSON.stringify(codes)}; all response codes in the run: ${JSON.stringify(Object.fromEntries(statusCodes))}`,
   );
-  for (const slug of SLUGS) {
-    const es = await since(slug);
+  for (const handle of HANDLES) {
+    const es = await since(handle);
     const unavailable = es.filter((e) => e.event.type === "mcp_unavailable");
     check(
-      `7. ${slug}: no mcp_unavailable`,
+      `7. ${handle}: no mcp_unavailable`,
       unavailable.length === 0,
       `mcp_unavailable: ${unavailable.length}`,
     );
@@ -522,14 +524,14 @@ try {
       }
     },
   );
-  for (const slug of SLUGS) {
-    await step(`1. agent ${slug} created (top level)`, () =>
+  for (const handle of HANDLES) {
+    await step(`1. agent ${handle} created (top level)`, () =>
       app.agents.create(
         {
           template: "sched",
-          slug,
-          displayName: slug[0]?.toUpperCase() + slug.slice(1),
-          description: `Smoke scheduling agent ${slug}`,
+          handle,
+          displayName: handle[0]?.toUpperCase() + handle.slice(1),
+          description: `Smoke scheduling agent ${handle}`,
           reportsTo: "or",
           credential: "smoke",
         },
@@ -537,15 +539,19 @@ try {
       ),
     );
     ids.set(
-      slug,
-      String((await conn.sql`select id from agents where slug = ${slug}`)[0]?.id ?? ""),
+      handle,
+      String(
+        (
+          await conn.sql`select a.id from agents a join principals p on p.id = a.id where p.handle = ${handle}`
+        )[0]?.id ?? "",
+      ),
     );
   }
 
   if (PHASES.has("early")) {
     // 1. A human creates a one-shot at now + 90 s to hibernated ceo through POST /api/schedules.
     const ceoFrom = await lastSeq("ceo");
-    const ceoBefore = (await bySlug(app, "ceo"))?.live().status;
+    const ceoBefore = (await byHandle(app, "ceo"))?.live().status;
     const at = new Date(Date.now() + 90_000).toISOString();
     const created = await step(
       "2. @or creates a one-shot at now + 90 s for ceo (POST /api/schedules)",
@@ -587,7 +593,7 @@ try {
         start.event.reason === "scheduled",
       `ceo before: ${ceoBefore}; ${brief(JSON.stringify(start?.event))}`,
     );
-    const tools = inits.find((i) => i.slug === "ceo")?.tools ?? [];
+    const tools = inits.find((i) => i.handle === "ceo")?.tools ?? [];
     check(
       "2. V3: system/init lists the three schedule tools",
       SCHEDULE_TOOLS.every((t) => tools.includes(t)),
@@ -622,16 +628,16 @@ try {
       calls(turn, "mcp__factory__schedule_message").length === 2,
       `schedule_message calls: ${calls(turn, "mcp__factory__schedule_message").length}`,
     );
-    const listed = (await api("GET", "/api/schedules?target=ceo")).json() as {
+    const listed = (await api("GET", `/api/schedules?target=${refFor("ceo")}`)).json() as {
       schedules: {
         key: string;
-        createdBy: { kind: string; slug?: string };
+        createdBy: { kind: string; handle?: string };
         cron?: string;
         at?: string;
       }[];
     };
     const mine = listed.schedules.filter(
-      (s) => s.createdBy.kind === "agent" && s.createdBy.slug === "ceo",
+      (s) => s.createdBy.kind === "agent" && s.createdBy.handle === "ceo",
     );
     check(
       "2. GET /api/schedules?target=ceo shows the two schedules created by ceo",
@@ -655,7 +661,7 @@ try {
     const kid = await step("2. the kid's process initialises", () =>
       until(
         "the kid's system/init",
-        async () => inits.find((i) => i.slug !== "ceo" && i.slug !== "dev"),
+        async () => inits.find((i) => i.handle !== "ceo" && i.handle !== "dev"),
         240_000,
         1000,
       ),
@@ -664,7 +670,7 @@ try {
       "2. the spawned kid lists none of the three schedule tools",
       SCHEDULE_TOOLS.every((t) => !kid.tools.includes(t)) &&
         kid.tools.some((t) => t.includes("mcp__factory__")),
-      `kid ${kid.slug} tools with the factory prefix: ${kid.tools.filter((t) => t.includes("mcp__factory__")).join(", ")}`,
+      `kid ${kid.handle} tools with the factory prefix: ${kid.tools.filter((t) => t.includes("mcp__factory__")).join(", ")}`,
     );
     await step("2. ceo and the kid go quiet", async () => {
       await quiet(["ceo"]);
@@ -681,8 +687,8 @@ try {
       ms,
       1000,
     );
-  const tell = async (slug: Slug, body: string) => {
-    const r = await api("POST", "/api/messages", { to: [slug], body, urgent: false });
+  const tell = async (handle: Handle, body: string) => {
+    const r = await api("POST", "/api/messages", { to: [handle], body, urgent: false });
     if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
     return (r.json() as { results: { id: string }[] }).results[0]?.id as string;
   };
@@ -748,7 +754,7 @@ try {
       okCalls(t2, "mcp__factory__cancel_schedule").length === 1,
       toolTrace(t2),
     );
-    const after = (await api("GET", "/api/schedules?target=ceo")).json() as {
+    const after = (await api("GET", `/api/schedules?target=${refFor("ceo")}`)).json() as {
       schedules: { createdBy: { kind: string } }[];
     };
     check(
@@ -818,7 +824,7 @@ try {
     );
     const t = await step("7. ceo's turn ends", () => turnOf("ceo", ask, from));
     say(`    ceo: ${toolTrace(t)}`);
-    const live = (await api("GET", "/api/agents/ceo")).json() as {
+    const live = (await api("GET", `/api/agents/${refFor("ceo")}`)).json() as {
       agent: { crons: { recurring: boolean; humanSchedule: string }[] };
     };
     check(
@@ -828,14 +834,14 @@ try {
     );
     await step("7. ceo stays up past its 1-minute warm window", async () => {
       await sleep(90_000);
-      const st = (await bySlug(app, "ceo"))?.live().status;
+      const st = (await byHandle(app, "ceo"))?.live().status;
       if (st === "hibernated") throw new Error("ceo hibernated while a cron was live");
     });
     const before = await lastSeq("ceo");
     const stopped = await step(
       "7. @or stops the crons (POST /api/agents/ceo/stop-crons)",
       async () => {
-        const r = await api("POST", "/api/agents/ceo/stop-crons");
+        const r = await api("POST", `/api/agents/${refFor("ceo")}/stop-crons`);
         if (r.statusCode !== 200) throw new Error(`${r.statusCode} ${brief(r.body)}`);
         return (r.json() as { status: string }).status;
       },

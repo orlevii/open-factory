@@ -9,7 +9,7 @@ const h = new RuntimeHarness();
 const REPORT = "rep-live";
 beforeAll(async () => {
   await h.setup();
-  await insertAgent(h.t.sql, { id: REPORT, slug: "devrep" });
+  await insertAgent(h.t.sql, { id: REPORT, handle: "devrep" });
 });
 afterAll(() => h.close());
 

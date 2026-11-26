@@ -22,10 +22,10 @@ vi.mock("@/components/ui/toaster", async (orig) => ({
 }));
 
 const agents =
-  (...slugs: string[]) =>
+  (...handles: string[]) =>
   () =>
     json({
-      agents: slugs.map((s) =>
+      agents: handles.map((s) =>
         agentSummary({ handle: s, displayName: s[0]?.toUpperCase() + s.slice(1) }),
       ),
       more: false,

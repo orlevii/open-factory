@@ -18,8 +18,8 @@ beforeAll(async () => {
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into principals (id, kind, handle, ref) values ('a1', 'agent', 'dev', substr(md5('a1'::text), 1, 8))`;
   await sql`insert into principals (id, kind, handle, ref) values ('a2', 'agent', 'lead', substr(md5('a2'::text), 1, 8))`;
-  await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id,reports_to) values
-    ('a1','dev','Dev','t','{}','local','c1','u1'),('a2','lead','Lead','t','{}','local','c1','u1')`;
+  await sql`insert into agents (id, display_name,template,config,runtime,credential_id,reports_to) values
+    ('a1','Dev','t','{}','local','c1','u1'),('a2','Lead','t','{}','local','c1','u1')`;
   await sql`insert into tasks (id,title,created_by_id) values ('t1','One','u1')`;
   await sql`insert into task_comments (id,task_id,author_id,body) values ('k1','t1','a1','hi')`;
   await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_id,body_author_id,next_run_at)

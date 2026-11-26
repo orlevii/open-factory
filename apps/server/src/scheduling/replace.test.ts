@@ -20,9 +20,9 @@ beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp({ harnessDriver: driver, clock: () => clock, schedulerTimers: timers });
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  await h.seedAgent({ slug: "ceo" });
-  await h.seedAgent({ slug: "dev" });
-  await h.sql`update agents set status = 'errored', error_kind = 'start' where slug = 'ceo'`;
+  await h.seedAgent({ handle: "ceo" });
+  await h.seedAgent({ handle: "dev" });
+  await h.sql`update agents set status = 'errored', error_kind = 'start' where id = (select id from principals where handle = 'ceo')`;
 });
 afterEach(() => h.close());
 
@@ -60,7 +60,9 @@ test("AC 3: three firings while the target is errored leave one pending row with
     new Date(first?.created_at as string).getTime(),
   );
   expect(driver.starts).toHaveLength(0);
-  const status = (await h.sql`select status, attempting from agents where slug = 'ceo'`)[0];
+  const status = (
+    await h.sql`select status, attempting from agents where id = (select id from principals where handle = 'ceo')`
+  )[0];
   expect(status).toEqual({ status: "errored", attempting: false });
   // the runtime's queued entry is refreshed too
   const rt = await runtimeOf(h.app, "ceo");

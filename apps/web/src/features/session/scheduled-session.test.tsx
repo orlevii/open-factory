@@ -165,7 +165,7 @@ test("a pending scheduled item shows the badge and 'covers 3 runs'", async () =>
     createdAt: "2026-11-23T08:00:00.000Z",
   };
   const { container } = inRouter(
-    <QueueItems items={[item]} agent={{ slug: "dev", status: "errored" } as never} />,
+    <QueueItems items={[item]} agent={{ handle: "dev", status: "errored" } as never} />,
   );
   expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");

@@ -17,7 +17,7 @@ const DEBOUNCE = 30_000;
 let slots: RecordingSlots;
 beforeAll(async () => {
   await h.setup();
-  await insertAgent(h.t.sql, { id: REPORT, slug: "devrep" });
+  await insertAgent(h.t.sql, { id: REPORT, handle: "devrep" });
 });
 afterAll(() => h.close());
 // The store's stamps are strictly increasing across tests, so each test's fake clock starts after the last one ended
@@ -452,7 +452,7 @@ test("a peer_left envelope carries its subject, with the move target read back f
     from: "@factory",
     body: `<@${testRef(REPORT)}|devrep> (Dev agent) left: now reports to <@${testRef("leadx")}|unknown>.`,
     subject: {
-      slug: "devrep",
+      handle: "devrep",
       displayName: "Dev agent",
       relation: "report",
       left: { reason: "moved", to: LEAD_TAG },

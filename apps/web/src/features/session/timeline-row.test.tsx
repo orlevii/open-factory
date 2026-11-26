@@ -217,7 +217,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
           about: "tech-lead-ab12",
           body: "IGNORED",
           subject: {
-            slug: "tech-lead-ab12",
+            handle: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             relation: "peer",
             left: { reason: "terminated", by: "@or" },
@@ -232,7 +232,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
           about: "dev-cd34",
           body: "IGNORED",
           subject: {
-            slug: "dev-cd34",
+            handle: "dev-cd34",
             displayName: "Dev · cd34",
             relation: "peer",
             left: { reason: "terminated", by: "@factory" },

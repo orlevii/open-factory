@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import { refOf, sendMessagesBodySchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
@@ -12,6 +12,8 @@ import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
 import type { Router } from "../messaging/router.ts";
 import {
+  type AgentRecord,
+  agentRecords,
   createPrincipal,
   HandleTakenError,
   principalById,
@@ -22,9 +24,9 @@ import { resolveText, UnknownTagsError } from "../principals/principal-text.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import { spawnHandle } from "./handle.ts";
 import { droppedNote, type Inherited, inheritFrom, readDenyRules } from "./inherit.ts";
 import { maySpawn } from "./may-spawn.ts";
-import { spawnSlug } from "./slug.ts";
 
 type Template = Awaited<ReturnType<TemplateIndex["loadValid"]>>;
 type Granted = Extract<Inherited, { ok: true }>;
@@ -33,9 +35,9 @@ type Refused = { ok: false; message: string };
 const SHUTTING_DOWN = "The factory is shutting down; spawn again after it restarts.";
 const CANT_SPAWN = "You can't spawn agents.";
 const fail = (message: string): Refused => ({ ok: false, message });
-const taken = (slug: string) => fail(`@${slug} is taken; pick another suffix or leave it out.`);
+const taken = (handle: string) => fail(`@${handle} is taken; pick another suffix or leave it out.`);
 /** I2 §6.2: spawning follows the running process's config; a tool call always has one, so this is a guard. */
-const notRunning = (slug: string) => fail(`@${slug} isn't running.`);
+const notRunning = (handle: string) => fail(`@${handle} isn't running.`);
 
 /**
  * `spawn_agent` (S7 §5.2): pre-checks without a lock, materialize outside any lock, then one locked transaction that
@@ -72,7 +74,7 @@ export class SpawnService {
     if (!caller) return fail(CANT_SPAWN);
     // I2 §6.2: can_spawn is what the running process started with.
     const started = this.d.runtimes.startedOf(caller.id);
-    if (!started) return notRunning(caller.slug);
+    if (!started) return notRunning(caller.handle);
     if (!maySpawn(caller, started.config)) return fail(CANT_SPAWN);
     if (!started.config.canSpawn.includes(args.template))
       return fail(`You can't spawn template ${args.template}.`);
@@ -80,7 +82,7 @@ export class SpawnService {
     try {
       current = await this.d.resolver.effective(caller);
     } catch (err) {
-      this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
+      this.d.log.warn({ err, agent: caller.handle }, "resolving the spawner's config failed");
       return fail(`Your configuration can't be read; ask your manager to fix it.`);
     }
     const rawDesc = args.description.trim();
@@ -113,10 +115,10 @@ export class SpawnService {
     const pre = await this.check(caller, started, current, tpl, this.d.db);
     if (!pre.ok) return pre;
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
-      const named = spawnSlug(args.template, args.suffix, this.d.random);
+      const named = spawnHandle(args.template, args.suffix, this.d.random);
       if (!named.ok) return fail(named.message);
-      if ((await principalsByHandles(this.d.db, [named.slug])).size) {
-        if (named.explicit) return taken(named.slug);
+      if ((await principalsByHandles(this.d.db, [named.handle])).size) {
+        if (named.explicit) return taken(named.handle);
         continue;
       }
       // The folder is named by the ref, which the id fixes before any row exists (spec §4.4); the principal is
@@ -125,7 +127,7 @@ export class SpawnService {
       const ref = refOf(id);
       const made = await this.materialize(
         ref,
-        named.slug,
+        named.handle,
         args.template,
         desc,
         tpl,
@@ -137,7 +139,7 @@ export class SpawnService {
         caller,
         current,
         id,
-        named.slug,
+        named.handle,
         args.template,
         desc,
         prompt,
@@ -145,7 +147,7 @@ export class SpawnService {
         toolUseId,
       );
       if (done === "taken") {
-        if (named.explicit) return taken(named.slug);
+        if (named.explicit) return taken(named.handle);
         continue;
       }
       return done.ok && warnings.length ? { ...done, warnings } : done;
@@ -159,7 +161,7 @@ export class SpawnService {
    * `spawnerHolds`).
    */
   private async check(
-    spawner: AgentRow,
+    spawner: AgentRecord,
     started: Effective,
     current: Effective,
     tpl: Template,
@@ -193,11 +195,11 @@ export class SpawnService {
   /** S4's materialize under the workspace lock. `folder_exists` leaves the folder alone; any other failure removes it. */
   private async materialize(
     ref: string,
-    slug: string,
+    handle: string,
     template: string,
     description: string,
     tpl: Template,
-    caller: AgentRow,
+    caller: AgentRecord,
     inherited: Granted,
   ): Promise<"ok" | Refused> {
     const { workspace } = this.d;
@@ -206,8 +208,8 @@ export class SpawnService {
       if (!spawner) throw new Error(`No principal ${caller.id}`);
       await workspace.lock.run(ref, () =>
         workspace.materialize(ref, tpl, {
-          handle: slug,
-          displayName: displayName(tpl, slug, template),
+          handle,
+          displayName: displayName(tpl, handle, template),
           description,
           template,
           config: tpl.config,
@@ -225,19 +227,19 @@ export class SpawnService {
       // folder_exists: the folder isn't ours (a crash's leftover or a human's); never remove it.
       if (!(err instanceof FieldError && err.code === "folder_exists")) await this.discard(ref);
       if (err instanceof FieldError && err.code === "folder_exists")
-        return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
+        return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
-      this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
+      this.d.log.error({ err, agent: handle }, "materializing a spawned agent failed");
+      return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
     }
   }
 
   /** §5.2 step 4: one transaction under the spawner's row lock; a failed re-check removes the folder. */
   private async insert(
-    caller: AgentRow,
+    caller: AgentRecord,
     current: Effective,
     newId: string,
-    slug: string,
+    handle: string,
     template: string,
     description: string,
     prompt: string,
@@ -248,7 +250,7 @@ export class SpawnService {
     const at = new Date(this.now());
     type Done = {
       ok: true;
-      child: AgentRow;
+      child: AgentRecord;
       brief: PendingRow;
       peers: PendingRow[];
       inherited: Granted;
@@ -257,16 +259,14 @@ export class SpawnService {
     try {
       out = await db.transaction(async (tx): Promise<Done | Refused | "taken"> => {
         // Lock order (§5.7): the spawner's row first, FOR NO KEY UPDATE (never FOR UPDATE), then message rows.
-        const [spawner] = await tx
-          .select()
-          .from(schema.agents)
+        const [spawner] = await agentRecords(tx)
           .where(eq(schema.agents.id, caller.id))
-          .for("no key update");
+          .for("no key update", { of: schema.agents });
         if (this.d.closing()) return fail(SHUTTING_DOWN);
         if (!spawner) return fail(CANT_SPAWN);
         // Re-read `started` too: the process may have exited or restarted on another config during materialize.
         const started = this.d.runtimes.startedOf(spawner.id);
-        if (!started) return notRunning(spawner.slug);
+        if (!started) return notRunning(caller.handle);
         if (!maySpawn(spawner, started.config)) return fail(CANT_SPAWN);
         if (!started.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
@@ -277,18 +277,17 @@ export class SpawnService {
         const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
         // Create the principal only once nothing can refuse any more: a refusal returns and commits, which would orphan it.
-        const principal = await createPrincipal(tx, "agent", slug, () => newId).catch((e) => {
+        const principal = await createPrincipal(tx, "agent", handle, () => newId).catch((e) => {
           if (e instanceof HandleTakenError) return null;
           throw e;
         });
         if (!principal) return "taken";
         const id = principal.id;
-        const [child] = await tx
+        const [inserted] = await tx
           .insert(schema.agents)
           .values({
             id,
-            slug,
-            displayName: displayName(tpl, slug, template),
+            displayName: displayName(tpl, handle, template),
             description,
             template,
             // A spawned agent can't be configured: its overlay is always empty (I2 §6.1).
@@ -301,7 +300,8 @@ export class SpawnService {
             createdAt: at,
           })
           .returning();
-        if (!child) throw new Error("inserting the spawned agent returned no row");
+        if (!inserted) throw new Error("inserting the spawned agent returned no row");
+        const child = { ...inserted, handle };
         if (c.inherited.grants.length)
           await tx
             .insert(schema.agentProjectGrants)
@@ -334,8 +334,8 @@ export class SpawnService {
       });
     } catch (err) {
       await this.discard(refOf(newId));
-      this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
+      this.d.log.error({ err, agent: handle }, "inserting a spawned agent failed");
+      return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
       // The folder is named by this spawn's own ref, so it is ours whoever won the handle.
@@ -352,7 +352,7 @@ export class SpawnService {
     const note = droppedNote(out.inherited.dropped);
     return {
       ok: true,
-      slug,
+      handle,
       tag: await store.agentTag(out.child.id),
       agentId: out.child.id,
       status,
@@ -370,5 +370,5 @@ export class SpawnService {
   }
 }
 
-const displayName = (tpl: Template, slug: string, template: string) =>
-  `${tpl.config.displayName} · ${slug.slice(template.length + 1)}`;
+const displayName = (tpl: Template, handle: string, template: string) =>
+  `${tpl.config.displayName} · ${handle.slice(template.length + 1)}`;

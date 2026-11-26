@@ -73,10 +73,10 @@ const item = {
 };
 
 /** The agents arrive asynchronously: wait for the option before choosing it. */
-async function pick(slug: string) {
+async function pick(handle: string) {
   await pickOption(
     await within(await screen.findByRole("dialog")).findByLabelText("Target"),
-    new RegExp(`@${slug}$`),
+    new RegExp(`@${handle}$`),
   );
 }
 

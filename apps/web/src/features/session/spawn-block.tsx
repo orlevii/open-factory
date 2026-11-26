@@ -20,21 +20,21 @@ const Mono = ({ children }: { children: ReactNode }) => (
 );
 
 const spawnResultSchema = z.object({
-  slug: z.string(),
+  handle: z.string(),
   tag: z.string().optional(),
   status: z.string(),
   note: z.string().optional(),
 });
 
-/** The tool's success result (`{ slug, tag, agent_id, status, note? }`; the id is never shown), or
+/** The tool's success result (`{ handle, tag, agent_id, status, note? }`; the id is never shown), or
  *  undefined for an error or odd text. `ref` is the spawned agent's, read from its tag. */
 export function parseSpawnResult(result: SpawnRow["result"]) {
   if (!result || result.isError) return undefined;
   try {
     const r = spawnResultSchema.safeParse(JSON.parse(result.content));
     if (!r.success) return undefined;
-    const { slug, tag, ...rest } = r.data;
-    return { ...rest, handle: slug, ref: tag ? refOfWho(tag) : undefined };
+    const { tag, ...rest } = r.data;
+    return { ...rest, ref: tag ? refOfWho(tag) : undefined };
   } catch {
     return undefined;
   }
@@ -169,7 +169,7 @@ export function TerminateLine({
   row: TerminateRow;
   rowProps: Record<string, unknown>;
 }) {
-  const target = (row.call.input as { slug: string }).slug;
+  const target = (row.call.input as { target: string }).target;
   const who = <NamedAgent name={target} />;
   const failed = row.result?.isError === true || !!row.denial;
   let text: ReactNode;

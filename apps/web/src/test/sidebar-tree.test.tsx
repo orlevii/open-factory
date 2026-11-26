@@ -40,9 +40,9 @@ vi.mock("@/features/inbox/api", async (orig) => {
   const real = await orig<typeof import("@/features/inbox/api")>();
   return {
     ...real,
-    useUnreadByAgent: (slug: string) => {
-      probe.rows[slug] = (probe.rows[slug] ?? 0) + 1;
-      return real.useUnreadByAgent(slug);
+    useUnreadByAgent: (handle: string) => {
+      probe.rows[handle] = (probe.rows[handle] ?? 0) + 1;
+      return real.useUnreadByAgent(handle);
     },
   };
 });
@@ -80,11 +80,11 @@ const frame = (agent: string, status: Frame["status"]): Frame => ({
   restartChanges: [],
 });
 
-/** The tree's host: holds the active slug so a test can navigate. */
+/** The tree's host: holds the active handle so a test can navigate. */
 const host = {
   initial: undefined as string | undefined,
   collapsedRail: false,
-  set: (_slug: string | undefined) => {},
+  set: (_handle: string | undefined) => {},
 };
 function Host() {
   const [active, setActive] = useState(host.initial);
@@ -128,7 +128,7 @@ function setup({
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  return { qc, router, navigate: (slug: string | undefined) => act(() => host.set(slug)) };
+  return { qc, router, navigate: (handle: string | undefined) => act(() => host.set(handle)) };
 }
 
 /** Apply one frame and let the query cache notify (it batches on a 0ms timer). */
@@ -209,7 +209,7 @@ test("a new navigation reveals the active agent again, even back to one whose an
   expect(row("Bravo")).toHaveAttribute("aria-expanded", "true");
 });
 
-test("a user toggle writes only that slug, pruned to live agents", async () => {
+test("a user toggle writes only that handle, pruned to live agents", async () => {
   localStorage.setItem("of-tree-expanded", JSON.stringify({ gone: true }));
   setup();
   await screen.findByRole("tree");

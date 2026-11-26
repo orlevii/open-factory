@@ -4,6 +4,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestPrincipal, seedTestUser } from "../test/principals.ts";
 import { PolicyInputs } from "./policy-inputs.ts";
@@ -47,9 +48,16 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
     kind: "oauth_token",
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
-  const create = (slug: string, template: string) =>
+  const create = (handle: string, template: string) =>
     t.app.agents.create(
-      { template, slug, displayName: slug, description: "", reportsTo: "or", credential: "work" },
+      {
+        template,
+        handle,
+        displayName: handle,
+        description: "",
+        reportsTo: "or",
+        credential: "work",
+      },
       human,
     );
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(false);
@@ -59,12 +67,11 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
   expect(await policy.templateHasLocalAgents("dockertpl")).toBe(false);
 
   await create("boss", "dockertpl");
-  const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
+  const [boss] = await agentRecords(t.db).where(eq(schema.principals.handle, "boss"));
   const kid = randomUUID();
   await seedTestPrincipal(t.db, "agent", "kid", kid);
   await t.db.insert(schema.agents).values({
     id: kid,
-    slug: "kid",
     displayName: "Kid",
     kind: "ephemeral",
     template: "spawned-local",

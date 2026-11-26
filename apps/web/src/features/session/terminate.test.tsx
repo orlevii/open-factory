@@ -33,14 +33,14 @@ afterEach(() => {
 });
 
 const local = (d: number, h: number, m: number) => new Date(2026, 10, d, h, m).toISOString();
-const SLUG = "tech-lead-ab12";
-const REF = refFor(SLUG);
+const HANDLE = "tech-lead-ab12";
+const REF = refFor(HANDLE);
 const BODY =
   "It stops now, ending any work in progress, and its session can't continue. Messages waiting for it are dropped. Its workspace is deleted 3 days later unless you pin it; worktrees it made in projects stay.";
 
 const spawned = (over: Partial<AgentSummary> = {}): AgentSummary =>
   agentSummary({
-    handle: SLUG,
+    handle: HANDLE,
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     template: "tech-lead",
@@ -180,14 +180,16 @@ test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; su
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  expect(within(dialog).getByRole("heading", { name: `Terminate @${SLUG}?` })).toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("heading", { name: `Terminate @${HANDLE}?` }),
+  ).toBeInTheDocument();
   expect(within(dialog).getByText(BODY)).toBeInTheDocument();
   expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   expect(await within(dialog).findByText("The factory couldn't stop it.")).toBeInTheDocument();
   expect(within(dialog).getByRole("alert")).toHaveTextContent("The factory couldn't stop it.");
   fail = false;
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(api.calls.filter((c) => c.url === `/api/agents/${REF}/terminate`)).toHaveLength(2);
   const pin = await screen.findByRole("button", { name: "Pin workspace" });
@@ -228,20 +230,20 @@ test("a send that races the termination says so", async () => {
     [`POST /api/agents/${REF}/input`]: () => {
       state.agent = terminated();
       return json(
-        { error: { code: "agent_terminated", message: `@${SLUG} was terminated.` } },
+        { error: { code: "agent_terminated", message: `@${HANDLE} was terminated.` } },
         409,
       );
     },
   });
   await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "late");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  const alert = await screen.findByText(`@${SLUG} was terminated, so this wasn't sent.`);
+  const alert = await screen.findByText(`@${HANDLE} was terminated, so this wasn't sent.`);
   expect(alert.closest("[role=alert]")).not.toBeNull();
   // Once the detail catches up the composer is read-only, the line and the draft copy stay.
   expect(
     await screen.findByText("This agent was terminated. Its session is read-only."),
   ).toBeInTheDocument();
-  expect(screen.getByText(`@${SLUG} was terminated, so this wasn't sent.`)).toBeInTheDocument();
+  expect(screen.getByText(`@${HANDLE} was terminated, so this wasn't sent.`)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy unsent message" })).toBeInTheDocument();
 });
 
@@ -367,7 +369,7 @@ test("Unpin after the grace confirms: the workspace is deleted", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Unpin workspace" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(
-    within(dialog).getByRole("heading", { name: `Unpin and delete @${SLUG}'s workspace?` }),
+    within(dialog).getByRole("heading", { name: `Unpin and delete @${HANDLE}'s workspace?` }),
   ).toBeInTheDocument();
   expect(
     within(dialog).getByText(
@@ -409,7 +411,7 @@ test("the terminated frame arriving before the response: the dialog stays open u
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(framed).toBe(true));
   // The view has turned read-only behind it, but the request is still pending.
   expect(
@@ -438,7 +440,7 @@ test("a failed terminate request after the agent was terminated anyway closes th
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByText("Something broke.")).toBeNull();
   const pin = await screen.findByRole("button", { name: "Pin workspace" });

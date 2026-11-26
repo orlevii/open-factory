@@ -6,7 +6,7 @@ import { GO_TO, isTaskKey, rankAgents } from "./rank";
 const a = (handle: string, displayName = handle): AgentSummary =>
   ({ ref: refFor(handle), handle, displayName }) as unknown as AgentSummary;
 const refs = (...handles: string[]) => handles.map(refFor);
-const slugs = (r: { agent: AgentSummary }[]) => r.map((x) => x.agent.handle);
+const handles = (r: { agent: AgentSummary }[]) => r.map((x) => x.agent.handle);
 
 describe("rankAgents", () => {
   test("marks exact, prefix and recent matches strong, substring matches not", () => {
@@ -26,22 +26,22 @@ describe("rankAgents", () => {
     ]);
     expect(rankAgents("", [a("bot")], [], refs("bot"), []).every((x) => x.strong)).toBe(true);
   });
-  test("exact slug beats exact name beats prefix beats recent beats substring", () => {
+  test("exact handle beats exact name beats prefix beats recent beats substring", () => {
     const live = [
       a("xbotx", "has bot inside"), // substring
       a("recent-one", "Zed bot"), // recent + substring
       a("botany", "Botany"), // prefix
       a("other", "bot"), // exact name
-      a("bot", "Something"), // exact slug
+      a("bot", "Something"), // exact handle
     ];
     const r = rankAgents("bot", live, [], refs("recent-one"), []);
-    expect(slugs(r)).toEqual(["bot", "other", "botany", "recent-one", "xbotx"]);
+    expect(handles(r)).toEqual(["bot", "other", "botany", "recent-one", "xbotx"]);
   });
 
   test("ties fall back to tree order", () => {
     const live = [a("alpha-2"), a("alpha-1"), a("alpha-3")];
     const r = rankAgents("alpha", live, [], [], refs("alpha-3", "alpha-1", "alpha-2"));
-    expect(slugs(r)).toEqual(["alpha-3", "alpha-1", "alpha-2"]);
+    expect(handles(r)).toEqual(["alpha-3", "alpha-1", "alpha-2"]);
   });
 
   test("live agents come before ended ones, whatever the match quality", () => {
@@ -73,7 +73,7 @@ describe("rankAgents", () => {
   });
 
   test("matching is case-insensitive and ignores a leading @", () => {
-    expect(slugs(rankAgents("@CEO", [a("ceo", "Chief")], [], [], []))).toEqual(["ceo"]);
+    expect(handles(rankAgents("@CEO", [a("ceo", "Chief")], [], [], []))).toEqual(["ceo"]);
   });
 
   test("190 'Developer NNN' do not bury ceo for the query c", () => {

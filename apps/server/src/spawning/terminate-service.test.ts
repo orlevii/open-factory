@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { tagOf } from "@open-factory/shared/tags";
 import { and, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
@@ -10,6 +10,7 @@ import { AgentTerminatedError } from "../agents/errors.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
@@ -46,19 +47,19 @@ async function setup() {
     "name: dev\ndisplay_name: Dev\nruntime: local\nprojects:\n  - app\n",
   );
   const lead = await app.seedAgent({
-    slug: "lead",
+    handle: "lead",
     config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
   await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
-  const pm = await app.seedAgent({ slug: "pm" });
+  const pm = await app.seedAgent({ handle: "pm" });
   await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
 /** Spawns `dev-<suffix>` from `spawner`, lets its brief start it, and ends its first turn: a started, idle child. */
-async function spawnIdle(app: T, driver: FakeDriver, spawner: AgentRow, suffix: string) {
+async function spawnIdle(app: T, driver: FakeDriver, spawner: AgentRecord, suffix: string) {
   const r = await app.app.spawner.spawn(
     spawner.id,
     { template: "dev", description: "Does the work", prompt: "Do it", suffix },
@@ -71,7 +72,7 @@ async function spawnIdle(app: T, driver: FakeDriver, spawner: AgentRow, suffix: 
   const proc = driver.starts.find((p) => p.spec.agentId === r.agentId) as FakeProcess;
   proc.emit(...ev.fullTurn(`sess-${suffix}`));
   await rt.settled();
-  return { id: r.agentId, slug: r.slug, rt, proc };
+  return { id: r.agentId, handle: r.handle, rt, proc };
 }
 
 const rowsTo = (app: T, agentId: string, kind: "peer_left" | "peer_joined" | "member_update") =>
@@ -158,24 +159,29 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
 
 test("terminate_agent: only your own spawned agents; idempotent; persistent agents refuse", async () => {
   const { t, driver, lead, pm } = await setup();
-  const other = await t.seedAgent({ slug: "other", config: { template: { can_spawn: ["dev"] } } });
-  const child = await spawnIdle(t, driver, lead, "x2");
-  const notYours = (slug: string) => ({
-    ok: false,
-    message: `@${slug} isn't an agent you spawned.`,
+  const other = await t.seedAgent({
+    handle: "other",
+    config: { template: { can_spawn: ["dev"] } },
   });
-  expect(await t.app.terminator.terminateChild(other.id, child.slug)).toEqual(notYours(child.slug));
+  const child = await spawnIdle(t, driver, lead, "x2");
+  const notYours = (handle: string) => ({
+    ok: false,
+    message: `@${handle} isn't an agent you spawned.`,
+  });
+  expect(await t.app.terminator.terminateChild(other.id, child.handle)).toEqual(
+    notYours(child.handle),
+  );
   expect(await t.app.terminator.terminateChild(lead.id, "pm")).toEqual(notYours("pm"));
   expect(await t.app.terminator.terminateChild(lead.id, "@nobody")).toEqual(notYours("nobody"));
   expect((await t.app.store.agentById(child.id))?.terminatedAt).toBeNull();
 
-  expect(await t.app.terminator.terminateChild(lead.id, ` @${child.slug} `)).toMatchObject({
+  expect(await t.app.terminator.terminateChild(lead.id, ` @${child.handle} `)).toMatchObject({
     ok: true,
-    slug: child.slug,
+    handle: child.handle,
   });
-  expect(await t.app.terminator.terminateChild(lead.id, child.slug)).toMatchObject({
+  expect(await t.app.terminator.terminateChild(lead.id, child.handle)).toMatchObject({
     ok: true,
-    slug: child.slug,
+    handle: child.handle,
   });
   expect((await t.app.store.agentById(child.id))?.terminatedBy).toBe(lead.id);
   await child.rt.settled();
@@ -194,7 +200,7 @@ test("the spawner gets no peer row about its own terminate; the other reports do
   const { t, driver, lead, pm } = await setup();
   const a = await spawnIdle(t, driver, lead, "aa");
   const b = await spawnIdle(t, driver, lead, "bb");
-  await t.app.terminator.terminateChild(lead.id, a.slug);
+  await t.app.terminator.terminateChild(lead.id, a.handle);
   expect(await rowsTo(t, lead.id, "peer_left")).toEqual([]);
   for (const id of [b.id, pm.id]) {
     const rows = await rowsTo(t, id, "peer_left");
@@ -236,7 +242,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   );
   // A new send is refused by the Router.
   expect(
-    (await t.app.router.send({ userId: user.id, handle: user.handle }, [a.slug], "hello?", false))
+    (await t.app.router.send({ userId: user.id, handle: user.handle }, [a.handle], "hello?", false))
       .results,
   ).toMatchObject([{ status: "refused", code: "terminated" }]);
 });
@@ -269,7 +275,7 @@ test("a send racing the termination is accepted, then its row is rejected and ne
     results: [r],
   } = await t.app.router.send(
     { userId: user.id, handle: user.handle },
-    [child.slug],
+    [child.handle],
     "still there?",
     false,
   );
@@ -339,9 +345,9 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
   expect(child.proc.stopped).toBe(false);
 
   // Through the tool the failure is one sentence that says what to do.
-  expect(await t.app.terminator.terminateChild(lead.id, child.slug)).toEqual({
+  expect(await t.app.terminator.terminateChild(lead.id, child.handle)).toEqual({
     ok: false,
-    message: `@${child.slug} couldn't be terminated; try again.`,
+    message: `@${child.handle} couldn't be terminated; try again.`,
   });
   expect(child.rt.isTerminated()).toBe(false);
 });
@@ -422,7 +428,7 @@ test("terminating an agent rejects its loop-held rows; archiving leaves them hel
   expect(await t.app.store.pendingQueue(a.id)).not.toContainEqual(
     expect.objectContaining({ id: toA.id }),
   );
-  await t.app.agents.archive(await t.refOf(b.slug), {
+  await t.app.agents.archive(await t.refOf(b.handle), {
     kind: "human",
     ref: "k7x2m9qd",
     handle: "or",
@@ -456,17 +462,17 @@ test("terminate_agent by its tag terminates silently; by a plain handle it warns
   const token = t.app.agentTokens.mint(lead.id).token;
   const a = await spawnIdle(t, driver, lead, "w1");
   const b = await spawnIdle(t, driver, lead, "w2");
-  const [aRef] = await t.sql`select ref from principals where handle = ${a.slug}`;
-  const [bRef] = await t.sql`select ref from principals where handle = ${b.slug}`;
+  const [aRef] = await t.sql`select ref from principals where handle = ${a.handle}`;
+  const [bRef] = await t.sql`select ref from principals where handle = ${b.handle}`;
   const tagged = await callTool(url, token, "terminate_agent", { target: `<@${aRef?.ref}|stale>` });
   expect(tagged.isError).toBeFalsy();
   expect(JSON.parse(tagged.content[0]?.text ?? "")).toEqual({
-    slug: a.slug,
-    tag: `<@${aRef?.ref}|${a.slug}>`,
+    handle: a.handle,
+    tag: `<@${aRef?.ref}|${a.handle}>`,
     status: "terminated",
   });
-  const plain = await callTool(url, token, "terminate_agent", { target: b.slug });
+  const plain = await callTool(url, token, "terminate_agent", { target: b.handle });
   expect(JSON.parse(plain.content[0]?.text ?? "").warnings).toEqual([
-    `Plain tag detected: @${b.slug} was resolved to <@${bRef?.ref}|${b.slug}>. Tag as <@ref|handle>.`,
+    `Plain tag detected: @${b.handle} was resolved to <@${bRef?.ref}|${b.handle}>. Tag as <@ref|handle>.`,
   ]);
 });

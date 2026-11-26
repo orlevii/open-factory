@@ -54,25 +54,25 @@ const item = (n: number, o: Over = {}) => ({
 });
 
 /** Events `from..to`, each an assistant text "event <seq>" (one row each). */
-const events = (slug: string, from: number, to: number): SessionEvent[] =>
+const events = (handle: string, from: number, to: number): SessionEvent[] =>
   Array.from({ length: to - from + 1 }, (_, i) => ({
     seq: from + i,
-    agentRef: refFor(slug),
+    agentRef: refFor(handle),
     turnId: "t1",
     at: at(i),
-    event: { type: "assistant_text", text: `${slug} event ${from + i}` },
+    event: { type: "assistant_text", text: `${handle} event ${from + i}` },
   }));
 const page = (evs: SessionEvent[]) => ({ events: evs, hasMore: { before: true, after: false } });
 
 /** The events route as the server answers it: the real query schema, `around` or the latest. */
 const eventsRoute =
-  (slug: string): Handler =>
+  (handle: string): Handler =>
   (_b, url) => {
     const q = new URL(url, "http://x").searchParams;
     const around = q.get("around");
     return around
-      ? json(page(events(slug, Number(around) - 3, Number(around) + 3)))
-      : json(page(events(slug, 94, 100)));
+      ? json(page(events(handle, Number(around) - 3, Number(around) + 3)))
+      : json(page(events(handle, 94, 100)));
   };
 
 const comment = (id: string, author: Over, m: number) => ({
@@ -166,7 +166,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
             body: (b as { body: string }).body,
             at: at(9),
           },
-          deliveredTo: ["ada"],
+          deliveredTo: [{ ref: refFor("ada"), handle: "ada" }],
           mentionedHumans: [],
           notReached: [],
         },
@@ -383,7 +383,7 @@ test("a half-typed comment reply survives switching items; a posted one is clear
             body: (b as { body: string }).body,
             at: at(9),
           },
-          deliveredTo: ["ada"],
+          deliveredTo: [{ ref: refFor("ada"), handle: "ada" }],
           mentionedHumans: [],
           notReached: [],
         },

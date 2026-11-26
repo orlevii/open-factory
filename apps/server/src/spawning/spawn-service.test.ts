@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { tagOf } from "@open-factory/shared/tags";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { principalsByHandles } from "../principals/principal-store.ts";
+import { type AgentRecord, principalsByHandles } from "../principals/principal-store.ts";
 import { agentRowOf, makeTestApp } from "../test/helpers.ts";
 import { seedTestPrincipal, testRef } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
@@ -63,7 +63,7 @@ async function setup() {
   );
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
-    slug: "lead",
+    handle: "lead",
     config: {
       template: {
         can_spawn: ["tech-lead", "dev"],
@@ -77,7 +77,7 @@ async function setup() {
     { agentId: lead.id, projectId: ids.app as string },
     { agentId: lead.id, projectId: ids.web as string },
   ]);
-  const pm = await app.seedAgent({ slug: "pm" });
+  const pm = await app.seedAgent({ handle: "pm" });
   await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
@@ -121,12 +121,16 @@ const folders = (app: T) => readdirSync(path.join(app.factoryHome, "agents")).so
 const agentCount = async (app: T) => (await app.db.select().from(schema.agents)).length;
 
 /** A spawned child row inserted directly (no folder): seeds children to show a spawn isn't refused for them. */
-async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
-  const principal = await seedTestPrincipal(app.db, "agent", slug);
+async function seedChild(
+  app: T,
+  lead: AgentRecord,
+  handle: string,
+  o: { terminated?: boolean } = {},
+) {
+  const principal = await seedTestPrincipal(app.db, "agent", handle);
   await app.db.insert(schema.agents).values({
     id: principal.id,
-    slug,
-    displayName: slug,
+    displayName: handle,
     template: "dev",
     config: {},
     runtime: "local",
@@ -142,7 +146,7 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
   const r = await t.app.spawner.spawn(lead.id, args({ suffix: "x1" }), "toolu_1");
   expect(r).toMatchObject({
     ok: true,
-    slug: "tech-lead-x1",
+    handle: "tech-lead-x1",
     status: "hibernated",
     note: "Not passed on, because you don't hold them: secrets NPM_TOKEN; projects docs.",
   });
@@ -184,17 +188,17 @@ test("a random suffix is 4 letters and the display name carries it", async () =>
   const { t, lead } = await setup();
   const r = await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null);
   if (!r.ok) throw new Error(r.message);
-  expect(r.slug).toMatch(/^dev-[a-z]{4}$/);
+  expect(r.handle).toMatch(/^dev-[a-z]{4}$/);
   expect(r.note).toBeUndefined();
-  const child = await agentRowOf(t.app, r.slug);
-  expect(child?.displayName).toBe(`Dev · ${r.slug.slice(4)}`);
+  const child = await agentRowOf(t.app, r.handle);
+  expect(child?.displayName).toBe(`Dev · ${r.handle.slice(4)}`);
 });
 
 test("refusals spend nothing: template not allowed, taken explicit suffix, inheritance, shutdown", async () => {
   const { t, lead } = await setup();
   writeTemplate(t.factoryHome, "other", "name: other\ndisplay_name: Other\nruntime: local\n");
-  await t.seedAgent({ slug: "tech-lead-taken" });
-  const solo = await t.seedAgent({ slug: "solo" });
+  await t.seedAgent({ handle: "tech-lead-taken" });
+  const solo = await t.seedAgent({ handle: "solo" });
   const before = { folders: folders(t), agents: await agentCount(t) };
   const unchanged = async () => {
     expect(folders(t)).toEqual(before.folders);
@@ -255,11 +259,11 @@ test("refusals spend nothing: template not allowed, taken explicit suffix, inher
 
 test("a spawner is never refused for its live children: a spawn past five live children succeeds", async () => {
   const { t, lead } = await setup();
-  for (const slug of ["dev-a", "dev-b", "dev-c", "dev-d", "dev-e", "dev-f"])
-    await seedChild(t, lead, slug);
+  for (const handle of ["dev-a", "dev-b", "dev-c", "dev-d", "dev-e", "dev-f"])
+    await seedChild(t, lead, handle);
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "more" }), null)).toMatchObject({
     ok: true,
-    slug: "tech-lead-more",
+    handle: "tech-lead-more",
   });
 });
 
@@ -268,7 +272,7 @@ test("a spawner is never refused for how many it spawned in an hour: a twenty-se
   for (let i = 0; i < 21; i++) await seedChild(t, lead, `dev-h${i}`, { terminated: true });
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "more" }), null)).toMatchObject({
     ok: true,
-    slug: "tech-lead-more",
+    handle: "tech-lead-more",
   });
 });
 
@@ -344,7 +348,7 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   // The other order: a committed spawn makes the archive refuse.
   vi.restoreAllMocks();
   const lead2 = await t.seedAgent({
-    slug: "lead2",
+    handle: "lead2",
     config: { template: { can_spawn: ["dev"] } },
   });
   await asRunning(t.app, lead2);
@@ -426,7 +430,7 @@ test("a taken suffix retries the next name: a human holds one at the pre-read, a
   const svc = new SpawnService({ ...serviceDeps(t), random: () => suffixes.shift() ?? "zzzz" });
   expect(await svc.spawn(lead.id, args(), null)).toMatchObject({
     ok: true,
-    slug: "tech-lead-dddd",
+    handle: "tech-lead-dddd",
   });
   // Only the winner's folder was added: the one made for the refused name was removed.
   expect(folders(t)).toHaveLength(before.length + 1);
@@ -451,13 +455,13 @@ test("an explicit suffix taken by a human's handle after the pre-read is reporte
 
 test("an agent that takes the name after the pre-read is reported taken; its workspace stays and the loser's folder goes", async () => {
   const { t, lead } = await setup();
-  let winner: AgentRow | undefined;
+  let winner: AgentRecord | undefined;
   const before = folders(t);
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
     const made = await realMaterialize(...a);
     // The winner commits its agent (and writes its workspace) before the loser's transaction.
-    winner = await t.seedAgent({ slug: "tech-lead-mine" });
+    winner = await t.seedAgent({ handle: "tech-lead-mine" });
     return made;
   });
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
@@ -527,7 +531,7 @@ test("I2 §6.2: the allowlist is started's; secrets are the stricter of started 
 
 test("a caller with a manager is told to ask its manager", async () => {
   const { t, lead } = await setup();
-  const boss = await t.seedAgent({ slug: "boss" });
+  const boss = await t.seedAgent({ handle: "boss" });
   await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({

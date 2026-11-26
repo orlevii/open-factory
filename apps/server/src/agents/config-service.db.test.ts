@@ -4,9 +4,10 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import type { ConfigService } from "./config-service.ts";
@@ -28,20 +29,20 @@ function writeTemplate(name: string, runtime: "docker" | "local") {
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
   writeFileSync(path.join(d, "settings.json"), JSON.stringify({}));
 }
-const body = (slug: string, template = "dev") => ({
+const body = (handle: string, template = "dev") => ({
   template,
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
 });
-const rowOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const rowOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r;
 };
-const versionOf = async (slug: string) => (await cfg.getConfig(await t.refOf(slug))).version;
+const versionOf = async (handle: string) => (await cfg.getConfig(await t.refOf(handle))).version;
 const events = (agentId: string) =>
   t.sql<{ payload: { by: string; changes: string[] } }[]>`
     select payload from session_events where agent_id = ${agentId} and type = 'config_changed'`;
@@ -67,7 +68,7 @@ beforeAll(async () => {
   await svc.create(body("dev"), human);
   await svc.create(body("loc", "localtpl"), human);
   const hrRow = await rowOf("hr-bot");
-  hr = { kind: "agent", id: hrRow.id, ref: testRef(hrRow.id), slug: "hr-bot" };
+  hr = { kind: "agent", id: hrRow.id, ref: testRef(hrRow.id), handle: "hr-bot" };
 });
 afterAll(() => t.close());
 
@@ -95,13 +96,19 @@ test("a stale baseVersion is refused to an agent as an org refusal and to a huma
 
 test("an agent can't remove an overlay deny rule, and nothing is written", async () => {
   const stored = { settings: { permissions: { deny: ["Bash(rm:*)"] } } };
-  await t.db.update(schema.agents).set({ config: stored }).where(eq(schema.agents.slug, "dev"));
+  await t.db
+    .update(schema.agents)
+    .set({ config: stored })
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   const version = await versionOf("dev");
   const err = await refusal(cfg.saveOverlay(await t.refOf("dev"), {}, version, hr));
   expect(err).toMatchObject({ status: 400, code: "invalid_config" });
   expect(JSON.stringify(err.extra)).toContain("Deny rules can only be removed by a human.");
   expect((await rowOf("dev")).config).toEqual(stored);
-  await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
+  await t.db
+    .update(schema.agents)
+    .set({ config: {} })
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
 });
 
 test("a spawned target is refused: Spawned agents can't be edited", async () => {
@@ -111,7 +118,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
       kind: "ephemeral",
       reportsTo: (await rowOf("dev")).id,
     })
-    .where(eq(schema.agents.slug, "loc"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"loc"})`));
   try {
     await expect(cfg.saveOverlay(await t.refOf("loc"), {}, "x", human)).rejects.toMatchObject({
       status: 409,
@@ -122,7 +129,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
     await t.db
       .update(schema.agents)
       .set({ kind: "persistent", reportsTo: "u-or" })
-      .where(eq(schema.agents.slug, "loc"));
+      .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"loc"})`));
   }
 });
 
@@ -175,7 +182,7 @@ test("a save whose version went stale under the lock is refused and writes nothi
   await t.db
     .update(schema.agents)
     .set({ config: { template: { model: "haiku" } } })
-    .where(eq(schema.agents.slug, "dev"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   await expect(
     t.db.transaction(async (tx) => plan.write(tx, await rowOf("dev"))),
   ).rejects.toMatchObject({ status: 409, code: "config_changed" });
@@ -186,7 +193,10 @@ test("with an invalid template the agent policy still applies to an overlay; a h
   const tdir = path.join(home, "templates", "dev");
   const good = readFileSync(path.join(tdir, "template.yaml"), "utf8");
   const stored = { settings: { permissions: { deny: ["Bash(rm:*)"] } } };
-  await t.db.update(schema.agents).set({ config: stored }).where(eq(schema.agents.slug, "dev"));
+  await t.db
+    .update(schema.agents)
+    .set({ config: stored })
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   writeFileSync(path.join(tdir, "template.yaml"), "name: [unclosed\n");
   try {
     const version = await versionOf("dev");
@@ -205,7 +215,10 @@ test("with an invalid template the agent policy still applies to an overlay; a h
     expect((await rowOf("dev")).config).toEqual({});
   } finally {
     writeFileSync(path.join(tdir, "template.yaml"), good);
-    await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
+    await t.db
+      .update(schema.agents)
+      .set({ config: {} })
+      .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   }
 });
 
@@ -214,12 +227,15 @@ test("an agent's save that goes stale between planning and the row lock is an or
   await t.db
     .update(schema.agents)
     .set({ config: { template: { can_spawn: ["x"] } } })
-    .where(eq(schema.agents.slug, "dev"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   try {
     await expect(
       t.db.transaction(async (tx) => plan.write(tx, await rowOf("dev"))),
     ).rejects.toBeInstanceOf(OrgRefusedError);
   } finally {
-    await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
+    await t.db
+      .update(schema.agents)
+      .set({ config: {} })
+      .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"dev"})`));
   }
 });

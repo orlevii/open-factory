@@ -11,12 +11,12 @@ beforeEach(async () => {
   const me = await signUp(h.app, { handle: "or" });
   cookie = me.cookie;
   await h.app.factorySettings.update({ loopGuardMessages: N }, me.user.id);
-  await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
 });
 afterEach(() => h.close());
 
-const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
+const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id ?? "";
 const send = async (from: string, to: string) =>
   (await h.app.router.send({ agentId: await idOf(from) }, [`@${to}`], "ping", false)).results[0];
 /** Ada sends N, bob N + 1, then ada's next send trips the guard both ways. */
@@ -174,7 +174,7 @@ describe("POST /api/loop-holds/:id/resume", () => {
       { resumed_at: Date },
     ];
     expect(second.json().error).toMatchObject({
-      resumedBy: "@or",
+      resumedBy: { ref: expect.any(String), handle: "or" },
       resumedAt: new Date(resumed_at).toISOString(),
     });
     expect(first.statusCode).toBe(200);

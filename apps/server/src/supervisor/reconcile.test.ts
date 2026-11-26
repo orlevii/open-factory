@@ -144,7 +144,7 @@ let n = 0;
 async function agent(o: { status?: string } = {}): Promise<string> {
   n += 1;
   const id = `r${n}`;
-  await insertAgent(t.sql, { id, slug: `rec${n}`, ...(o.status ? { status: o.status } : {}) });
+  await insertAgent(t.sql, { id, handle: `rec${n}`, ...(o.status ? { status: o.status } : {}) });
   return id;
 }
 const pending = (id: string, body: string) =>
@@ -475,7 +475,7 @@ async function terminatedAgent(): Promise<string> {
   const lead = await agent();
   n += 1;
   const id = `r${n}`;
-  await insertAgent(t.sql, { id, slug: `rec${n}`, reportsTo: lead, terminatedAt: new Date() });
+  await insertAgent(t.sql, { id, handle: `rec${n}`, reportsTo: lead, terminatedAt: new Date() });
   const boss = await seedTestUser(t.db, "boss");
   await t.sql`update agents set terminated_by = ${boss.id} where id = ${id}`;
   return id;

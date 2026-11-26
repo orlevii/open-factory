@@ -130,7 +130,7 @@ test("a mid-turn absorbed task message of the same task: the task, both batches 
 });
 
 test("a task turn that takes in a report's member update mid-turn keeps its task", async () => {
-  await insertAgent(h.t.sql, { id: "rep-attr", slug: "attr-report" });
+  await insertAgent(h.t.sql, { id: "rep-attr", handle: "attr-report" });
   await h.makeRuntime({ memberUpdateDebounceMs: 0 });
   await h.send("boot");
   h.driver.last.emit(...ev.fullTurn());

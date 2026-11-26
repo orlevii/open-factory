@@ -149,7 +149,7 @@ export function dbSourcesStore(db: Db): SourcesStore {
 
 export interface SourcesDeps {
   store: SourcesStore;
-  /** Who lists any of the skills: template names and agent slugs (`LibraryIndex.usedByAny`). */
+  /** Who lists any of the skills: template names and agent handles (`LibraryIndex.usedByAny`). */
   usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }>;
   factoryHome: string;
   hostClaudeDir: string;

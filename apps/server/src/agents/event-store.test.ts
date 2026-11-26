@@ -11,8 +11,8 @@ beforeAll(async () => {
   store = new EventStore(t.db);
   await t.sql.unsafe(principalSql("u1", "human", "or"));
   await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
-  await insertAgent(t.sql, { id: "a1", slug: "dev" });
-  await insertAgent(t.sql, { id: "a2", slug: "b" });
+  await insertAgent(t.sql, { id: "a1", handle: "dev" });
+  await insertAgent(t.sql, { id: "a2", handle: "b" });
 });
 afterAll(() => t.close());
 
@@ -162,7 +162,7 @@ test("credential pauses extend, never shorten; a conditional clear keeps a later
 
 test("owed agents: per credential, flag set and cleared", async () => {
   await store.setNoticeOwed("a1", true);
-  expect(await store.owedAgents("cred-a1")).toEqual([{ id: "a1", slug: "dev" }]);
+  expect(await store.owedAgents("cred-a1")).toEqual([{ id: "a1", handle: "dev" }]);
   expect(await store.owedAgents("cred-a2")).toEqual([]);
   await store.setNoticeOwed("a1", false);
   expect(await store.owedAgents("cred-a1")).toEqual([]);

@@ -5,6 +5,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
@@ -66,7 +67,7 @@ async function setup() {
   await app.app.agents.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
@@ -80,9 +81,9 @@ async function setup() {
   return { t: app, driver, lead, projects, creds };
 }
 
-async function row(app: T, slug: string) {
-  const [r] = await app.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+async function row(app: T, handle: string) {
+  const [r] = await agentRecords(app.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r;
 }
 const grantIds = async (app: T, agentId: string) =>
@@ -109,13 +110,13 @@ async function spawnIdle(app: T, driver: FakeDriver, spawnerId: string, suffix: 
   const proc = driver.starts.find((p) => p.spec.agentId === r.agentId) as FakeProcess;
   proc.emit(...ev.fullTurn(`sess-${suffix}`));
   await rt.settled();
-  return { id: r.agentId, slug: r.slug, rt, proc };
+  return { id: r.agentId, handle: r.handle, rt, proc };
 }
 
 test("a spawner's credential change rewrites its live children in the same transaction, restarts them, and moves their pause lookup", async () => {
   const { t, driver, lead, creds } = await setup();
   const child = await spawnIdle(t, driver, lead.id, "c1");
-  expect((await row(t, child.slug)).credentialId).toBe(creds.work);
+  expect((await row(t, child.handle)).credentialId).toBe(creds.work);
 
   await t.app.agents.update(
     await t.refOf("lead"),
@@ -123,7 +124,7 @@ test("a spawner's credential change rewrites its live children in the same trans
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   expect((await row(t, "lead")).credentialId).toBe(creds.spare);
-  expect((await row(t, child.slug)).credentialId).toBe(creds.spare);
+  expect((await row(t, child.handle)).credentialId).toBe(creds.spare);
   // The idle child got the restart: its process was stopped to apply the change.
   await child.rt.settled();
   expect(child.proc.stopped).toBe(true);
@@ -175,7 +176,7 @@ test("terminated children are never touched by syncChildren", async () => {
     status: "terminated",
   });
   await gone.rt.settled();
-  const before = await row(t, gone.slug);
+  const before = await row(t, gone.handle);
 
   const changed = await t.db.transaction(async (tx) => {
     await tx
@@ -185,7 +186,7 @@ test("terminated children are never touched by syncChildren", async () => {
     return t.app.agents.syncChildren(tx, lead.id);
   });
   expect(changed).toEqual([live.id]);
-  expect(await row(t, gone.slug)).toEqual(before);
+  expect(await row(t, gone.handle)).toEqual(before);
   expect(await grantIds(t, gone.id)).toEqual([]);
   // Nothing to change: an in-sync child isn't reported.
   expect(await t.db.transaction((tx) => t.app.agents.syncChildren(tx, lead.id))).toEqual([]);
@@ -227,5 +228,5 @@ test("a child's forward holding its own row lock doesn't deadlock with a spawner
   release();
   await forward;
   await update;
-  expect((await row(t, child.slug)).credentialId).toBe(creds.spare);
+  expect((await row(t, child.handle)).credentialId).toBe(creds.spare);
 });

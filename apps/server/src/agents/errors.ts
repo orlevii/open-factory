@@ -35,15 +35,15 @@ export function forSpawnedAgent(err: AgentStartError): AgentStartError {
 }
 
 export class AgentArchivedError extends Error {
-  constructor(slug: string) {
-    super(`@${slug} is archived. Restore it first.`);
+  constructor(handle: string) {
+    super(`@${handle} is archived. Restore it first.`);
     this.name = "AgentArchivedError";
   }
 }
 /** S7 §8: the agent was terminated; it is read-only forever (REST answers `409 agent_terminated`). */
 export class AgentTerminatedError extends Error {
-  constructor(slug: string) {
-    super(`@${slug} was terminated and can't receive messages.`);
+  constructor(handle: string) {
+    super(`@${handle} was terminated and can't receive messages.`);
     this.name = "AgentTerminatedError";
   }
 }
@@ -114,13 +114,13 @@ export class InvalidCursorError extends Error {
 
 /** Why Stop crons is refused (S9 §10.3); both are `409`. */
 export class StopCronsError extends ApiError {
-  constructor(code: "no_crons" | "stopping", slug: string) {
+  constructor(code: "no_crons" | "stopping", handle: string) {
     super(
       409,
       code,
       code === "no_crons"
-        ? `@${slug} has no crons.`
-        : `@${slug} is already stopping; its crons stop with it.`,
+        ? `@${handle} has no crons.`
+        : `@${handle} is already stopping; its crons stop with it.`,
     );
     this.name = "StopCronsError";
   }

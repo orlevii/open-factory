@@ -32,7 +32,8 @@ export type TaskView = {
   key: string;
   title: string;
   status: TaskStatus;
-  assignee?: string;
+  /** The assignee's principal; an MCP result writes it as its tag. */
+  assignee?: { ref: string; handle: string };
   assigneeEnded?: "archived" | "terminated";
   blockedBy: string[];
 };
@@ -49,7 +50,7 @@ export type CommentResult = {
   /** The stored text: every tag as `<@ref>`. */
   body: string;
   createdAt: Date;
-  deliveredTo: string[];
+  deliveredTo: { ref: string; handle: string }[];
   mentionedHumans: { ref: string; handle: string }[];
   notReached: { name: string; reason: "archived" | "terminated" | "too_many" }[];
   /** Agent recipients the loop guard parked (I8 §6.3): the comment is posted, their copy waits for a human's Resume. */
@@ -102,7 +103,7 @@ type Outcome = {
   keys: string[];
   /** Recipients of a `task_assigned` row, for the errored note (computed after the commit). */
   assignedAgentIds: string[];
-  assigneeSlug?: string;
+  assigneeHandle?: string;
   assigneeEnded?: "archived" | "terminated";
 };
 
@@ -175,8 +176,8 @@ export class TaskService {
         ),
       ],
     );
-    if (out.assigneeEnded && out.assigneeSlug)
-      notes.push(`The assignee @${out.assigneeSlug} was ${out.assigneeEnded}.`);
+    if (out.assigneeEnded && out.assigneeHandle)
+      notes.push(`The assignee @${out.assigneeHandle} was ${out.assigneeEnded}.`);
     return {
       task: out.view,
       changed: out.changed,
@@ -197,7 +198,7 @@ export class TaskService {
     for (const id of erroredCheck) {
       if ((await this.d.router.statusOfAgent(id)) === "errored")
         notes.push(
-          `@${await this.slugOf(id)} is errored; it will see this after it is restarted (restart_agent, or a human).`,
+          `@${await this.handleOf(id)} is errored; it will see this after it is restarted (restart_agent, or a human).`,
         );
     }
     this.d.router.handOffTaskRows(out.agentRows);
@@ -251,7 +252,7 @@ export class TaskService {
     // The tags are the mentions: the stored text and the refs they name (an unknown ref refuses the comment).
     const { text, refs } = await resolveField(tx, raw, actor.kind, "body", warnings);
     const notReached: CommentResult["notReached"] = [];
-    const candidates: { id: string; slug: string }[] = [];
+    const candidates: { id: string; handle: string }[] = [];
     const userIds: string[] = [];
     const handles = new Map<string, { ref: string; handle: string }>();
     const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.id === id;
@@ -278,7 +279,7 @@ export class TaskService {
           handles.set(p.id, { ref: p.ref, handle: p.handle });
         }
       } else if (!isAuthorAgent(agent.id) && !candidates.some((c) => c.id === agent.id))
-        candidates.push({ id: agent.id, slug: p.handle });
+        candidates.push({ id: agent.id, handle: p.handle });
     }
     for (const r of refs.slice(MAX_MENTIONS))
       notReached.push({ name: tagged.get(r)?.handle ?? r, reason: "too_many" });
@@ -300,13 +301,13 @@ export class TaskService {
     const mentionedAgentIds: string[] = [];
     for (const c of candidates) {
       const e = ended.get(c.id);
-      if (e) notReached.push({ name: c.slug, reason: e });
+      if (e) notReached.push({ name: c.handle, reason: e });
       else mentionedAgentIds.push(c.id);
     }
     if (task.assigneeAgentId) {
       const e = ended.get(task.assigneeAgentId);
       if (e && !isAuthorAgent(task.assigneeAgentId))
-        notReached.push({ name: await this.slugOf(task.assigneeAgentId, tx), reason: e });
+        notReached.push({ name: await this.handleOf(task.assigneeAgentId, tx), reason: e });
     }
     const live = new Set(locked.filter((a) => !ended.has(a.id)).map((a) => a.id));
 
@@ -348,10 +349,11 @@ export class TaskService {
       },
     });
     const written = await this.write(tx, actor, planned);
-    const deliveredTo: string[] = [];
+    const deliveredTo: { ref: string; handle: string }[] = [];
     for (const r of written.agentRows) {
-      const slug = await this.slugOf(r.row.toId as string, tx);
-      if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
+      const p = await this.principalOfAgent(r.row.toId as string, tx);
+      if (!deliveredTo.some((d) => d.ref === p.ref))
+        deliveredTo.push({ ref: p.ref, handle: p.handle });
     }
     const mentionedHumans = userIds
       .filter((u) => written.userIds.includes(u))
@@ -388,8 +390,17 @@ export class TaskService {
   }
 
   /** Inside a transaction, pass `tx`: a call on its own connection would wait on our uncommitted rows (§13.1). */
-  private async slugOf(agentId: string, tx?: Exec): Promise<string> {
-    return (await this.d.store.agentById(agentId, tx))?.slug ?? agentId;
+  private async principalOfAgent(
+    agentId: string,
+    tx: Exec = this.d.db,
+  ): Promise<{ ref: string; handle: string }> {
+    const p = (await principalsByIds(tx, [agentId])).get(agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p;
+  }
+
+  private async handleOf(agentId: string, tx?: Exec): Promise<string> {
+    return (await this.principalOfAgent(agentId, tx)).handle;
   }
 
   /** Spec §13.1, in order. */
@@ -575,10 +586,10 @@ export class TaskService {
     if (assigneeId && (!before || changedAssignee)) {
       const e = ended.get(assigneeId);
       if (e) {
-        const slug = await this.slugOf(assigneeId, tx);
+        const handle = await this.handleOf(assigneeId, tx);
         throw new TaskError(
           "assignee_ended",
-          `@${slug} was ${e} and can't be assigned tasks.`,
+          `@${handle} was ${e} and can't be assigned tasks.`,
           409,
           "assignee",
         );
@@ -724,15 +735,16 @@ export class TaskService {
         : [];
     const written = await this.write(tx, actor, planned);
 
-    const assigneeSlug = next.assigneeAgentId
-      ? await this.slugOf(next.assigneeAgentId, tx)
+    const assignee = next.assigneeAgentId
+      ? await this.principalOfAgent(next.assigneeAgentId, tx)
       : undefined;
+    const assigneeHandle = assignee?.handle;
     const assigneeEnded = next.assigneeAgentId ? ended.get(next.assigneeAgentId) : undefined;
     const view: TaskView = {
       key: taskKey(row.number),
       title: next.title,
       status: next.status,
-      ...(assigneeSlug ? { assignee: assigneeSlug } : {}),
+      ...(assignee ? { assignee: { ref: assignee.ref, handle: assignee.handle } } : {}),
       ...(assigneeEnded ? { assigneeEnded } : {}),
       blockedBy: blocked,
     };
@@ -750,7 +762,7 @@ export class TaskService {
       assignedAgentIds: planned
         .filter((p) => p.kind === "task_assigned")
         .flatMap((p) => (p.to.kind === "agent" ? [p.to.id] : [])),
-      ...(assigneeSlug ? { assigneeSlug } : {}),
+      ...(assigneeHandle ? { assigneeHandle } : {}),
       ...(assigneeEnded && changedNames.length ? { assigneeEnded } : {}),
     };
   }
@@ -902,7 +914,7 @@ export class TaskService {
     return agentTagOf(p);
   }
 
-  /** `@handle` of a principal, read from `principals` (the interim `agents.slug` is never read here). */
+  /** `@handle` of a principal, read from `principals` . */
   private async labelOf(tx: Exec, id: string): Promise<string> {
     const p = (await principalsByIds(tx, [id])).get(id);
     return `@${p?.handle ?? id}`;

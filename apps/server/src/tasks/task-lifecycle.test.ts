@@ -8,11 +8,11 @@ let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
 const ids: Record<string, string> = {};
-const agent = (slug: string): Actor => ({
+const agent = (handle: string): Actor => ({
   kind: "agent",
-  id: ids[slug] as string,
-  ref: testRef(ids[slug] as string),
-  handle: slug,
+  id: ids[handle] as string,
+  ref: testRef(ids[handle] as string),
+  handle: handle,
 });
 
 beforeEach(async () => {
@@ -20,29 +20,29 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: driver });
   const u = await signUp(h.app, { handle: "or" });
   or = { kind: "human", id: u.user.id, ref: testRef(u.user.id), handle: "or" };
-  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  for (const handle of ["lead", "dev", "qa"]) ids[handle] = (await h.seedAgent({ handle })).id;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
 });
 afterEach(() => h.close());
 
-const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
+const settle = async (...handles: string[]) => {
+  for (const s of handles) await (await runtimeOf(h.app, s))?.settled();
 };
-const procs = (slug: string) => driver.startsOf(slug);
-const proc = (slug: string) => procs(slug).at(-1);
-const reasons = async (slug: string) => {
-  const a = await agentRowOf(h.app, slug);
+const procs = (handle: string) => driver.startsOf(handle);
+const proc = (handle: string) => procs(handle).at(-1);
+const reasons = async (handle: string) => {
+  const a = await agentRowOf(h.app, handle);
   return (await h.app.store.after(a?.id ?? "", 0, 200))
     .map((e) => e.event)
     .flatMap((e) => (e.type === "process_started" ? [e.reason] : []));
 };
-const rows = (slug: string) =>
+const rows = (handle: string) =>
   h.sql`select m.id, m.kind, m.notice, m.state from messages m join agents a on a.id = m.to_id
-    where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
-const makeErrored = (slug = "dev") =>
-  h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = ${slug}`;
-const messageIns = async (slug: string) => {
-  const a = await agentRowOf(h.app, slug);
+    where a.id = (select id from principals where handle = ${handle}) and m.task_id is not null order by m.created_at`;
+const makeErrored = (handle = "dev") =>
+  h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where id = (select id from principals where handle = ${handle})`;
+const messageIns = async (handle: string) => {
+  const a = await agentRowOf(h.app, handle);
   return (await h.app.store.after(a?.id ?? "", 0, 500)).flatMap((e) =>
     e.event.type === "message_in" ? e.event.messages : [],
   );
@@ -60,9 +60,11 @@ test("an errored assignee: the row stays pending with the note; a human comment 
   await h.app.tasks.comment(agent("qa"), "T-1", "@dev any news?");
   await settle("dev");
   expect(procs("dev")).toHaveLength(0);
-  expect((await h.sql`select attempting from agents where slug = 'dev'`)[0]?.attempting).toBe(
-    false,
-  );
+  expect(
+    (
+      await h.sql`select attempting from agents where id = (select id from principals where handle = 'dev')`
+    )[0]?.attempting,
+  ).toBe(false);
   await h.app.tasks.comment(or, "T-1", "@dev please restart");
   await settle("dev");
   expect(await reasons("dev")).toContain("message");
@@ -143,7 +145,7 @@ test("shutdown begun: the change commits, nothing is handed over", async () => {
 });
 
 test("a terminated caller whose request is already past the listener is refused", async () => {
-  const kid = await h.seedAgent({ slug: "kid" });
+  const kid = await h.seedAgent({ handle: "kid" });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${kid.id}`;
   const as: Actor = { kind: "agent", id: kid.id, ref: testRef(kid.id), handle: "kid" };
   await h.app.tasks.create(as, { title: "t" });
@@ -159,7 +161,7 @@ test("a terminated caller whose request is already past the listener is refused"
 });
 
 test("a spawner terminating its child: pending task rows are rejected, the task keeps the ended assignee, the spawner may still change it", async () => {
-  const kid = await h.seedAgent({ slug: "kid" });
+  const kid = await h.seedAgent({ handle: "kid" });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${kid.id}`;
   const spy = vi.spyOn(h.app.router, "handOffTaskRows").mockImplementation(() => {});
   await h.app.tasks.create(or, { title: "t", assignee: "kid" });
@@ -205,7 +207,7 @@ test("unarchive is not retroactive: nothing was written while the agent was arch
 test("start a new session with only a task_update queued starts an attempt (S5's rule, accepted)", async () => {
   await h.app.tasks.create(or, { title: "t", assignee: "qa" });
   await settle("qa");
-  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'resume_unrecoverable' where slug = 'dev'`;
+  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'resume_unrecoverable' where id = (select id from principals where handle = 'dev')`;
   await h.app.tasks.update(or, "T-1", { assignee: "dev" });
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await settle("dev");

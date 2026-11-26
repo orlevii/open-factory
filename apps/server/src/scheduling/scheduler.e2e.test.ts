@@ -26,7 +26,7 @@ beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp(opts());
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  await h.seedAgent({ slug: "ceo" });
+  await h.seedAgent({ handle: "ceo" });
 });
 afterEach(() => h.close());
 

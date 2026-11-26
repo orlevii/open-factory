@@ -128,7 +128,7 @@ test.each([
     expect((await h.app.inject({ method, url, ...(payload ? { payload } : {}) })).statusCode).toBe(
       401,
     );
-    const lead = await h.seedAgent({ slug: "lead" });
+    const lead = await h.seedAgent({ handle: "lead" });
     const { token } = h.app.agentTokens.mint(lead.id);
     const agent = await h.app.inject({
       method,

@@ -249,8 +249,8 @@ describe("principals at sign-up (spec §4.1)", () => {
     expect(res.json()).toMatchObject({ id: user.id, handle: "me-ref", ref: refOf(user.id) });
   });
 
-  test("sign-up with an agent's slug is refused with 422 and creates nothing", async () => {
-    await insertAgent(t.sql, { id: "agent-claim", slug: "agentclaim" });
+  test("sign-up with an agent's handle is refused with 422 and creates nothing", async () => {
+    await insertAgent(t.sql, { id: "agent-claim", handle: "agentclaim" });
     await signUp(t.app, { handle: "someone-first" }); // an invite creator exists
     const before = await t.db.select().from(schema.principals);
     const res = await post("/api/auth/sign-up/email", await signUpBody("agentclaim"));

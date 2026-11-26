@@ -1,4 +1,4 @@
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import {
   type AgentStatus,
   MAX_BODY_BYTES,
@@ -13,7 +13,12 @@ import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
-import { principalById, principalsByIds } from "../principals/principal-store.ts";
+import {
+  type AgentRecord,
+  agentRecords,
+  principalById,
+  principalsByIds,
+} from "../principals/principal-store.ts";
 import { resolveField } from "../principals/principal-text.ts";
 import {
   attachmentOf,
@@ -80,7 +85,7 @@ type Target = {
   to: string;
   key: string;
   refused?: RecipientResult;
-  agent?: AgentRow;
+  agent?: AgentRecord;
   user?: { userId: string; handle: string };
   /** The plain-tag warning, when the recipient was named without a tag. */
   warning?: string;
@@ -252,7 +257,7 @@ export class Router {
             out.push({ target, humanRowId: row.id, created: true });
             continue;
           }
-          const agent = target.agent as AgentRow;
+          const agent = target.agent as AgentRecord;
           if ("userId" in from) {
             const made = clientMessageId
               ? await this.d.store.createClientMessage(
@@ -368,7 +373,7 @@ export class Router {
       // Only the request whose insert wrote the row hands it to the runtime; a concurrent repeat answers from the row.
       await Promise.all(
         agentRows.map(async (w) => {
-          const agent = w.target.agent as AgentRow;
+          const agent = w.target.agent as AgentRecord;
           const row = w.row as PendingRow;
           try {
             outcome.set(
@@ -377,7 +382,10 @@ export class Router {
             );
           } catch (e) {
             // Every row is committed: one recipient's failure (or the shutdown) is that recipient's result, not the call's.
-            this.d.log.error({ err: e, agent: agent.slug, message: row.id }, "handing over failed");
+            this.d.log.error(
+              { err: e, agent: agent.handle, message: row.id },
+              "handing over failed",
+            );
             outcome.set(w.target, {
               to: await this.d.store.agentTag(agent.id),
               kind: "agent",
@@ -398,7 +406,7 @@ export class Router {
     const ids = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
     const [agentRows, userRows] = ids.length
       ? await Promise.all([
-          this.d.db.select().from(schema.agents).where(inArray(schema.agents.id, ids)),
+          agentRecords(this.d.db).where(inArray(schema.agents.id, ids)),
           this.d.db
             .select({ id: schema.users.id, disabledAt: schema.users.disabledAt })
             .from(schema.users)
@@ -510,7 +518,11 @@ export class Router {
   }
 
   /** One committed agent row's hand-off and its result. The row is durable, so nothing here fails the other recipients. */
-  private async handOver(from: Sender, agent: AgentRow, row: PendingRow): Promise<RecipientResult> {
+  private async handOver(
+    from: Sender,
+    agent: AgentRecord,
+    row: PendingRow,
+  ): Promise<RecipientResult> {
     const to = await this.d.store.agentTag(agent.id);
     if ("userId" in from) {
       if (this.closed) throw new Error(SHUTTING_DOWN);
@@ -546,7 +558,7 @@ export class Router {
     // the row stays pending (runtimes.deliver logs, never throws).
     const status = await this.statusOf(agent.id).catch((err: unknown) => {
       this.d.log.error(
-        { err, agent: agent.slug, message: row.id },
+        { err, agent: agent.handle, message: row.id },
         "loading the recipient failed; the message stays pending",
       );
       return this.d.runtimes.statusOf(agent);
@@ -748,7 +760,7 @@ export class Router {
    * agent sender), once boot is done; the hand-off wakes it `spawned` and is enqueued, never awaited. Shutting down
    * (or before a boot that failed): the row stays pending for the next boot. Never throws: the child exists.
    */
-  async handOffBrief(row: PendingRow, child: AgentRow): Promise<AgentStatus> {
+  async handOffBrief(row: PendingRow, child: AgentRecord): Promise<AgentStatus> {
     try {
       await this.booted;
     } catch {
@@ -757,7 +769,7 @@ export class Router {
     if (this.closed) return this.d.runtimes.statusOf(child);
     const status = await this.statusOf(child.id).catch((err: unknown) => {
       this.d.log.error(
-        { err, agent: child.slug, message: row.id },
+        { err, agent: child.handle, message: row.id },
         "loading the spawned agent failed; its brief stays pending",
       );
       return this.d.runtimes.statusOf(child);

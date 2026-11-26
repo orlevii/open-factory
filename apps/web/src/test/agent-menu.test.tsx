@@ -446,7 +446,7 @@ test("a network failure on archive says the server can't be reached", async () =
   );
 });
 
-test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
+test("Restore in an archived agent's menu toasts Restored @handle.", async () => {
   const api = mockApi({
     [`POST /api/agents/${refFor("dev")}/unarchive`]: () => json({ agent: agentSummary() }),
     [`GET /api/agents/${refFor("dev")}`]: () =>
@@ -784,7 +784,7 @@ test("a 409 lost_work that arrives after the menu unmounted still opens the conf
   expect(await screen.findByRole("alertdialog", { name: "Restart @dev now?" })).toBeInTheDocument();
 });
 
-test("a 409 lost_work that arrives after the menu moved to another agent still targets the original slug", async () => {
+test("a 409 lost_work that arrives after the menu moved to another agent still targets the original handle", async () => {
   let release: (r: Response) => void = () => {};
   const api = mockApi({
     [`POST /api/agents/${refFor("dev")}/restart`]: (body) =>

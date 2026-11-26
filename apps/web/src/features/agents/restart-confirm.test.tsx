@@ -119,7 +119,7 @@ test("another failure toasts a message naming the agent", async () => {
   expect(notify).toHaveBeenCalledWith({ text: "Couldn't restart @dev: @dev is starting." });
 });
 
-test("the pending latch holds after the 202 until a status frame for that slug, shared by every button", async () => {
+test("the pending latch holds after the 202 until a status frame for that handle, shared by every button", async () => {
   mockApi({
     [`POST /api/agents/${refFor("dev")}/restart`]: () => json({ status: "restarting" }, 202),
   });

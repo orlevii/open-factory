@@ -17,8 +17,8 @@ describe("I1 §6.3: the chat thread", () => {
 
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
-    agentId = (await s.seedAgent({ slug: "dev" })).id;
-    opsId = (await s.seedAgent({ slug: "ops" })).id;
+    agentId = (await s.seedAgent({ handle: "dev" })).id;
+    opsId = (await s.seedAgent({ handle: "ops" })).id;
     const o = await s.signUpUser({ handle: "orc" });
     or = { cookie: o.cookie, id: o.user.id };
     const a = await s.signUpUser({ handle: "ann" });
@@ -63,10 +63,10 @@ describe("I1 §6.3: the chat thread", () => {
         ${o.reason === undefined ? "completed" : o.reason}, ${o.seq ?? null})`;
     return id;
   }
-  const get = async (qs = "", who: { cookie: string } | null = or, slug = "dev") =>
+  const get = async (qs = "", who: { cookie: string } | null = or, handle = "dev") =>
     s.app.inject({
       method: "GET",
-      url: `/api/agents/${slug === "nobody" ? UNKNOWN_REF : await s.refOf(slug)}/chat${qs}`,
+      url: `/api/agents/${handle === "nobody" ? UNKNOWN_REF : await s.refOf(handle)}/chat${qs}`,
       headers: who ? { cookie: who.cookie } : {},
     });
   type Entry = { kind: string; id?: string; body?: string; key?: string; outcome?: string };

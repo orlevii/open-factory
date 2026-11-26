@@ -53,7 +53,7 @@ async function show(ui: ReactNode) {
 }
 const line = () => document.querySelector<HTMLElement>("[data-speaker-line]") as HTMLElement;
 
-test("an agent sender: an avatar, the name, the @slug, a time; a link to its session", async () => {
+test("an agent sender: an avatar, the name, the @handle, a time; a link to its session", async () => {
   await show(<SpeakerLine from="b" fromKind="agent" at={AT} />);
   const l = line();
   const link = within(l).getByRole("link");
@@ -186,7 +186,7 @@ test("a human the server names by kind never looks up agents", async () => {
   expect(requestEnded).not.toHaveBeenCalled();
 });
 
-test("outside a session the line still renders: a slug stands in for an unknown agent", () => {
+test("outside a session the line still renders: a handle stands in for an unknown agent", () => {
   render(
     <TooltipProvider>
       <SpeakerLine from="@or" fromKind="human" at={AT} />

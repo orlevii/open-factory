@@ -132,7 +132,9 @@ export class Supervisor implements SlotPort {
       // An attempt whose wake was only queued never started a process: it isn't one the restart cut short (§5.7 step 4).
       void rt
         .wakeDropped()
-        .catch((err) => this.d.log.error({ err, agent: rt.agent.slug }, "dropping a wake failed"));
+        .catch((err) =>
+          this.d.log.error({ err, agent: rt.agent.handle }, "dropping a wake failed"),
+        );
     }
   }
 
@@ -253,7 +255,7 @@ export class Supervisor implements SlotPort {
             );
           } catch (err) {
             // That agent keeps its owed flag (boot retries); the others still get theirs.
-            this.d.log.error({ err, agent: a.slug }, "continue notice failed");
+            this.d.log.error({ err, agent: a.handle }, "continue notice failed");
           }
         }
       }
@@ -287,7 +289,7 @@ export class Supervisor implements SlotPort {
           void rt
             ?.imagePullFailed(failure.message, failure.fix)
             .catch((err) =>
-              this.d.log.error({ err, agent: rt.agent.slug }, "recording a failed pull failed"),
+              this.d.log.error({ err, agent: rt.agent.handle }, "recording a failed pull failed"),
             );
         }
         rt?.publishStatus();
@@ -332,7 +334,7 @@ export class Supervisor implements SlotPort {
     rt.publishStatus();
     void rt
       .grant(e.reason)
-      .catch((err) => this.d.log.error({ err, agent: rt.agent.slug }, "grant job failed"))
+      .catch((err) => this.d.log.error({ err, agent: rt.agent.handle }, "grant job failed"))
       .finally(() => {
         if (this.granted.get(e.agentId) === e) this.granted.delete(e.agentId);
       });

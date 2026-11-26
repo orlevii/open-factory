@@ -70,7 +70,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   await h.app.agents.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
@@ -81,37 +81,37 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
 
-  const procOf = (slug: string) => {
-    const p = driver.startsOf(slug).at(-1);
-    if (!p) throw new Error(`${slug} not started`);
+  const procOf = (handle: string) => {
+    const p = driver.startsOf(handle).at(-1);
+    if (!p) throw new Error(`${handle} not started`);
     return p;
   };
-  const tokenOf = (slug: string) => procOf(slug).spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
-  const settle = async (slug: string) => void (await (await runtimeOf(h.app, slug))?.settled());
-  const call = async (slug: string, name: string, args: object) => {
-    const r = await callTool(url, tokenOf(slug), name, args);
+  const tokenOf = (handle: string) => procOf(handle).spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
+  const settle = async (handle: string) => void (await (await runtimeOf(h.app, handle))?.settled());
+  const call = async (handle: string, name: string, args: object) => {
+    const r = await callTool(url, tokenOf(handle), name, args);
     return { isError: r.isError ?? false, out: JSON.parse(r.content[0]?.text ?? "null") };
   };
   /** The agent's part: opens its turn, says `text`; `endTurn` closes it. */
   const open = (p: FakeProcess, sessionId: string) => p.emit(ev.session(sessionId), ev.turn());
-  const close = async (slug: string, p: FakeProcess, text?: string) => {
+  const close = async (handle: string, p: FakeProcess, text?: string) => {
     if (text) p.emit(ev.text(text));
     p.emit(ev.usage(), ev.end());
-    await settle(slug);
+    await settle(handle);
   };
   /** A batch the factory wrote starts a turn when the process says so, and the turn ends. */
-  const turn = async (slug: string, p: FakeProcess, text?: string) => {
+  const turn = async (handle: string, p: FakeProcess, text?: string) => {
     p.emit(ev.turn());
-    await close(slug, p, text);
+    await close(handle, p, text);
   };
-  const batches = async (slug: string) => {
-    const row = await agentRowOf(h.app, slug);
+  const batches = async (handle: string) => {
+    const row = await agentRowOf(h.app, handle);
     return (await h.app.store.after(row?.id ?? "", 0, 1000)).flatMap((e) =>
       e.event.type === "message_in" ? [e.event.messages] : [],
     );
   };
-  const rows = async (slug: string, kind: string) => {
-    const row = await agentRowOf(h.app, slug);
+  const rows = async (handle: string, kind: string) => {
+    const row = await agentRowOf(h.app, handle);
     return h.db
       .select()
       .from(schema.messages)
@@ -143,12 +143,12 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     description: "Reviews the plan",
     prompt: "Review @tech-lead-t1's plan.",
   });
-  expect(tl).toMatchObject({ isError: false, out: { slug: "tech-lead-t1" } });
-  expect(rv).toMatchObject({ isError: false, out: { slug: "proxy-reviewer-r1" } });
+  expect(tl).toMatchObject({ isError: false, out: { handle: "tech-lead-t1" } });
+  expect(rv).toMatchObject({ isError: false, out: { handle: "proxy-reviewer-r1" } });
   // The first child hears (held) of the second joining; the second finds the first already there.
-  const joined = async (slug: string, about: string) => {
+  const joined = async (handle: string, about: string) => {
     const subject = await agentRowOf(h.app, about);
-    return (await rows(slug, "peer_joined")).filter((m) => m.subjectAgentId === subject?.id);
+    return (await rows(handle, "peer_joined")).filter((m) => m.subjectAgentId === subject?.id);
   };
   expect(await joined("tech-lead-t1", "proxy-reviewer-r1")).toHaveLength(1);
   expect(await joined("proxy-reviewer-r1", "tech-lead-t1")).toHaveLength(0);
@@ -203,16 +203,16 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
 
   // 4. The lead terminates both and spawns the developer.
   leadProc.emit(ev.turn());
-  for (const slug of ["tech-lead-t1", "proxy-reviewer-r1"]) {
-    expect(await call("lead", "terminate_agent", { target: slug })).toMatchObject({
+  for (const handle of ["tech-lead-t1", "proxy-reviewer-r1"]) {
+    expect(await call("lead", "terminate_agent", { target: handle })).toMatchObject({
       isError: false,
-      out: { slug, status: "terminated" },
+      out: { handle, status: "terminated" },
     });
-    const row = await agentRowOf(h.app, slug);
+    const row = await agentRowOf(h.app, handle);
     expect(row?.terminatedAt).toBeInstanceOf(Date);
     expect(row?.runtime).toBe("local"); // no container to remove
-    await settle(slug);
-    expect(procOf(slug).stopped).toBe(true);
+    await settle(handle);
+    expect(procOf(handle).stopped).toBe(true);
   }
   const dev = await call("lead", "spawn_agent", {
     template: "developer",
@@ -220,7 +220,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     description: "Implements the plan",
     prompt: "Implement plan.md",
   });
-  expect(dev).toMatchObject({ isError: false, out: { slug: "developer-d1" } });
+  expect(dev).toMatchObject({ isError: false, out: { handle: "developer-d1" } });
   await close("lead", leadProc);
 
   // 5. The developer works on its own worktree of the repo (the test stands in for its Bash tool).

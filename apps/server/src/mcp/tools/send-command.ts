@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import { neutraliseEnvelopeTags } from "@open-factory/harness";
 import {
   classifyInput,
@@ -20,6 +19,7 @@ import {
 } from "../../agents/errors.ts";
 import type { EventStore } from "../../agents/event-store.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
+import type { AgentRecord } from "../../principals/principal-store.ts";
 import {
   callerOf,
   type McpServer,
@@ -37,7 +37,7 @@ const utf8 = new TextEncoder();
  * is the caller's own (`by` is the caller's tag, `self` when it targets itself): no human sender, so nobody can cancel it.
  */
 export function sendCommandTool(d: {
-  caller: AgentRow;
+  caller: AgentRecord;
   runtimes: AgentRuntimes;
   store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalTag" | "agentTag">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
@@ -66,7 +66,7 @@ export function sendCommandTool(d: {
           const wanted = args.target.trim().replace(/^@/, "");
           let label = `@${wanted || args.target.trim()}`;
           let warning: string | undefined;
-          let target: AgentRow | undefined;
+          let target: AgentRecord | undefined;
           const asSelf = wanted === "me";
           if (asSelf) target = d.caller;
           else {

@@ -16,10 +16,10 @@ beforeAll(async () => {
   await t.sql`insert into users (id, name, email) values ('u2','Ana','ana@x.io')`;
   await t.sql.unsafe(principalSql("u3", "human", "gone"));
   await t.sql`insert into users (id, name, email, disabled_at) values ('u3','Gone','gone@x.io', now())`;
-  await insertAgent(t.sql, { id: "lead", slug: "lead", displayName: "Lead" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev", displayName: "Dev", reportsTo: "lead" });
-  await insertAgent(t.sql, { id: "ops", slug: "ops", displayName: "Ops" });
-  await insertAgent(t.sql, { id: "side", slug: "side", displayName: "Side", reportsTo: "ops" });
+  await insertAgent(t.sql, { id: "lead", handle: "lead", displayName: "Lead" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev", displayName: "Dev", reportsTo: "lead" });
+  await insertAgent(t.sql, { id: "ops", handle: "ops", displayName: "Ops" });
+  await insertAgent(t.sql, { id: "side", handle: "side", displayName: "Side", reportsTo: "ops" });
 });
 afterAll(async () => t.close());
 

@@ -9,3 +9,9 @@ export const refSchema = z.string().transform((s) => normaliseRef(s) ?? "");
 export const refParams = z.object({ ref: refSchema });
 
 export const NO_AGENT_AT_REF = "No agent at this ref";
+
+/** A ref in a query string: normalised like a path's, but one that isn't a ref is refused (400) instead of matching nothing. */
+export const refQuerySchema = z
+  .string()
+  .refine((s) => normaliseRef(s) !== undefined, "Not a ref.")
+  .transform((s) => normaliseRef(s) as string);

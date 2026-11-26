@@ -35,7 +35,7 @@ export type Actor = { kind: "agent" | "human"; id: string };
 export type LockWant = { id: string; mode: "update" | "share" };
 export type LockedAgent = {
   id: string;
-  slug: string;
+  handle: string;
   displayName: string;
   kind: string;
   status: string;
@@ -104,10 +104,11 @@ export class ScheduleStore {
       .sort((a, b) => Number(a.spawned) - Number(b.spawned) || a.id.localeCompare(b.id));
     const out: LockedAgent[] = [];
     for (const { id } of order) {
-      const lock = mode.get(id) === "update" ? sql`for no key update` : sql`for share`;
+      const lock = mode.get(id) === "update" ? sql`for no key update of a` : sql`for share of a`;
       const rows = await tx.execute(sql`
-        select id, slug, display_name as "displayName", kind, status, archived_at as "archivedAt",
-               terminated_at as "terminatedAt" from agents where id = ${id} ${lock}`);
+        select a.id, p.handle, a.display_name as "displayName", a.kind, a.status, a.archived_at as "archivedAt",
+               a.terminated_at as "terminatedAt"
+        from agents a join principals p on p.id = a.id where a.id = ${id} ${lock}`);
       if (rows[0]) out.push(rows[0] as unknown as LockedAgent);
     }
     return out;

@@ -13,7 +13,7 @@ const clock = new Date("2026-11-20T10:00:00Z");
 beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver(), clock: () => clock });
   or = await signUp(h.app, { handle: "or" });
-  for (const slug of ["ceo", "dev"]) ids[slug] = (await h.seedAgent({ slug })).id;
+  for (const handle of ["ceo", "dev"]) ids[handle] = (await h.seedAgent({ handle })).id;
   frames = [];
   h.app.bus.subscribeAll((m) => frames.push(m));
 });
@@ -119,10 +119,10 @@ test("edit, pause, resume, delete and restore with their conflict codes; every c
 });
 
 test("restore of a schedule whose target ended is 409 target_ended", async () => {
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string} where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string} where id = (select id from principals where handle = 'dev')`;
   const s = await create({ target: "dev" });
   await call("DELETE", `/api/schedules/${s.key}`);
-  await h.sql`update agents set terminated_at = now(), terminated_by = null where slug = 'dev'`;
+  await h.sql`update agents set terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'dev')`;
   const r = await call("POST", `/api/schedules/${s.key}/restore`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({ code: "target_ended" });
@@ -142,6 +142,15 @@ test("list: ?done and ?target reach the query (order is the service test's)", as
   expect(await keys()).not.toContain(once.key);
   expect(await keys("?done=true")).toContain(once.key);
   expect(await keys(`?target=${h.seededRef("dev")}`)).toEqual([sooner.key]);
+});
+
+test("list: a ?target that is a handle, not a ref, is a 400 and an uppercase ref still filters", async () => {
+  const mine = await create({ cron: "0 9 * * *", target: "dev" });
+  await create({ cron: "0 10 * * *" });
+  const bad = await call("GET", "/api/schedules?target=dev");
+  expect(bad.statusCode).toBe(400);
+  const upper = await call("GET", `/api/schedules?target=${h.seededRef("dev").toUpperCase()}`);
+  expect((upper.json().schedules as ScheduleItem[]).map((x) => x.key)).toEqual([mine.key]);
 });
 
 test("the agent summary counts schedules targeting it that are neither deleted nor done", async () => {

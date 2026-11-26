@@ -12,7 +12,7 @@ import {
   type skillDetailSchema,
   type skillGroupSchema,
 } from "@open-factory/shared";
-import { and, asc, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
@@ -49,7 +49,7 @@ export interface TemplatesPort {
 }
 
 export interface AgentUse {
-  slug: string;
+  handle: string;
   template: string;
   config: AgentOverlay;
 }
@@ -73,11 +73,12 @@ export function dbStore(db: Pick<Db, "select">): LibraryStore {
     agents: () =>
       db
         .select({
-          slug: schema.agents.slug,
+          handle: schema.principals.handle,
           template: schema.agents.template,
           config: schema.agents.config,
         })
         .from(schema.agents)
+        .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
         .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt))),
   };
 }
@@ -218,7 +219,7 @@ export class LibraryIndex {
     return [...out];
   }
 
-  /** Who lists each name: template names and agent slugs, by effective skills. */
+  /** Who lists each name: template names and agent handles, by effective skills. */
   private async usage(): Promise<
     Map<
       string,
@@ -259,7 +260,7 @@ export class LibraryIndex {
       ]);
       for (const n of effective) {
         const u = of(n);
-        u.agents.add(a.slug);
+        u.agents.add(a.handle);
         u.agentsByTemplate.set(a.template, (u.agentsByTemplate.get(a.template) ?? 0) + 1);
       }
     }
@@ -271,7 +272,7 @@ export class LibraryIndex {
     return { templates: [...(u?.templates ?? [])].sort(), agents: [...(u?.agents ?? [])].sort() };
   }
 
-  /** Who lists any of `names` (one usage pass): sorted template names and agent slugs, each once. */
+  /** Who lists any of `names` (one usage pass): sorted template names and agent handles, each once. */
   async usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }> {
     const usage = await this.usage();
     const templates = new Set<string>();

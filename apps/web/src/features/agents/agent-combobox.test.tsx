@@ -80,7 +80,7 @@ function setup(props: Parameters<typeof Harness>[0] = {}) {
 const names = () =>
   screen.getAllByRole("option").map((o) => (o.textContent ?? "").replace(/\s+/g, " ").trim());
 
-test("typing a slug or a name finds the agent among 214", async () => {
+test("typing a handle or a name finds the agent among 214", async () => {
   world();
   const { trigger, onValueChange } = setup();
   await userEvent.click(trigger);

@@ -25,7 +25,7 @@ beforeAll(async () => {
   t = await createTestDb();
   await t.sql.unsafe(principalSql("u1", "human", "or"));
   await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
-  for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, slug: id });
+  for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, handle: id });
   const store = new EventStore(t.db);
   deps = {
     settings: {
@@ -322,7 +322,7 @@ describe("notices on open", () => {
       over: Parameters<typeof insertAgent>[1] extends infer A ? Partial<A> : never = {},
     ) => {
       const id = `n${++n}`;
-      await insertAgent(t.sql, { id, slug: id, ...over } as never);
+      await insertAgent(t.sql, { id, handle: id, ...over } as never);
       return id;
     };
   })();

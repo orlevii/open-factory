@@ -44,10 +44,10 @@ const doc = (template: Record<string, unknown> = {}, more: Partial<ConfigDoc> = 
 });
 
 let n = 0;
-async function agent(o: Omit<Parameters<typeof insertAgent>[1], "id" | "slug"> = {}) {
+async function agent(o: Omit<Parameters<typeof insertAgent>[1], "id" | "handle"> = {}) {
   n += 1;
   const id = `cc${n}`;
-  await insertAgent(h.t.sql, { id, slug: `cc-${n}`, ...o });
+  await insertAgent(h.t.sql, { id, handle: `cc-${n}`, ...o });
   return id;
 }
 async function rowOf(id: string) {

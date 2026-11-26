@@ -137,7 +137,7 @@ export function rowMenuTitle(row: Row, handle: string): string {
       return at(`Message from ${whoName(row.message.from)}`, row.at);
     case "peer": {
       // A neighborhood notice (peer_joined / peer_left), not a message.
-      const who = row.envelope.subject?.slug;
+      const who = row.envelope.subject?.handle;
       if (!who) return "Neighborhood change";
       return `@${who} ${row.envelope.subject?.left ? "left" : "joined"}`;
     }

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRow, type Db, schema, type UploadRow } from "@open-factory/db";
+import { type Db, schema, type UploadRow } from "@open-factory/db";
 import { and, count, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
-import { principalById } from "../principals/principal-store.ts";
+import { type AgentRecord, agentRecords, principalById } from "../principals/principal-store.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 import { excludeFactoryDir } from "./git-exclude.ts";
@@ -95,7 +95,7 @@ export class UploadService {
    * `UploadAgentEndedError`. On the first upload (and idempotently after), `.factory/` goes into `info/exclude`.
    */
   async create(
-    agent: AgentRow,
+    agent: AgentRecord,
     uploaderId: string,
     name: string,
     source: AsyncIterable<Buffer | Uint8Array>,
@@ -137,7 +137,7 @@ export class UploadService {
   }
 
   private async createLocked(
-    agent: AgentRow,
+    agent: AgentRecord,
     uploaderId: string,
     name: string,
     source: AsyncIterable<Buffer | Uint8Array>,
@@ -150,14 +150,11 @@ export class UploadService {
     let row: UploadRow;
     try {
       row = await this.d.lock.run(await this.ref(agent.id), async () => {
-        const [now] = await this.d.db
-          .select()
-          .from(schema.agents)
-          .where(eq(schema.agents.id, agent.id));
+        const [now] = await agentRecords(this.d.db).where(eq(schema.agents.id, agent.id));
         if (!now || now.archivedAt || now.terminatedAt || now.workspaceDeletedAt)
           throw now?.archivedAt && !now.terminatedAt
-            ? new UploadAgentEndedError("agent_archived", `@${agent.slug} is archived.`)
-            : new UploadAgentEndedError("agent_terminated", `@${agent.slug} was terminated.`);
+            ? new UploadAgentEndedError("agent_archived", `@${agent.handle} is archived.`)
+            : new UploadAgentEndedError("agent_terminated", `@${agent.handle} was terminated.`);
         const s = written.sniffed;
         const [r] = await this.d.db
           .insert(uploads)
@@ -184,13 +181,13 @@ export class UploadService {
       throw err;
     }
     await this.exclude(agent, store.root).catch((err: unknown) =>
-      this.d.log.warn({ err, agent: agent.slug }, "adding .factory/ to info/exclude failed"),
+      this.d.log.warn({ err, agent: agent.handle }, "adding .factory/ to info/exclude failed"),
     );
     return uploadInfo(row);
   }
 
   /** `workdir` is the store's real path (review I3), so it compares with the realpath'd roots. */
-  private async exclude(agent: AgentRow, workdir: string) {
+  private async exclude(agent: AgentRecord, workdir: string) {
     const grants = await this.d.db
       .select({ hostPath: projects.hostPath })
       .from(agentProjectGrants)
@@ -199,7 +196,7 @@ export class UploadService {
     const outcome = await excludeFactoryDir(workdir, [workdir, ...grants.map((g) => g.hostPath)]);
     if (outcome === "refused")
       this.d.log.warn(
-        { agent: agent.slug },
+        { agent: agent.handle },
         "the agent's git dir is unsafe; info/exclude was not written",
       );
   }
@@ -224,7 +221,7 @@ export class UploadService {
    * file is missing or isn't what was uploaded.
    */
   async read(
-    agent: AgentRow,
+    agent: AgentRecord,
     r: UploadRow,
   ): Promise<{ data: Buffer; mime: ImageMime | typeof TEXT_MIME } | "gone" | "changed"> {
     if (agent.workspaceDeletedAt) return "gone";
@@ -293,8 +290,9 @@ export class UploadService {
     }
     // Review M2: files no row references (a crash before the insert, a failed delete, a leftover temp name).
     const live = await this.d.db
-      .select({ id: schema.agents.id, slug: schema.agents.slug })
+      .select({ id: schema.agents.id, handle: schema.principals.handle })
       .from(schema.agents)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(isNull(schema.agents.workspaceDeletedAt));
     for (const a of live) {
       try {
@@ -310,7 +308,7 @@ export class UploadService {
         });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        this.d.log.warn({ err, agent: a.slug }, "sweeping an agent's upload files failed");
+        this.d.log.warn({ err, agent: a.handle }, "sweeping an agent's upload files failed");
       }
     }
     return n;

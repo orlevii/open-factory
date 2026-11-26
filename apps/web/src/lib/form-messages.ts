@@ -28,7 +28,7 @@ export const FORM_MSG = {
   enterDisplayName: "Enter a display name.",
   chooseTemplate: "Choose a template.",
   chooseTemplateFirst: "Choose a template first",
-  enterSlug: "Enter a slug.",
+  enterHandle: "Enter a slug.",
   chooseCredential: "Choose a credential.",
   chooseManager: "Choose a manager.",
   taskKeys: "Use task keys, like T-41.",

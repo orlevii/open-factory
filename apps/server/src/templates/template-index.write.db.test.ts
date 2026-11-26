@@ -13,10 +13,11 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import { fileHash, type TemplateIndex } from "./template-index.ts";
@@ -44,14 +45,14 @@ function writeTemplate(name: string, files: Record<string, string> = {}) {
 const events = (agentId: string) =>
   t.sql<{ payload: { by: string; changes: string[] } }[]>`
     select payload from session_events where agent_id = ${agentId} and type = 'config_changed'`;
-const idOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const idOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r.id;
 };
-const agentOn = async (slug: string, template: string, reportsTo = "or") => {
+const agentOn = async (handle: string, template: string, reportsTo = "or") => {
   await t.app.agents.create(
-    { template, slug, displayName: slug, description: "", reportsTo, credential: "work" },
+    { template, handle, displayName: handle, description: "", reportsTo, credential: "work" },
     human,
   );
 };
@@ -79,7 +80,7 @@ beforeAll(async () => {
     kind: "agent",
     id: await idOf("hr-bot"),
     ref: testRef(await idOf("hr-bot")),
-    slug: "hr-bot",
+    handle: "hr-bot",
   };
 });
 afterAll(() => t.close());
@@ -217,7 +218,7 @@ test("an agent write to a template with an archived local agent is refused (R9)"
   await t.db
     .update(schema.agents)
     .set({ runtime: "local", archivedAt: new Date() })
-    .where(eq(schema.agents.slug, "loc-agent"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"loc-agent"})`));
   await expect(
     idx.writeFile("haslocal", "AGENTS.md", "# x\n", hashOf("haslocal", "AGENTS.md"), hr),
   ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));

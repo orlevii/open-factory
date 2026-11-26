@@ -213,7 +213,7 @@ export const taskChangeResponseSchema = z.object({
 });
 export const taskCommentResponseSchema = z.object({
   comment: taskActivitySchema.options[0],
-  deliveredTo: z.array(z.string()),
+  deliveredTo: z.array(z.object({ ref: z.string(), handle: z.string() })),
   mentionedHumans: z.array(z.object({ ref: z.string(), handle: z.string() })),
   notReached: z.array(z.object({ name: z.string(), reason: z.string() })),
   note: z.string().optional(),

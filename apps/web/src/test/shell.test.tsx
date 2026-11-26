@@ -321,7 +321,7 @@ test("Agents row: label links /agents, chevron collapses the whole tree (of-tree
   expect(await screen.findByRole("tree", { name: "Agents" })).toBeInTheDocument();
 });
 
-test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/badge-worthy avatars; tooltip 'Name · @slug · Status'", async () => {
+test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/badge-worthy avatars; tooltip 'Name · @handle · Status'", async () => {
   mockApi({
     "GET /api/agents?": () =>
       json({

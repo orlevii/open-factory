@@ -24,12 +24,12 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: drv });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
-  for (const slug of ["lead", "dev", "qa", "kid"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa", "kid"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'kid')`;
 });
 afterEach(() => h.close());
 
@@ -42,26 +42,26 @@ const call = async (who: string, command: string, target: string) => {
     json: r.isError ? undefined : JSON.parse(text(r)),
   };
 };
-const rt = async (slug: string) => {
-  const r = await runtimeOf(h.app, slug);
-  if (!r) throw new Error(`no runtime ${slug}`);
+const rt = async (handle: string) => {
+  const r = await runtimeOf(h.app, handle);
+  if (!r) throw new Error(`no runtime ${handle}`);
   return r;
 };
-const procOf = (slug: string) => drv.starts.filter((p) => p.spec.agentId === ids[slug]).at(-1);
+const procOf = (handle: string) => drv.starts.filter((p) => p.spec.agentId === ids[handle]).at(-1);
 /** Starts the agent with a human message and leaves its turn open (`open`) or finished. */
-async function start(slug: string, open: boolean) {
+async function start(handle: string, open: boolean) {
   await h.app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: [slug], body: "work", urgent: false, clientMessageId: crypto.randomUUID() },
+    payload: { to: [handle], body: "work", urgent: false, clientMessageId: crypto.randomUUID() },
   });
-  procOf(slug)?.emit(ev.session(), ev.turn(), ev.usage(), ...(open ? [] : [ev.end()]));
-  await (await rt(slug)).settled();
+  procOf(handle)?.emit(ev.session(), ev.turn(), ev.usage(), ...(open ? [] : [ev.end()]));
+  await (await rt(handle)).settled();
 }
-const rawQueue = async (slug: string) =>
-  (await rt(slug)).queueItems().filter((q) => q.kind === "raw" || q.kind === "compact");
-const rawWrites = (slug: string) => procOf(slug)?.writes.filter((w) => w.kind === "raw") ?? [];
+const rawQueue = async (handle: string) =>
+  (await rt(handle)).queueItems().filter((q) => q.kind === "raw" || q.kind === "compact");
+const rawWrites = (handle: string) => procOf(handle)?.writes.filter((w) => w.kind === "raw") ?? [];
 
 test("every caller lists send_command; a spawned agent's says only yourself", async () => {
   const desc = async (who: string) => {
@@ -219,12 +219,12 @@ test("a spawned caller can command only itself", async () => {
 });
 
 test("a terminated or archived report is refused as for messages", async () => {
-  await h.sql`update agents set terminated_at = now() where slug = 'kid'`;
+  await h.sql`update agents set terminated_at = now() where id = (select id from principals where handle = 'kid')`;
   expect(await call("lead", "/context", "kid")).toMatchObject({
     err: true,
     text: "@kid was terminated and can't receive messages.",
   });
-  await h.sql`update agents set archived_at = now() where slug = 'dev'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'dev')`;
   expect(await call("lead", "/context", "dev")).toMatchObject({
     err: true,
     text: "@dev is archived and can't receive messages.",

@@ -39,7 +39,7 @@ type Seed = {
 const turns: Seed[] = [];
 type AgentFixture = {
   id: string;
-  slug: string;
+  handle: string;
   displayName: string;
   kind: "persistent" | "ephemeral";
   reportsTo?: string;
@@ -47,25 +47,25 @@ type AgentFixture = {
   terminated?: boolean;
 };
 const AGENTS: AgentFixture[] = [
-  { id: "a-lead", slug: "lead", displayName: "Lead", kind: "persistent" },
-  { id: "a-kid1", slug: "kid1", displayName: "Kid one", kind: "ephemeral", reportsTo: "a-lead" },
+  { id: "a-lead", handle: "lead", displayName: "Lead", kind: "persistent" },
+  { id: "a-kid1", handle: "kid1", displayName: "Kid one", kind: "ephemeral", reportsTo: "a-lead" },
   {
     id: "a-kid2",
-    slug: "kid2",
+    handle: "kid2",
     displayName: "Kid two",
     kind: "ephemeral",
     reportsTo: "a-lead",
     terminated: true,
   },
-  { id: "a-dev", slug: "dev", displayName: "Dev", kind: "persistent", reportsTo: "a-lead" },
-  { id: "a-w1", slug: "w1", displayName: "Busy", kind: "persistent" },
-  { id: "a-w2", slug: "w2", displayName: "W2", kind: "persistent" },
-  { id: "a-w3", slug: "w3", displayName: "W3", kind: "persistent" },
-  { id: "a-w4", slug: "w4", displayName: "W4", kind: "persistent" },
-  { id: "a-idle", slug: "idle", displayName: "Idle", kind: "persistent" },
-  { id: "a-gone", slug: "gone", displayName: "Gone", kind: "persistent", archived: true },
-  { id: "a-old", slug: "old", displayName: "Old", kind: "persistent", archived: true },
-  { id: "a-late", slug: "late", displayName: "Late", kind: "persistent" },
+  { id: "a-dev", handle: "dev", displayName: "Dev", kind: "persistent", reportsTo: "a-lead" },
+  { id: "a-w1", handle: "w1", displayName: "Busy", kind: "persistent" },
+  { id: "a-w2", handle: "w2", displayName: "W2", kind: "persistent" },
+  { id: "a-w3", handle: "w3", displayName: "W3", kind: "persistent" },
+  { id: "a-w4", handle: "w4", displayName: "W4", kind: "persistent" },
+  { id: "a-idle", handle: "idle", displayName: "Idle", kind: "persistent" },
+  { id: "a-gone", handle: "gone", displayName: "Gone", kind: "persistent", archived: true },
+  { id: "a-old", handle: "old", displayName: "Old", kind: "persistent", archived: true },
+  { id: "a-late", handle: "late", displayName: "Late", kind: "persistent" },
 ];
 const TASKS = [
   { id: "task1", title: "Ship it" },
@@ -206,7 +206,7 @@ beforeAll(async () => {
   for (const a of AGENTS)
     await insertAgent(t.sql, {
       id: a.id,
-      slug: a.slug,
+      handle: a.handle,
       displayName: a.displayName,
       kind: a.kind,
       reportsTo: a.reportsTo ?? undefined,
@@ -302,11 +302,11 @@ function expectedAgents(pred: (s: Seed) => boolean) {
     return [
       {
         ref: testRef(a.id),
-        handle: a.slug,
+        handle: a.handle,
         displayName: a.displayName,
         kind: a.kind,
         ...(a.kind === "ephemeral" && a.reportsTo
-          ? { spawner: { ref: testRef(a.reportsTo), handle: byId.get(a.reportsTo)?.slug } }
+          ? { spawner: { ref: testRef(a.reportsTo), handle: byId.get(a.reportsTo)?.handle } }
           : {}),
         archived: a.archived ?? false,
         terminated: a.terminated ?? false,
@@ -365,7 +365,7 @@ test("credentials(30): totals, top 5 agents by cost, rate-limit state and unattr
   expect(alpha?.totals).toEqual(reference((s) => pred(s) && s.credentialId === "c-a"));
   const perAgent = AGENTS.map((a) => ({
     ref: testRef(a.id),
-    handle: a.slug,
+    handle: a.handle,
     costUsd: reference((s) => pred(s) && s.credentialId === "c-a" && s.agentId === a.id).costUsd,
     turns: reference((s) => pred(s) && s.credentialId === "c-a" && s.agentId === a.id).turns,
   }))
@@ -480,7 +480,7 @@ test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
   ]);
 });
 
-test("agent(): a spawned agent's figure is its own; byTask holds the top 20; unknown slug", async () => {
+test("agent(): a spawned agent's figure is its own; byTask holds the top 20; unknown handle", async () => {
   const kid = await usage.agent(await refOfHandle(t.db, "kid1"), 90);
   expect(kid?.agent.kind).toBe("ephemeral");
   expect(kid?.total).toEqual(reference((s) => s.agentId === "a-kid1" && inCal(90)(s)));

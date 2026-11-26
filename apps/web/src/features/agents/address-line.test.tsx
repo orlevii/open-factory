@@ -9,7 +9,7 @@ import { AddressLine } from "./address-line";
 
 afterEach(() => {
   opened.mockClear();
-  slugBlur.mockClear();
+  handleBlur.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -18,7 +18,7 @@ function routes(taken: string[] = []) {
   mockApi({
     "GET /api/agents?ended=exclude": () =>
       json({
-        agents: taken.map((slug) => agentSummary({ handle: slug })),
+        agents: taken.map((handle) => agentSummary({ handle: handle })),
         running: { count: 0 },
         more: false,
       }),
@@ -28,7 +28,7 @@ function routes(taken: string[] = []) {
 }
 
 const opened = vi.fn();
-const slugBlur = vi.fn();
+const handleBlur = vi.fn();
 
 function Harness({
   initialName = "",
@@ -40,7 +40,7 @@ function Harness({
   error?: string;
 }) {
   const [name, setName] = useState(initialName);
-  const [slug, setSlug] = useState("");
+  const [handle, setHandle] = useState("");
   const [touched, setTouched] = useState(false);
   const [force, setForce] = useState(forceOpen);
   return (
@@ -51,15 +51,15 @@ function Harness({
       </button>
       <AddressLine
         name={name}
-        slug={slug}
-        slugTouched={touched}
-        onSlug={(s) => {
-          setSlug(s);
+        handle={handle}
+        handleTouched={touched}
+        onHandle={(s) => {
+          setHandle(s);
           setTouched(true);
         }}
         error={error}
         forceOpen={force}
-        onBlur={slugBlur}
+        onBlur={handleBlur}
         onOpened={() => {
           opened();
           setForce(false);
@@ -95,7 +95,7 @@ test("a taken address shows its suffix", async () => {
   await waitFor(() => expect(line()).toHaveTextContent("@priya-nair-2"));
 });
 
-test("Change opens the input with the derived slug, focused", async () => {
+test("Change opens the input with the derived handle, focused", async () => {
   const user = userEvent.setup();
   setup({ initialName: "Priya Nair" });
   const change = screen.getByRole("button", { name: "Change" });
@@ -106,7 +106,7 @@ test("Change opens the input with the derived slug, focused", async () => {
   expect(input).toHaveFocus();
 });
 
-test("once edited the name no longer drives the slug", async () => {
+test("once edited the name no longer drives the handle", async () => {
   const user = userEvent.setup();
   setup({ initialName: "Priya" });
   await user.click(screen.getByRole("button", { name: "Change" }));
@@ -129,7 +129,7 @@ test("forceOpen opens the input focused, with its error, and reports it", async 
   await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
 });
 
-test("forceOpen after the Name blurred moves focus to the slug input", async () => {
+test("forceOpen after the Name blurred moves focus to the handle input", async () => {
   const user = userEvent.setup();
   setup({ initialName: "" });
   await user.click(screen.getByLabelText("Name"));
@@ -150,22 +150,22 @@ test("forceOpen with the field already open (via Change) refocuses it", async ()
   expect(opened).toHaveBeenCalledTimes(1);
 });
 
-test("an error opens the field even without forceOpen, in the slug's note", () => {
+test("an error opens the field even without forceOpen, in the handle's note", () => {
   setup({ initialName: "Priya", error: "That address is taken." });
   expect(screen.getByLabelText("Slug")).toHaveAccessibleDescription("That address is taken.");
   expect(screen.getByText("That address is taken.").closest(".field-note")).not.toBeNull();
 });
 
-test("leaving the slug input passes the blur event on", async () => {
+test("leaving the handle input passes the blur event on", async () => {
   const user = userEvent.setup();
   setup({ initialName: "Priya" });
   await user.click(screen.getByRole("button", { name: "Change" }));
   await user.click(screen.getByLabelText("Name"));
-  expect(slugBlur).toHaveBeenCalledOnce();
-  expect(slugBlur.mock.calls[0]?.[0]).toHaveProperty("relatedTarget");
+  expect(handleBlur).toHaveBeenCalledOnce();
+  expect(handleBlur.mock.calls[0]?.[0]).toHaveProperty("relatedTarget");
 });
 
-test("the avatar's slug settles after 300ms without typing", async () => {
+test("the avatar's handle settles after 300ms without typing", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   setup({ initialName: "Priya" });

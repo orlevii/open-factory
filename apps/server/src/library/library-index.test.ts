@@ -60,7 +60,7 @@ function make(
   o: {
     sources?: SkillSourceRow[];
     templates?: Record<string, TemplateFixture>;
-    agents?: { slug: string; template: string; config: unknown }[];
+    agents?: { handle: string; template: string; config: unknown }[];
     checkingSince?: (id: string) => string | undefined;
   } = {},
 ) {
@@ -254,7 +254,7 @@ test("a template-local skill has no users of its own and does not take a same-na
   md(path.join(home, "templates", "dev", "skills", "shared"), "name: shared");
   const idx = make({
     templates: { dev: { local: ["shared"] }, ops: { skills: ["shared"] } },
-    agents: [{ slug: "ann", template: "ops", config: {} }],
+    agents: [{ handle: "ann", template: "ops", config: {} }],
   });
   const groups = await idx.skills();
   expect(groups.map((g) => g.group)).toEqual(["host", "template:dev"]);
@@ -273,9 +273,9 @@ test("a name a template lists that resolves nowhere is in the unknown group with
   const idx = make({
     templates: { dev: { skills: ["here", "gone"] }, ops: { skills: ["gone"] } },
     agents: [
-      { slug: "ann", template: "dev", config: {} },
-      { slug: "bob", template: "ops", config: { template: { skills: ["other"] } } },
-      { slug: "cy", template: "ops", config: { template: { skills: ["gone"] } } },
+      { handle: "ann", template: "dev", config: {} },
+      { handle: "bob", template: "ops", config: { template: { skills: ["other"] } } },
+      { handle: "cy", template: "ops", config: { template: { skills: ["gone"] } } },
     ],
   });
   const groups = await idx.skills();
@@ -292,9 +292,9 @@ test("usedBy lists templates and live agents by effective skills", async () => {
   const idx = make({
     templates: { dev: { skills: ["x"] }, ops: { skills: ["y"] } },
     agents: [
-      { slug: "ann", template: "dev", config: {} },
-      { slug: "bob", template: "dev", config: { template: { skills: ["y"] } } },
-      { slug: "cy", template: "ops", config: { template: { skills: ["x", "y"] } } },
+      { handle: "ann", template: "dev", config: {} },
+      { handle: "bob", template: "dev", config: { template: { skills: ["y"] } } },
+      { handle: "cy", template: "ops", config: { template: { skills: ["x", "y"] } } },
     ],
   });
   // Bob's own "y" adds to dev's "x".
@@ -306,8 +306,8 @@ test("an agent's own skill adds to its template's skills; it doesn't replace the
   const idx = make({
     templates: { dev: { skills: ["tdd"] } },
     agents: [
-      { slug: "ann", template: "dev", config: { template: { skills: ["own"] } } },
-      { slug: "bob", template: "dev", config: {} },
+      { handle: "ann", template: "dev", config: { template: { skills: ["own"] } } },
+      { handle: "bob", template: "dev", config: {} },
     ],
   });
   expect(await idx.usedBy("tdd")).toEqual({ templates: ["dev"], agents: ["ann", "bob"] });
@@ -343,9 +343,9 @@ test("a skill's detail carries its frontmatter hooks and its users grouped by te
   const idx = make({
     templates: { dev: { skills: ["x"] }, ops: { skills: [] } },
     agents: [
-      { slug: "ann", template: "dev", config: {} },
-      { slug: "cy", template: "ops", config: { template: { skills: ["x"] } } },
-      { slug: "di", template: "ops", config: { template: { skills: ["x"] } } },
+      { handle: "ann", template: "dev", config: {} },
+      { handle: "cy", template: "ops", config: { template: { skills: ["x"] } } },
+      { handle: "di", template: "ops", config: { template: { skills: ["x"] } } },
     ],
   });
   expect(await idx.detail("host", "x")).toMatchObject({

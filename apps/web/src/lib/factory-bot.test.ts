@@ -30,7 +30,7 @@ test("fnv1a32 known vectors", () => {
 });
 
 test("botParts golden vectors (a change here must be deliberate)", () => {
-  const slugs = [
+  const handles = [
     "lead",
     "dev",
     "reviewer",
@@ -42,7 +42,7 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
     "designer",
     "ops-xyzw",
   ];
-  expect(Object.fromEntries(slugs.map((s) => [s, botParts(s)]))).toMatchInlineSnapshot(`
+  expect(Object.fromEntries(handles.map((s) => [s, botParts(s)]))).toMatchInlineSnapshot(`
     {
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
         "accessory": 3,
@@ -118,7 +118,7 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
   `);
 });
 
-test("every part stays an integer in its range, over many slugs", () => {
+test("every part stays an integer in its range, over many handles", () => {
   const ranges = { head: [0, 3], eyes: [0, 5], mouth: [0, 3], accessory: [0, 4], fill: [1, 12] };
   for (let i = 0; i < 500; i++) {
     const p = botParts(`agent-${i}-${(i * 7919).toString(36)}`);

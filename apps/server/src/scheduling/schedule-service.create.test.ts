@@ -28,8 +28,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
@@ -63,7 +63,7 @@ test("a human creates a weekday cron: authored by them, next run computed from t
   expect(changed).toBe(1);
 });
 
-test("an agent's target defaults to itself, and 'me' and '@slug' resolve", async () => {
+test("an agent's target defaults to itself, and 'me' and '@handle' resolve", async () => {
   for (const to of [undefined, "me", "@dev", "dev"]) {
     const { item } = await svc.create(agent("dev"), { ...(to ? { target: to } : {}), ...weekday });
     expect(item.target.handle).toBe("dev");
@@ -160,10 +160,10 @@ test("the 21st active schedule of an agent is refused; paused count, deleted and
 });
 
 test("targets: unknown, humans, a handle, reserved, archived and terminated", async () => {
-  await insertAgent(t.sql, { id: "old", slug: "old", archived: true });
+  await insertAgent(t.sql, { id: "old", handle: "old", archived: true });
   await insertAgent(t.sql, {
     id: "gone",
-    slug: "gone",
+    handle: "gone",
     terminatedAt: new Date(),
     reportsTo: "ceo",
   });
@@ -188,7 +188,7 @@ test("targets: unknown, humans, a handle, reserved, archived and terminated", as
 test("a caller terminated meanwhile is refused", async () => {
   await insertAgent(t.sql, {
     id: "gone",
-    slug: "gone",
+    handle: "gone",
     terminatedAt: new Date(),
     reportsTo: "ceo",
   });
@@ -240,7 +240,7 @@ test("two concurrent creates by one agent at 19 are serialised by its row lock: 
 });
 
 test("A schedules for B while B schedules for A: no deadlock escapes, both succeed", async () => {
-  await insertAgent(t.sql, { id: "kid", slug: "kid" });
+  await insertAgent(t.sql, { id: "kid", handle: "kid" });
   await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
   for (let i = 0; i < 15; i++) {
     const res = await Promise.all([

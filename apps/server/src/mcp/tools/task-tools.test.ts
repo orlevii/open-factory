@@ -17,11 +17,11 @@ beforeEach(async () => {
   const u = await signUp(h.app, { handle: "or" });
   const [orPrincipal] = await h.sql`select ref from principals where handle = 'or'`;
   or = { kind: "human", id: u.user.id, ref: String(orPrincipal?.ref), handle: "or" };
-  for (const slug of ["lead", "dev", "qa"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
 });
 afterEach(() => h.close());
 
@@ -46,7 +46,7 @@ const names = async (who: string) =>
 test("a spawner lists the spawn tools only while its process runs with them", async () => {
   const base = await names("qa"); // the full base list is asserted in app.test.ts
   // I2 §6.2: the spawn tools follow the config the running process started with.
-  await h.sql`update agents set config = '{"template":{"can_spawn":["test"]}}'::jsonb where slug = 'lead'`;
+  await h.sql`update agents set config = '{"template":{"can_spawn":["test"]}}'::jsonb where id = (select id from principals where handle = 'lead')`;
   const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
   expect(await names("lead")).toEqual(base);

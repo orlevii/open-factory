@@ -24,7 +24,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Outcome as FormOutcomeValue } from "@/components/forms/form-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
+import { HeaderName, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -454,7 +454,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         <PageHeader
           title={template.config?.displayName ?? name}
           titleFromData
-          meta={<HeaderSlug value={name} />}
+          meta={<HeaderName value={name} />}
         />
         <PageBody>
           <div className="grid max-w-xl gap-3">
@@ -767,7 +767,7 @@ const TemplateHeader = memo(function TemplateHeader({
       <PageHeader
         title={template.config?.displayName ?? name}
         titleFromData
-        meta={<HeaderSlug value={name} />}
+        meta={<HeaderName value={name} />}
         actions={
           <>
             {errorCount > 0 ? (

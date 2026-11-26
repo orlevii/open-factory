@@ -79,15 +79,15 @@ async function openLead(world: World = {}) {
 }
 const posts = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
   api.calls.filter((c) => c.method === "POST" && c.url === "/api/agents");
-const created = (slug = "team-lead") => ({
-  "POST /api/agents": () => json({ agent: agentSummary({ handle: slug }) }, 201),
-  [`GET /api/agents/${slug}`]: () =>
+const created = (handle = "team-lead") => ({
+  "POST /api/agents": () => json({ agent: agentSummary({ handle: handle }) }, 201),
+  [`GET /api/agents/${handle}`]: () =>
     json({
-      agent: agentSummary({ handle: slug }),
+      agent: agentSummary({ handle: handle }),
       queue: [],
       lastSeq: 0,
     }),
-  [`GET /api/agents/${slug}/events?`]: () =>
+  [`GET /api/agents/${handle}/events?`]: () =>
     json({ events: [], hasMore: { before: false, after: false } }),
 });
 /** A POST that waits for the test to answer it. */
@@ -258,7 +258,7 @@ test("the template summary shows the template's description in full", async () =
   expect(await within(dialog).findByText(long)).toBeInTheDocument();
 });
 
-test("submit with an empty derived slug opens the address input, focused, with its error", async () => {
+test("submit with an empty derived handle opens the address input, focused, with its error", async () => {
   const { api } = await openLead();
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "李");
@@ -276,16 +276,16 @@ test("leaving Display name with a name that derives nothing opens the address in
   await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
 });
 
-test("a server fields.slug error opens the address input with the error", async () => {
+test("a server fields.handle error opens the address input with the error", async () => {
   await openLead({
     extra: {
       "POST /api/agents": () =>
         json(
           {
             error: {
-              code: "slug_taken",
-              message: "That slug is taken.",
-              fields: { slug: "That slug is taken." },
+              code: "handle_taken",
+              message: "That handle is taken.",
+              fields: { handle: "That handle is taken." },
             },
           },
           409,
@@ -293,7 +293,7 @@ test("a server fields.slug error opens the address input with the error", async 
     },
   });
   await userEvent.click(createButton());
-  expect(await screen.findByText("That slug is taken.")).toBeInTheDocument();
+  expect(await screen.findByText("That handle is taken.")).toBeInTheDocument();
   await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
   expect(field("Slug").value).toBe("team-lead");
 });
@@ -403,7 +403,7 @@ test("success closes the sheet, clears the draft and navigates to the session", 
   expect(notify).not.toHaveBeenCalled();
   expect(posts(api)[0]?.body).toEqual({
     template: "lead",
-    slug: "team-lead",
+    handle: "team-lead",
     displayName: "Team Lead",
     description: "Leads the team",
     reportsTo: refFor("alice"), // no manager picked: the signed-in human manages it
@@ -439,7 +439,7 @@ test("a created agent sets a cached setup answer's hasAgent without asking the s
   expect(api.calls.some((c) => c.url === "/api/setup")).toBe(false);
 });
 
-test("submit waits for the taken names before deriving the slug", async () => {
+test("submit waits for the taken names before deriving the handle", async () => {
   const users = held();
   const { api } = await openLead({
     agents: [],
@@ -465,7 +465,7 @@ test("submit waits for the taken names before deriving the slug", async () => {
     ),
   );
   await vi.waitFor(() => expect(posts(api)).toHaveLength(1));
-  expect(posts(api)[0]?.body).toMatchObject({ slug: "team-lead-2" });
+  expect(posts(api)[0]?.body).toMatchObject({ handle: "team-lead-2" });
 });
 
 test("Enter while pending submits once", async () => {
@@ -1106,10 +1106,10 @@ test("the template prefill never overwrites a field the user is in or has typed 
 test("the manager picker marks agents deeper than three levels with └", async () => {
   const chain = ["a", "b", "c", "d", "e"];
   await openLead({
-    agents: chain.map((slug, depth) =>
+    agents: chain.map((handle, depth) =>
       agentSummary({
-        handle: slug,
-        displayName: slug.toUpperCase(),
+        handle: handle,
+        displayName: handle.toUpperCase(),
         depth,
         ...(depth
           ? {
@@ -1127,8 +1127,8 @@ test("the manager picker marks agents deeper than three levels with └", async 
   await vi.waitFor(() => expect(select).toBeEnabled());
   await userEvent.click(select);
   const listbox = await screen.findByRole("listbox");
-  const rows = chain.map((slug) => {
-    const item = within(listbox).getByRole("option", { name: `${slug.toUpperCase()}@${slug}` });
+  const rows = chain.map((handle) => {
+    const item = within(listbox).getByRole("option", { name: `${handle.toUpperCase()}@${handle}` });
     return item.textContent?.replace(/@.*/, "");
   });
   expect(rows).toEqual(["A", "B", "C", "D", "└E"]);

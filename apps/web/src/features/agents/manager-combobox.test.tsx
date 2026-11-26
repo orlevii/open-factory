@@ -61,11 +61,11 @@ async function openNew(world: World = {}) {
   return manager;
 }
 
-async function openEdit(world: World = {}, slug = "lead") {
+async function openEdit(world: World = {}, handle = "lead") {
   mockWorld({ agents: AGENTS, users: USERS, ...world });
   renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
-  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(slug) }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(handle) }));
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   await within(dialog).findByRole("button", { name: "Save changes" });
   const manager = await screen.findByLabelText("Manager");

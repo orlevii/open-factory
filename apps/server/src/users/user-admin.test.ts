@@ -66,9 +66,9 @@ describe("disable", () => {
   });
 
   test("a user who manages agents is refused with 409 manages_agents naming them; nothing is disabled or signed out", async () => {
-    await h.seedAgent({ slug: "ada", reportsTo: al.user.id });
-    await h.seedAgent({ slug: "bob", reportsTo: al.user.id });
-    await h.seedAgent({ slug: "cy", reportsTo: or.user.id });
+    await h.seedAgent({ handle: "ada", reportsTo: al.user.id });
+    await h.seedAgent({ handle: "bob", reportsTo: al.user.id });
+    await h.seedAgent({ handle: "cy", reportsTo: or.user.id });
     const res = await as(or, "POST", `/api/users/${al.user.id}/disable`);
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatchObject({ code: "manages_agents", agents: ["ada", "bob"] });
@@ -78,9 +78,9 @@ describe("disable", () => {
   });
 
   test("once the agents are moved to another manager, the human can be disabled", async () => {
-    await h.seedAgent({ slug: "ada", reportsTo: al.user.id });
+    await h.seedAgent({ handle: "ada", reportsTo: al.user.id });
     expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(409);
-    await h.sql`update agents set reports_to = ${or.user.id} where slug = 'ada'`;
+    await h.sql`update agents set reports_to = ${or.user.id} where id = (select id from principals where handle = 'ada')`;
     expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(200);
   });
 
@@ -275,7 +275,7 @@ test.each([
   ["POST", "/api/users/x/enable"],
 ] as const)("%s %s: no session and an agent token get 401", async (method, url) => {
   expect((await h.app.inject({ method, url })).statusCode).toBe(401);
-  const agent = await h.seedAgent({ slug: "lead" });
+  const agent = await h.seedAgent({ handle: "lead" });
   const { token } = h.app.agentTokens.mint(agent.id);
   const res = await h.app.inject({ method, url, headers: { authorization: `Bearer ${token}` } });
   expect(res.statusCode).toBe(401);

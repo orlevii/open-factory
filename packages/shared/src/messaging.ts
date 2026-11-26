@@ -23,7 +23,7 @@ export const FACT_CODES = [
 export type FactCode = (typeof FACT_CODES)[number];
 
 export const subjectSchema = z.object({
-  slug: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   relation: z.enum(["peer", "report"]),
   left: z

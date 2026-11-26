@@ -41,13 +41,13 @@ test("put creates, then updates in place (same id, new updatedAt); bytes never h
 });
 
 test("usedBy comes from non-archived agents' overlays; put and remove restart exactly those", async () => {
-  const a = await t.seedAgent({ slug: "alpha", config: { template: { secrets: ["GH_TOKEN"] } } });
+  const a = await t.seedAgent({ handle: "alpha", config: { template: { secrets: ["GH_TOKEN"] } } });
   const b = await t.seedAgent({
-    slug: "beta",
+    handle: "beta",
     config: { template: { secrets: ["GH_TOKEN", "OTHER"] } },
   });
-  const old = await t.seedAgent({ slug: "old", config: { template: { secrets: ["GH_TOKEN"] } } });
-  await t.seedAgent({ slug: "none", config: { template: { secrets: ["OTHER"] } } });
+  const old = await t.seedAgent({ handle: "old", config: { template: { secrets: ["GH_TOKEN"] } } });
+  await t.seedAgent({ handle: "none", config: { template: { secrets: ["OTHER"] } } });
   await t.db
     .update(schema.agents)
     .set({ archivedAt: new Date() })
@@ -73,9 +73,15 @@ test("remove of a missing secret is a 404", async () => {
   });
 });
 
-test("one failed restart does not abort the others or the write, and is logged by slug only", async () => {
-  const a = await t.seedAgent({ slug: "sec-fail-a", config: { template: { secrets: ["FAILS"] } } });
-  const b = await t.seedAgent({ slug: "sec-fail-b", config: { template: { secrets: ["FAILS"] } } });
+test("one failed restart does not abort the others or the write, and is logged by handle only", async () => {
+  const a = await t.seedAgent({
+    handle: "sec-fail-a",
+    config: { template: { secrets: ["FAILS"] } },
+  });
+  const b = await t.seedAgent({
+    handle: "sec-fail-b",
+    config: { template: { secrets: ["FAILS"] } },
+  });
   const seen: string[] = [];
   const warns: { obj: object; msg: string }[] = [];
   const failing = new SecretService({
@@ -95,7 +101,7 @@ test("one failed restart does not abort the others or the write, and is logged b
   const row = await rowOf("FAILS");
   expect(t.app.vault.open(row.valueEnc, `secrets:${row.id}`)).toBe(VALUE);
   expect(warns).toHaveLength(1);
-  expect(warns[0]?.obj).toEqual({ slug: "sec-fail-a" });
+  expect(warns[0]?.obj).toEqual({ handle: "sec-fail-a" });
   expect(JSON.stringify(warns)).not.toContain("boom");
   await failing.remove("FAILS");
 });
@@ -113,10 +119,10 @@ test("I2 §6.7: a secret only the template lists: its live agents and their live
       mcp: { mcpServers: {} },
     },
   });
-  const lead = await t.seedAgent({ slug: "tpl-lead" });
-  const archived = await t.seedAgent({ slug: "tpl-archived" });
+  const lead = await t.seedAgent({ handle: "tpl-lead" });
+  const archived = await t.seedAgent({ handle: "tpl-archived" });
   // Same secret name nowhere in its template or overlay: not a user.
-  await t.seedAgent({ slug: "tpl-other" });
+  await t.seedAgent({ handle: "tpl-other" });
   for (const a of [lead, archived])
     await t.db.update(schema.agents).set({ template: "gh-tpl" }).where(eq(schema.agents.id, a.id));
   await t.db
@@ -126,15 +132,14 @@ test("I2 §6.7: a secret only the template lists: its live agents and their live
   // A live child (its own template doesn't list the secret: it inherits its spawner's) and a terminated one.
   const kid = randomUUID();
   const gone = randomUUID();
-  for (const [id, slug, terminated] of [
+  for (const [id, handle, terminated] of [
     [kid, "tpl-kid", false],
     [gone, "tpl-gone", true],
   ] as const) {
-    await seedTestPrincipal(t.db, "agent", slug, id);
+    await seedTestPrincipal(t.db, "agent", handle, id);
     await t.db.insert(schema.agents).values({
       id,
-      slug,
-      displayName: slug,
+      displayName: handle,
       template: "test",
       runtime: "local",
       kind: "ephemeral",

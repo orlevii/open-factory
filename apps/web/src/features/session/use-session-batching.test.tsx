@@ -23,12 +23,12 @@ const detail: AgentDetail = {
 };
 
 vi.mock("./api", () => ({
-  agentDetailQueryOptions: (slug: string) => ({
-    queryKey: ["agent", slug],
+  agentDetailQueryOptions: (handle: string) => ({
+    queryKey: ["agent", handle],
     queryFn: async () => detail,
   }),
   // The latest page is 2..4; the page before it is 1.
-  fetchEvents: async (_slug: string, q: { before?: number } = {}) => ({
+  fetchEvents: async (_handle: string, q: { before?: number } = {}) => ({
     events: q.before ? [ev(1)] : [ev(2), ev(3), ev(4)],
     hasMore: { before: !q.before, after: false },
   }),
@@ -180,7 +180,7 @@ test("a frame that changes no row keeps the rows and sets' identity (spec §9.3)
   expect(hook.result.current.interruptedEnds).toBe(interruptedEnds);
 });
 
-test("a slug change cancels the pending frame and drops the old slug's frames", async () => {
+test("a handle change cancels the pending frame and drops the old handle's frames", async () => {
   const { hook, push } = await setup();
   const cancel = vi.spyOn(globalThis, "cancelAnimationFrame");
   const request = vi.spyOn(globalThis, "requestAnimationFrame");

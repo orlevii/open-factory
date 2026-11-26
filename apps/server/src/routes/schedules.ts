@@ -9,10 +9,11 @@ import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
 import { ScheduleError } from "../scheduling/errors.ts";
 import type { Actor } from "../scheduling/schedule-service.ts";
+import { refQuerySchema } from "./ref-params.ts";
 
 const keyParams = z.object({ key: z.string().min(1).max(20) });
 const listQuery = z.object({
-  target: z.string().min(1).optional(),
+  target: refQuerySchema.optional(),
   done: z.enum(["true", "false"]).optional(),
 });
 

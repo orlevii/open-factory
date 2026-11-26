@@ -250,7 +250,7 @@ export class TaskStore {
       })),
     );
   }
-  /** In the order given, with the linked agent's slug and ended state. */
+  /** In the order given, with the linked agent's handle and ended state. */
   async links(tx: Exec, taskId: string) {
     return tx
       .select({

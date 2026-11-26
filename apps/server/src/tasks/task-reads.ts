@@ -4,7 +4,11 @@ import { unknownRefError } from "@open-factory/shared/tags";
 import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { resolveArg } from "../principals/principal-args.ts";
-import { type PrincipalKind, principalById } from "../principals/principal-store.ts";
+import {
+  type PrincipalKind,
+  principalById,
+  principalsByIds,
+} from "../principals/principal-store.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import { escapeLike } from "./like.ts";
@@ -33,7 +37,7 @@ export type TaskSummary = {
 export type ListFilter = {
   /** Default `["open", "in_progress"]`; "all" for every status. */
   status?: TaskStatus[] | "all";
-  /** An agent slug, or "me" (an agent caller). */
+  /** An agent handle, or "me" (an agent caller). */
   assignee?: string;
   unassigned?: boolean;
   /** A tag, ref, or `@handle` of an agent or a person; or "me" (the caller). */
@@ -189,17 +193,10 @@ export class TaskReads {
         (stat.get(id) ?? []).map((x) => x.status),
       );
     const status = t.status as TaskStatus;
-    const dependentAssignees = dependents.length
-      ? await db
-          .select({ id: agents.id, slug: agents.slug })
-          .from(agents)
-          .where(
-            inArray(
-              agents.id,
-              dependents.flatMap((x) => (x.assigneeAgentId ? [x.assigneeAgentId] : [])),
-            ),
-          )
-      : [];
+    const dependentAssignees = await principalsByIds(
+      db,
+      dependents.flatMap((x) => (x.assigneeAgentId ? [x.assigneeAgentId] : [])),
+    );
     const links = (await this.d.tasks.links(db, t.id)).map((l) => ({
       kind: l.kind,
       ...(l.target ? { target: l.target } : {}),
@@ -312,7 +309,7 @@ export class TaskReads {
         title: x.title,
         status: x.status,
         blocked: blockedOf(x.id, x.status),
-        assignee: dependentAssignees.find((g) => g.id === x.assigneeAgentId)?.slug ?? null,
+        assignee: (x.assigneeAgentId && dependentAssignees.get(x.assigneeAgentId)?.handle) || null,
       })),
       links,
       comments,
@@ -321,7 +318,7 @@ export class TaskReads {
     };
   }
 
-  /** The history, oldest first; assignee values are current slugs, `body` has none (spec §6.5). */
+  /** The history, oldest first; assignee values are current handles, `body` has none (spec §6.5). */
   private async events(taskId: string) {
     const db = this.d.db;
     const ap = alias(principals, "ap");
@@ -352,21 +349,16 @@ export class TaskReads {
         for (const side of [r.from, r.to])
           for (const l of (side as { agentId?: string }[] | null) ?? [])
             if (l.agentId) ids.add(l.agentId);
-    const slugs = new Map<string, string>();
-    if (ids.size)
-      for (const a of await db
-        .select({ id: agents.id, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, [...ids])))
-        slugs.set(a.id, a.slug);
-    const slug = (v: unknown) => (typeof v === "string" ? (slugs.get(v) ?? v) : null);
+    const handles = await principalsByIds(db, [...ids]);
+    const handleOf = (id: string) => handles.get(id)?.handle ?? id;
+    const assignee = (v: unknown) => (typeof v === "string" ? handleOf(v) : null);
     const linkView = (side: unknown) =>
       (
         (side as { kind: string; target?: string; agentId?: string; title?: string }[] | null) ?? []
       ).map((l) => ({
         kind: l.kind,
         ...(l.target ? { target: l.target } : {}),
-        ...(l.agentId ? { agent: slugs.get(l.agentId) ?? l.agentId } : {}),
+        ...(l.agentId ? { agent: handleOf(l.agentId) } : {}),
         ...(l.title ? { title: l.title } : {}),
       }));
     return rows.map((r) => ({
@@ -375,7 +367,7 @@ export class TaskReads {
       actor: { kind: r.kind, ref: r.ref, handle: r.handle } satisfies PrincipalRef,
       at: r.at,
       ...(r.type === "assignee"
-        ? { from: slug(r.from), to: slug(r.to) }
+        ? { from: assignee(r.from), to: assignee(r.to) }
         : r.type === "links"
           ? { from: linkView(r.from), to: linkView(r.to) }
           : r.type === "body"

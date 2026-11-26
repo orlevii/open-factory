@@ -26,7 +26,7 @@ beforeEach(async () => {
     env: { FACTORY_TIMEZONE: "UTC" },
   });
   or = await signUp(h.app, { handle: "or" });
-  leadId = (await h.seedAgent({ slug: "lead" })).id;
+  leadId = (await h.seedAgent({ handle: "lead" })).id;
 });
 afterEach(() => h.close());
 

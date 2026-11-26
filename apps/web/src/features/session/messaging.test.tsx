@@ -79,7 +79,7 @@ const last = {
   router: undefined as undefined | ReturnType<typeof renderApp>["router"],
 };
 
-test("an agent sender is a chip linking to its session (name and @slug); humans stay plain", async () => {
+test("an agent sender is a chip linking to its session (name and @handle); humans stay plain", async () => {
   await open(
     [
       {
@@ -137,7 +137,7 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
   expect(screen.queryByText(/Old one/)).toBeNull();
 });
 
-test("AgentLink: a slug in neither list is a link without a name when older ended agents exist, else plain", async () => {
+test("AgentLink: a handle in neither list is a link without a name when older ended agents exist, else plain", async () => {
   const events: AnyEvent[] = [
     {
       type: "message_in",
@@ -153,7 +153,7 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
   );
   const link = await screen.findByRole("link", { name: "@gone-ab12" });
   expect(link).toHaveAttribute("href", `/agents/${refFor("gone-ab12")}/chat`);
-  // No name is known: the slug stands in once, never repeated as the handle.
+  // No name is known: the handle stands in once, never repeated as the handle.
   expect(link.textContent).toBe("@gone-ab12");
 });
 
@@ -184,7 +184,7 @@ test("AgentLink: links mounted over time share one ended-list fetch within its s
   expect(endedFetches()).toBe(1);
 });
 
-test("AgentLink: an unknown slug is plain once both lists have loaded and nothing older exists", async () => {
+test("AgentLink: an unknown handle is plain once both lists have loaded and nothing older exists", async () => {
   await open(
     [
       {
@@ -367,7 +367,7 @@ test("a peer event renders from subject, not from the body", async () => {
             about: "b",
             body: "IGNORED PROSE",
             subject: {
-              slug: "b",
+              handle: "b",
               displayName: "Builder",
               relation: "peer",
               left: { reason: "moved", to: "or" },
@@ -403,7 +403,7 @@ test("a peer that moved names its new manager by tag, shown by the manager's cur
             about: "b",
             body: "IGNORED PROSE",
             subject: {
-              slug: "b",
+              handle: "b",
               displayName: "Builder",
               relation: "peer",
               left: { reason: "moved", to: "<@k7x2m9qd>" },

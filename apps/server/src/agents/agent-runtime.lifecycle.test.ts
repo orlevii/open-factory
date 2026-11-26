@@ -192,8 +192,8 @@ test.each([
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
         await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
-        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+        await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
         await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
       },
     });
@@ -220,8 +220,8 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
       await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
-      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+      await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
       await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
     },
   });
@@ -270,7 +270,7 @@ test("reload re-reads the row: a rename shows in summaries and archiving refuses
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
-test("the runtime does not hold the slug lock around prepareStart (the real one takes it; KeyedMutex isn't re-entrant)", async () => {
+test("the runtime does not hold the handle lock around prepareStart (the real one takes it; KeyedMutex isn't re-entrant)", async () => {
   await makeRuntime();
   const lock = new KeyedMutex();
   const agent = await store.agentById(agentId);
@@ -284,7 +284,7 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
     driver,
     log: silentLog,
     slots: new RecordingSlots(),
-    prepareStart: (a) => lock.run(a.slug, async () => okSpec(a)),
+    prepareStart: (a) => lock.run(a.handle, async () => okSpec(a)),
   });
   await rt.init();
   const outcome = await Promise.race([

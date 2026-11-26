@@ -13,7 +13,7 @@ export interface TerminatePort {
     callerId: string,
     targetArg: string,
   ): Promise<
-    { ok: true; slug: string; tag: string; warning?: string } | { ok: false; message: string }
+    { ok: true; handle: string; tag: string; warning?: string } | { ok: false; message: string }
   >;
 }
 
@@ -32,7 +32,7 @@ export function terminateAgentTool(d: { terminate: TerminatePort }): ToolRegistr
           const r = await d.terminate.terminateChild(callerOf(tctx), args.target);
           if (!r.ok) return toolError(r.message);
           return textResult({
-            slug: r.slug,
+            handle: r.handle,
             tag: r.tag,
             status: "terminated",
             ...(r.warning ? { warnings: [r.warning] } : {}),

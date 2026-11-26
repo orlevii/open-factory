@@ -30,7 +30,7 @@ let n = 0;
 async function agent(o: { docker?: boolean } = {}) {
   n += 1;
   const id = `rc${n}`;
-  await insertAgent(h.t.sql, { id, slug: `rc-${n}` });
+  await insertAgent(h.t.sql, { id, handle: `rc-${n}` });
   if (o.docker) await h.t.sql`update agents set runtime = 'docker' where id = ${id}`;
   return id;
 }

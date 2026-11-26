@@ -87,7 +87,7 @@ export class Reaper {
         const rt = await this.d.runtimes.load(a.id);
         if (!rt || !(await rt.reaperCheck(cutoff))) continue;
       } catch (err) {
-        this.d.log.error({ err, agent: a.slug }, "checking an idle spawned agent failed");
+        this.d.log.error({ err, agent: a.handle }, "checking an idle spawned agent failed");
         continue;
       }
       // Latched inside the check job; terminate runs from step 2, outside the agent's jobs. On failure the service
@@ -96,7 +96,7 @@ export class Reaper {
         .terminate(a.id, null, { latched: true })
         .catch((err: unknown) =>
           this.d.log.error(
-            { err, agent: a.slug },
+            { err, agent: a.handle },
             "terminating an idle spawned agent failed; retrying next sweep",
           ),
         );
@@ -135,7 +135,7 @@ export class Reaper {
           still.add(a.id);
       } catch (err) {
         still.add(a.id);
-        this.d.log.error({ err, agent: a.slug }, "cleaning up a stuck termination failed");
+        this.d.log.error({ err, agent: a.handle }, "cleaning up a stuck termination failed");
       }
     }
     return { still, dockerUnchecked };
@@ -161,7 +161,7 @@ export class Reaper {
         );
       } catch (err) {
         this.d.log.error(
-          { err, agent: a.slug },
+          { err, agent: a.handle },
           "deleting a workspace failed; retrying next sweep",
         );
       }

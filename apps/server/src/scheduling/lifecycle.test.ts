@@ -29,7 +29,7 @@ async function boot(factorySettings: TestAppOptions["factorySettings"] = {}) {
 }
 afterEach(() => h.close());
 
-const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id as string;
+const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id as string;
 const fireAt = async (iso: string) => {
   clock = new Date(iso);
   await h.app.scheduler.tick();
@@ -39,14 +39,14 @@ const rows = () =>
   h.sql`select id, state, firings, late, to_id from messages where kind = 'scheduled' order by created_at`;
 const make = (target: string, body = "Review", over: Record<string, unknown> = {}) =>
   h.app.schedules.create({ kind: "human", id: userId }, { target, ...weekday, body, ...over });
-const settle = async (slug: string) => (await runtimeOf(h.app, slug))?.settled();
+const settle = async (handle: string) => (await runtimeOf(h.app, handle))?.settled();
 
 test("terminating a spawned target soft-deletes its schedules and rejects its pending rows in the same transaction; Restore refuses", async () => {
   await boot();
-  await h.seedAgent({ slug: "lead" });
-  await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")} where slug = 'kid'`;
-  await h.sql`update agents set status = 'errored' where slug = 'kid'`; // keeps its row pending
+  await h.seedAgent({ handle: "lead" });
+  await h.seedAgent({ handle: "kid" });
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")} where id = (select id from principals where handle = 'kid')`;
+  await h.sql`update agents set status = 'errored' where id = (select id from principals where handle = 'kid')`; // keeps its row pending
   const { item } = await make("kid");
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toMatchObject([{ state: "pending" }]);
@@ -66,7 +66,7 @@ test("terminating a spawned target soft-deletes its schedules and rejects its pe
 
 test("archived target: firings skip; unarchive recomputes from now without catch-up", async () => {
   await boot();
-  await h.seedAgent({ slug: "ceo" });
+  await h.seedAgent({ handle: "ceo" });
   const { item } = await make("ceo");
   await h.app.agents.archive(await h.refOf("ceo"), {
     kind: "human",
@@ -91,8 +91,8 @@ test("archived target: firings skip; unarchive recomputes from now without catch
 
 test("an archived persistent creator's schedules keep firing", async () => {
   await boot();
-  await h.seedAgent({ slug: "ceo" });
-  await h.seedAgent({ slug: "dev" });
+  await h.seedAgent({ handle: "ceo" });
+  await h.seedAgent({ handle: "dev" });
   const { item } = await h.app.schedules.create(
     { kind: "agent", id: await idOf("dev") },
     { target: "ceo", ...weekday, body: "x" },
@@ -113,8 +113,8 @@ test("an archived persistent creator's schedules keep firing", async () => {
 
 test("an errored target: the row is pending and the item says so; no attempt starts", async () => {
   await boot();
-  await h.seedAgent({ slug: "ceo" });
-  await h.sql`update agents set status = 'errored', error_kind = 'start' where slug = 'ceo'`;
+  await h.seedAgent({ handle: "ceo" });
+  await h.sql`update agents set status = 'errored', error_kind = 'start' where id = (select id from principals where handle = 'ceo')`;
   const { item } = await make("ceo");
   await fireAt("2026-11-23T08:00:00Z");
   await settle("ceo");
@@ -127,7 +127,7 @@ test("an errored target: the row is pending and the item says so; no attempt sta
 
 test("a mid-turn target gets the row written at once", async () => {
   await boot();
-  await h.seedAgent({ slug: "ceo" });
+  await h.seedAgent({ handle: "ceo" });
   await runtimeOf(h.app, "ceo");
   const row = await h.app.store.createMessage({
     from: { userId },
@@ -153,7 +153,7 @@ test("a mid-turn target gets the row written at once", async () => {
 
 test("a server stopped between commit and hand-off: boot wakes the target and delivers the row exactly once", async () => {
   await boot();
-  await h.seedAgent({ slug: "ceo" });
+  await h.seedAgent({ handle: "ceo" });
   await make("ceo");
   clock = new Date("2026-11-23T08:00:00Z");
   // Shutdown began: the committed row's hand-off is skipped (the scheduler is stopped after its tick started).
@@ -179,7 +179,7 @@ test("a server stopped between commit and hand-off: boot wakes the target and de
   expect(driver.starts).toHaveLength(0);
   // the next boot: bootWakes counts the scheduled row and wakes the target
   const wakes = await h.app.store.bootWakes();
-  expect(wakes.map((w) => w.slug)).toEqual(["ceo"]);
+  expect(wakes.map((w) => w.handle)).toEqual(["ceo"]);
   await (await runtimeOf(h.app, "ceo"))?.bootWake("boot");
   await settle("ceo");
   expect(driver.starts).toHaveLength(1);

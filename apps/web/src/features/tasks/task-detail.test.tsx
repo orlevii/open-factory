@@ -176,7 +176,7 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
   await waitFor(() => expect(patches(api).at(-1)?.body).toEqual({ assignee: null }));
 });
 
-test("Assignee picker: typeahead matches the slug, arrows only move the highlight, Enter assigns", async () => {
+test("Assignee picker: typeahead matches the handle, arrows only move the highlight, Enter assigns", async () => {
   const api = world();
   renderApp("/tasks/T-42", alice);
   const trigger = await screen.findByRole("combobox", { name: "Assignee: @dev" });
@@ -683,7 +683,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
               body: "ok",
               at: at(15, 0),
             },
-            deliveredTo: ["dev"],
+            deliveredTo: [{ ref: refFor("dev"), handle: "dev" }],
             mentionedHumans: [],
             notReached: [
               { name: "old", reason: "archived" },

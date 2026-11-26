@@ -308,7 +308,7 @@ test("`@` anywhere opens the menu; items are asked for only while it is open", a
   expect(document.activeElement).toBe(box);
 });
 
-test("↑/↓ move the highlight; Enter accepts with `@slug ` and sends nothing", async () => {
+test("↑/↓ move the highlight; Enter accepts with `@handle ` and sends nothing", async () => {
   const { box, onSubmit } = setup({ completions: AT_ONLY });
   await userEvent.type(box, "ask @");
   expect(highlighted()).toHaveTextContent("Dev");

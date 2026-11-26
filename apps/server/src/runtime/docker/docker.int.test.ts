@@ -17,7 +17,7 @@ import {
 } from "@open-factory/harness/testing";
 import type { AnyEvent } from "@open-factory/shared";
 import Docker from "dockerode";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
@@ -62,7 +62,7 @@ interface World {
   app: FastifyInstance;
   env: Record<string, string>;
   home: string;
-  slug: string;
+  handle: string;
   agentId: string;
   /** The agent's ref: its workdir and container are named by it. */
   ref: string;
@@ -166,7 +166,7 @@ async function setup(o: {
   local?: FakeClaude;
 }): Promise<World> {
   const home = tmp("of-dint-");
-  const slug = "dock";
+  const handle = "dock";
   const cliBundle = path.join(tmp("of-cli-"), "open-factory.js");
   writeFileSync(cliBundle, "// cli\n");
   const env: Record<string, string> = {
@@ -195,7 +195,7 @@ async function setup(o: {
   await t.app.agents.create(
     {
       template: "dock",
-      slug,
+      handle,
       displayName: "Dock",
       description: "",
       reportsTo: "or",
@@ -204,7 +204,7 @@ async function setup(o: {
     },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const agentId = await idOf(t.db, slug);
+  const agentId = await idOf(t.db, handle);
   agentIds.add(agentId);
   const ref = await refOfAgent(t.db, agentId);
   const workdir = agentWorkdir(home, ref);
@@ -216,7 +216,7 @@ async function setup(o: {
   env.FACTORY_DOCKER_CLAUDE_BIN = fake.bin;
   const app = (await t.reopen({ env })).app;
   const cookie = (await t.signUpUser({ handle: "or" })).cookie;
-  const w: World = { t, app, env, home, slug, agentId, ref, workdir, fake, cookie };
+  const w: World = { t, app, env, home, handle, agentId, ref, workdir, fake, cookie };
   worlds.push(w);
   return w;
 }
@@ -259,7 +259,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   await t.app.agents.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
@@ -289,7 +289,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
     app: t.app,
     env,
     home,
-    slug: r.slug,
+    handle: r.handle,
     agentId: r.agentId,
     ref,
     workdir: agentWorkdir(home, ref),
@@ -315,26 +315,26 @@ const refOfAgent = async (db: TestApp["db"], agentId: string) => {
   if (!r) throw new Error(`no principal ${agentId}`);
   return r.ref;
 };
-const idOf = async (db: TestApp["db"], slug: string) => {
+const idOf = async (db: TestApp["db"], handle: string) => {
   const [r] = await db
     .select({ id: schema.agents.id })
     .from(schema.agents)
-    .where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${handle})`));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r.id;
 };
 
-const runtime = async (w: World, slug = w.slug) => {
-  const rt = await runtimeOf(w.app, slug);
-  if (!rt) throw new Error(`no runtime ${slug}`);
+const runtime = async (w: World, handle = w.handle) => {
+  const rt = await runtimeOf(w.app, handle);
+  if (!rt) throw new Error(`no runtime ${handle}`);
   return rt;
 };
-const post = async (w: World, body = "hi", slug = w.slug) => {
+const post = async (w: World, body = "hi", handle = w.handle) => {
   const res = await w.app.inject({
     method: "POST",
     url: `/api/messages`,
     headers: { cookie: w.cookie },
-    payload: { to: [slug], body, urgent: false },
+    payload: { to: [handle], body, urgent: false },
   });
   expect(res.statusCode).toBe(202);
 };
@@ -531,7 +531,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     const repo = gitRepo();
     await w.app.projects.create({ name: "app", hostPath: repo });
     await w.app.agents.update(
-      w.slug,
+      w.handle,
       { projects: ["app"] },
       { kind: "human", ref: "k7x2m9qd", handle: "or" },
     );
@@ -729,7 +729,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     await w.app.agents.create(
       {
         template: "loc",
-        slug: "loc",
+        handle: "loc",
         displayName: "Loc",
         description: "",
         reportsTo: "or",
@@ -772,17 +772,17 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       expect(child.exitCode, stderr).toBeNull();
       expect((await fetch(`${base}/api/status`).catch(() => undefined))?.ok).toBe(true);
     }, 60_000);
-    for (const slug of ["dock", "loc"]) {
+    for (const handle of ["dock", "loc"]) {
       const res = await api(`/api/messages`, {
         method: "POST",
-        body: JSON.stringify({ to: [slug], body: "long job", urgent: false }),
+        body: JSON.stringify({ to: [handle], body: "long job", urgent: false }),
       });
       expect(res.status).toBe(202);
     }
-    for (const slug of ["dock", "loc"])
+    for (const handle of ["dock", "loc"])
       await until(async () =>
         expect(
-          ((await (await api(`/api/agents/${slug}`)).json()) as { agent: { turnOpen: boolean } })
+          ((await (await api(`/api/agents/${handle}`)).json()) as { agent: { turnOpen: boolean } })
             .agent.turnOpen,
         ).toBe(true),
       );
@@ -817,8 +817,8 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
           (await events(w, id)).filter((e) => e.type === "process_started").at(-1),
         ).toMatchObject({ reason: "boot_resume", resumed: true }),
       );
-    for (const slug of ["dock", "loc"])
-      await until(async () => expect((await runtime(w, slug)).live().turnOpen).toBe(true));
+    for (const handle of ["dock", "loc"])
+      await until(async () => expect((await runtime(w, handle)).live().turnOpen).toBe(true));
 
     // Exactly one Claude per agent.
     const localStarts = starts(local.log()).map((s) => s.pid);

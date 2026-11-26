@@ -11,7 +11,7 @@ import { CompactingError } from "../agents/errors.ts";
 import { AgentEndedError } from "../agents/message-cancel.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { principalsByHandles } from "../principals/principal-store.ts";
+import { agentRecords, principalsByHandles } from "../principals/principal-store.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp, runtimeOf } from "../test/helpers.ts";
 import { principalSql, seedTestUser, UNKNOWN_REF } from "../test/principals.ts";
@@ -84,7 +84,6 @@ test("GET /api/agents/:ref returns the agent with its ref and handle", async () 
   const res = await req("GET", `/api/agents/${ref}`);
   expect(res.statusCode).toBe(200);
   expect(res.json().agent).toMatchObject({ ref, handle: "dev" });
-  expect(res.json().agent).not.toHaveProperty("slug");
 });
 
 test("a handle is not an address: GET /api/agents/dev is 404", async () => {
@@ -224,7 +223,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     await t2.seedAgent();
-    await t2.sql`update agents set archived_at = now() where slug = 'dev'`;
+    await t2.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'dev')`;
     const c2 = (await t2.signUpUser({ handle: "or3" })).cookie;
     const sent = await t2.app.inject({
       method: "POST",
@@ -260,7 +259,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
   }
 });
 
-test("agent management routes: create, patch, reset-persona, archive, unarchive, list filter, bad slugs", async () => {
+test("agent management routes: create, patch, reset-persona, archive, unarchive, list filter, bad handles", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
@@ -283,7 +282,7 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     const or4 = await t2.refOf("or4");
     const body = {
       template: "lead",
-      slug: "boss",
+      handle: "boss",
       displayName: "Boss",
       description: "",
       reportsTo: or4,
@@ -300,7 +299,7 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     });
     // The manager is required, and has to be the ref of an agent or a person who exists: a 400 on the field, nothing created.
     for (const reportsTo of [null, "", "ghost", UNKNOWN_REF]) {
-      const refused = await call("POST", "/api/agents", { ...body, slug: "nobody", reportsTo });
+      const refused = await call("POST", "/api/agents", { ...body, handle: "nobody", reportsTo });
       expect(refused.statusCode).toBe(400);
       expect(refused.json().error.fields).toHaveProperty("reportsTo");
     }
@@ -309,11 +308,11 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     await seedTestUser(t2.db, "off");
     await t2.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'off')`;
     await t2.sql.unsafe(principalSql("boss-kid1-id", "agent", "boss-kid1"));
-    await t2.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
-      select 'boss-kid1-id', 'boss-kid1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id
-      from agents where slug = 'boss'`;
+    await t2.sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to)
+      select 'boss-kid1-id', 'Kid', template, config, runtime, credential_id, 'ephemeral', id
+      from agents where id = (select id from principals where handle = 'boss')`;
     for (const reportsTo of [await t2.refOf("off"), await t2.refOf("boss-kid1")]) {
-      const refused = await call("POST", "/api/agents", { ...body, slug: "nobody", reportsTo });
+      const refused = await call("POST", "/api/agents", { ...body, handle: "nobody", reportsTo });
       expect(refused.statusCode).toBe(400);
       expect(refused.json().error.fields).toHaveProperty("reportsTo");
       const patch = await call("PATCH", `/api/agents/${await t2.refOf("boss")}`, { reportsTo });
@@ -337,17 +336,17 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       ref: expect.any(String),
       handle: "or4",
     });
-    const bad = await call("POST", "/api/agents", { ...body, slug: "Bad Slug" });
+    const bad = await call("POST", "/api/agents", { ...body, handle: "Bad Handle" });
     expect(bad.statusCode).toBe(400);
-    expect(bad.json().error.fields).toHaveProperty("slug");
-    expect((await call("POST", "/api/agents", body)).json().error.code).toBe("slug_taken");
+    expect(bad.json().error.fields).toHaveProperty("handle");
+    expect((await call("POST", "/api/agents", body)).json().error.code).toBe("handle_taken");
 
     const patched = await call("PATCH", `/api/agents/${await t2.refOf("boss")}`, {
       description: "the boss",
     });
     expect(patched.statusCode).toBe(200);
     expect(patched.json().agent.description).toBe("the boss");
-    for (const extra of [{ template: "lead" }, { slug: "other" }]) {
+    for (const extra of [{ template: "lead" }, { handle: "other" }]) {
       const rejected = await call("PATCH", `/api/agents/${await t2.refOf("boss")}`, {
         description: "x",
         ...extra,
@@ -355,7 +354,8 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error.code).toBe("validation_error");
     }
-    const [bossRow] = await t2.sql`select id from agents where slug = 'boss'`;
+    const [bossRow] =
+      await t2.sql`select id from agents where id = (select id from principals where handle = 'boss')`;
     const bossDir = path.join(t2.factoryHome, "agents", refOf(String(bossRow?.id)));
     writeFileSync(path.join(bossDir, "AGENTS.md"), "edited");
     const rp = await call("POST", `/api/agents/${await t2.refOf("boss")}/reset-persona`);
@@ -397,10 +397,10 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       expect(res.statusCode, `${m} ${url}`).toBe(404);
       expect(res.json().error.code).toBe("agent_not_found");
     }
-    const granted = await call("POST", "/api/agents", { ...body, slug: "gov", manageOrg: true });
+    const granted = await call("POST", "/api/agents", { ...body, handle: "gov", manageOrg: true });
     expect(granted.statusCode).toBe(201);
     expect(granted.json().agent).toMatchObject({ handle: "gov", manageOrg: true });
-    const [govRow] = await t2.db.select().from(schema.agents).where(eq(schema.agents.slug, "gov"));
+    const [govRow] = await agentRecords(t2.db).where(eq(schema.principals.handle, "gov"));
     expect(govRow?.manageOrg).toBe(true);
   } finally {
     await t2.close();
@@ -413,7 +413,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   let bossId: string;
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: new FakeDriver() });
-    bossId = (await s.seedAgent({ slug: "boss" })).id;
+    bossId = (await s.seedAgent({ handle: "boss" })).id;
     c = (await s.signUpUser({ handle: "or7" })).cookie;
   });
   afterAll(() => s.close());
@@ -424,13 +424,13 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     payload?: object,
   ) => s.app.inject({ method, url, headers: { cookie: c }, ...(payload ? { payload } : {}) });
   /** A live spawned agent of boss, with a workdir of its own. */
-  const child = async (slug: string) => {
+  const child = async (handle: string) => {
     const id = randomUUID();
-    await s.sql.unsafe(principalSql(id, "agent", slug));
-    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
-      select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
+    await s.sql.unsafe(principalSql(id, "agent", handle));
+    await s.sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to)
+      select ${id}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
       from agents where id = ${bossId}`;
-    mkdirSync(path.join(s.factoryHome, "agents", slug), { recursive: true });
+    mkdirSync(path.join(s.factoryHome, "agents", handle), { recursive: true });
   };
 
   test("terminate: 200 with the terminated summary, idempotent; 409 not_ephemeral; 404", async () => {
@@ -481,17 +481,20 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     expect(res.statusCode).toBe(200);
     const [or7] = [...(await principalsByHandles(s.db, ["or7"])).values()];
     expect(res.json().agent.terminatedBy).toEqual({ ref: or7?.ref, handle: "or7" });
-    const [row] = await s.sql`select terminated_by from agents where slug = 'boss-uu01'`;
+    const [row] =
+      await s.sql`select terminated_by from agents where id = (select id from principals where handle = 'boss-uu01')`;
     expect(row?.terminated_by).toBe(or7?.id);
   });
 
   test("the idle TTL records no terminator", async () => {
     await child("boss-uu02");
-    const [row] = await s.sql`select id from agents where slug = 'boss-uu02'`;
+    const [row] =
+      await s.sql`select id from agents where id = (select id from principals where handle = 'boss-uu02')`;
     await s.app.terminator.terminate(String(row?.id), null);
     const got = await call("GET", `/api/agents/${await s.refOf("boss-uu02")}`);
     expect(got.json().agent).toMatchObject({ status: "terminated", terminatedBy: null });
-    const [after] = await s.sql`select terminated_by from agents where slug = 'boss-uu02'`;
+    const [after] =
+      await s.sql`select terminated_by from agents where id = (select id from principals where handle = 'boss-uu02')`;
     expect(after?.terminated_by).toBeNull();
   });
 
@@ -528,10 +531,10 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
 
   test("workspace pin: 409 not_terminated, pin and unpin, 409 workspace_deleted", async () => {
     await child("boss-dd44");
-    for (const slug of ["boss", "boss-dd44"]) {
-      const res = await call("PUT", `/api/agents/${await s.refOf(slug)}/workspace-pin`);
-      expect(res.statusCode, slug).toBe(409);
-      expect(res.json().error.code, slug).toBe("not_terminated");
+    for (const handle of ["boss", "boss-dd44"]) {
+      const res = await call("PUT", `/api/agents/${await s.refOf(handle)}/workspace-pin`);
+      expect(res.statusCode, handle).toBe(409);
+      expect(res.json().error.code, handle).toBe("not_terminated");
     }
     await call("POST", `/api/agents/${await s.refOf("boss-dd44")}/terminate`);
     const pinned = await call("PUT", `/api/agents/${await s.refOf("boss-dd44")}/workspace-pin`);
@@ -545,7 +548,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     expect(unpinned.statusCode).toBe(200);
     expect(unpinned.json().agent).toMatchObject({ workspacePinned: false });
 
-    await s.sql`update agents set workspace_deleted_at = now() where slug = 'boss-dd44'`;
+    await s.sql`update agents set workspace_deleted_at = now() where id = (select id from principals where handle = 'boss-dd44')`;
     for (const m of ["PUT", "DELETE"] as const) {
       const res = await call(m, `/api/agents/${await s.refOf("boss-dd44")}/workspace-pin`);
       expect(res.statusCode, m).toBe(409);
@@ -560,7 +563,8 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   test("the pin waits for a deletion in progress (the workspace lock), then answers 409 workspace_deleted", async () => {
     await child("boss-ee55");
     await call("POST", `/api/agents/${await s.refOf("boss-ee55")}/terminate`);
-    const [row] = await s.sql`select id from agents where slug = 'boss-ee55'`;
+    const [row] =
+      await s.sql`select id from agents where id = (select id from principals where handle = 'boss-ee55')`;
     const id = row?.id as string;
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -607,9 +611,9 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   test("a terminated agent whose stop failed is stuck, loaded or not", async () => {
     const ffId = randomUUID();
     await s.sql.unsafe(principalSql(ffId, "agent", "boss-ff66"));
-    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
+    await s.sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to,
         terminated_at, terminated_by, status, error_kind, last_error)
-      select ${ffId}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+      select ${ffId}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
         now(), null, 'errored', 'stop_failed', 'x'
       from agents where id = ${bossId}`;
     const listed = (await call("GET", "/api/agents?ended=only")).json().agents;
@@ -632,7 +636,7 @@ describe("S7: the ended list is bounded", () => {
   let c: string;
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: new FakeDriver() });
-    await s.seedAgent({ slug: "boss" });
+    await s.seedAgent({ handle: "boss" });
     c = (await s.signUpUser({ handle: "or8" })).cookie;
   });
   afterAll(() => s.close());
@@ -645,19 +649,19 @@ describe("S7: the ended list is bounded", () => {
         insert into principals (id, kind, handle, ref)
         select id, 'agent', 'old-' || i, substr(md5(id), 1, 8) from ids
       )
-      insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to, archived_at)
-      select ids.id, 'old-' || ids.i, 'Old', template, config, runtime, credential_id, reports_to,
+      insert into agents (id, display_name, template, config, runtime, credential_id, reports_to, archived_at)
+      select ids.id, 'Old', template, config, runtime, credential_id, reports_to,
              now() - make_interval(hours => 1 + ids.i)
-      from agents, ids where slug = 'boss'`;
+      from agents, ids where agents.id = (select id from principals where handle = 'boss')`;
   };
 
   test("newest end first, archived and terminated together; at most 200 with more", async () => {
     await archived(199);
     const newId = randomUUID();
     await s.sql.unsafe(principalSql(newId, "agent", "boss-new1"));
-    await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-      select ${newId}, 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), null
-      from agents where slug = 'boss'`;
+    await s.sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+      select ${newId}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), null
+      from agents where id = (select id from principals where handle = 'boss')`;
     let r = (await get("/api/agents?ended=only")).json();
     expect(r.agents).toHaveLength(200);
     expect(r.more).toBe(false);
@@ -885,7 +889,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
     try {
       await t2.seedAgent();
-      await t2.seedAgent({ slug: "ops" });
+      await t2.seedAgent({ handle: "ops" });
       const c2 = (await t2.signUpUser({ handle: "or9" })).cookie;
       const send = () =>
         t2.app.inject({
@@ -1098,17 +1102,17 @@ describe("U3 §13.5: attachments on POST /messages", () => {
   let sam: string;
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
-    await s.seedAgent({ slug: "dev" });
-    await s.seedAgent({ slug: "ops" });
+    await s.seedAgent({ handle: "dev" });
+    await s.seedAgent({ handle: "ops" });
     or = (await s.signUpUser({ handle: "or9" })).cookie;
     sam = (await s.signUpUser({ handle: "sam9" })).cookie;
   });
   afterAll(() => s.close());
 
-  const upload = async (slug: string, data: Buffer, name: string, cookie = or) => {
+  const upload = async (handle: string, data: Buffer, name: string, cookie = or) => {
     const res = await s.app.inject({
       method: "POST",
-      url: `/api/agents/${await s.refOf(slug)}/uploads`,
+      url: `/api/agents/${await s.refOf(handle)}/uploads`,
       headers: {
         cookie,
         "content-type": "application/octet-stream",
@@ -1119,12 +1123,12 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     expect(res.statusCode).toBe(201);
     return res.json().uploadId as string;
   };
-  const post = (payload: object, cookie = or, slug = "dev") =>
+  const post = (payload: object, cookie = or, handle = "dev") =>
     s.app.inject({
       method: "POST",
       url: `/api/messages`,
       headers: { cookie },
-      payload: { to: [slug], urgent: false, ...payload },
+      payload: { to: [handle], urgent: false, ...payload },
     });
   const uploadRow = async (id: string) =>
     (await s.db.select().from(schema.uploads)).find((r) => r.id === id);

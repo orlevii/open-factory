@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import { createFakeClaude, type FakeScenario } from "@open-factory/harness/testing";
 import { type AnyEvent, templateYamlSchema } from "@open-factory/shared";
@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import {
   ContainerManager,
   containerName,
@@ -79,7 +80,7 @@ interface World {
   containers: ContainerManager;
   runtimes: AgentRuntimes;
   rt: AgentRuntime;
-  agent: AgentRow;
+  agent: AgentRecord;
   workspace: Workspace;
   prepareStart: PrepareStart;
   cliBundle: string;
@@ -116,7 +117,7 @@ async function setup(
   const hs = realpathSync(mkdtempSync(path.join(tmpdir(), "hs-")));
   const cliBundle = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), "cli-"))), "of.js");
   writeFileSync(cliBundle, "//");
-  const slug = `dock-${seq}`;
+  const handle = `dock-${seq}`;
   const config = templateYamlSchema.parse({
     name: "dock",
     display_name: "Dock",
@@ -143,12 +144,11 @@ async function setup(
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
-  const { ref } = await seedTestPrincipal(t.db, "agent", slug, `0123abcd-${seq}`);
+  const { ref } = await seedTestPrincipal(t.db, "agent", handle, `0123abcd-${seq}`);
   const [agent] = await t.db
     .insert(schema.agents)
     .values({
       id: `0123abcd-${seq}`,
-      slug,
       displayName: "Dock",
       template: "dock",
       config: {},
@@ -168,7 +168,7 @@ async function setup(
     lock,
   });
   const input = {
-    handle: slug,
+    handle: handle,
     displayName: "Dock",
     description: "",
     template: "dock",
@@ -253,14 +253,14 @@ async function setup(
       }),
     },
   });
-  const rt = await runtimes.byRef(await refOfHandle(t.db, slug));
+  const rt = await runtimes.byRef(await refOfHandle(t.db, handle));
   if (!rt) throw new Error("no runtime");
   world = {
     docker,
     containers,
     runtimes,
     rt,
-    agent,
+    agent: { ...agent, handle },
     workspace,
     prepareStart,
     cliBundle,

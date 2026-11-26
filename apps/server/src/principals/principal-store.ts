@@ -2,7 +2,22 @@ import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { refOf } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
-import { eq, inArray } from "drizzle-orm";
+import { eq, getTableColumns, inArray } from "drizzle-orm";
+
+/** An agent's row with its current handle, which lives on `principals` (the agent's id is its principal's id). */
+export type AgentRecord = AgentRow & { handle: string };
+/** The columns that select an `AgentRecord` from `agents` inner-joined to `principals` on the id. */
+export const agentRecordColumns = {
+  ...getTableColumns(schema.agents),
+  handle: schema.principals.handle,
+};
+
+/** Every agent column plus its handle: `agents` inner-joined to `principals` on the shared id. */
+export const agentRecords = (tx: Tx) =>
+  tx
+    .select(agentRecordColumns)
+    .from(schema.agents)
+    .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id));
 
 /** A database or a transaction on it. */
 export type Tx = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -107,13 +122,13 @@ export async function principalsByRefs(
 }
 
 /** The agent row whose principal has this ref (already normalised), or undefined. */
-export async function agentRowByRef(tx: Tx, ref: string): Promise<AgentRow | undefined> {
+export async function agentRowByRef(tx: Tx, ref: string): Promise<AgentRecord | undefined> {
   const [found] = await tx
-    .select({ agent: schema.agents })
+    .select(agentRecordColumns)
     .from(schema.principals)
     .innerJoin(schema.agents, eq(schema.agents.id, schema.principals.id))
     .where(eq(schema.principals.ref, ref));
-  return found?.agent;
+  return found;
 }
 
 /** Keyed by handle. */

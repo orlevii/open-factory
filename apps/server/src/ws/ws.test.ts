@@ -174,6 +174,24 @@ describe("agent subscriptions", () => {
     c.ws.close();
   });
 
+  test("a subscribe with an uppercase ref gets frames carrying the lowercase ref, and an uppercase unsubscribe ends it", async () => {
+    const ref = a.seededRef("dev");
+    const c = await connect();
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: ref.toUpperCase(), afterSeq: 0 }));
+    const [queue] = await c.waitFor((f) => f.type === "queue");
+    expect(queue?.agent).toBe(ref);
+    await c.waitFor((f) => f.type === "live"); // the snapshot that ends the replay
+    c.ws.send(JSON.stringify({ type: "live_snapshot", agent: ref.toUpperCase() }));
+    const live = await c.waitFor((f) => f.type === "live", 2);
+    expect(live.map((f) => f.agent)).toEqual([ref, ref]);
+    c.ws.send(JSON.stringify({ type: "unsubscribe", agent: ref.toUpperCase() }));
+    c.ws.send(JSON.stringify({ type: "live_snapshot", agent: ref }));
+    c.ws.send(JSON.stringify({ type: "ping" }));
+    await c.waitFor((f) => f.type === "pong");
+    expect(c.frames.filter((f) => f.type === "live")).toHaveLength(2);
+    c.ws.close();
+  });
+
   test("events committed before and after the replay read are each sent exactly once, in order", async () => {
     const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");

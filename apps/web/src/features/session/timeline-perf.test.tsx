@@ -178,8 +178,8 @@ let detail: AgentDetail = {
 
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
-  agentDetailQueryOptions: (slug: string) => ({
-    queryKey: ["agent", slug],
+  agentDetailQueryOptions: (handle: string) => ({
+    queryKey: ["agent", handle],
     queryFn: async () => detail,
   }),
   fetchEvents: async () => ({ events: initial, hasMore: { before: false, after: false } }),

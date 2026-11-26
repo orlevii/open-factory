@@ -19,13 +19,13 @@ beforeEach(async () => {
   });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  for (const slug of ["lead", "dev", "qa"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
   // a spawned agent
-  ids.kid = (await h.seedAgent({ slug: "kid" })).id;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
+  ids.kid = (await h.seedAgent({ handle: "kid" })).id;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'kid')`;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
 });
 afterEach(() => h.close());
@@ -90,7 +90,7 @@ test("at, to and me; an errored target gets its note; identity never comes from 
   expect(a.json.note).toBeUndefined();
   const me = await call("dev", "schedule_message", { body: "x", at: "2026-12-02T09:00", to: "me" });
   expect(me.json.to).toMatch(/^<@[0-9a-z]{8}\|dev>$/);
-  await h.sql`update agents set status = 'errored' where slug = 'qa'`;
+  await h.sql`update agents set status = 'errored' where id = (select id from principals where handle = 'qa')`;
   const e = await call("dev", "schedule_message", { body: "x", at: "2026-12-03T09:00", to: "qa" });
   expect(e.json.note).toBe(
     "@qa is errored; it will see this after it is restarted (restart_agent, or a human).",

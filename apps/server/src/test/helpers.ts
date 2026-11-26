@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, createDb, type Db, schema } from "@open-factory/db";
+import { createDb, type Db, schema } from "@open-factory/db";
 import { createMigratedTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
 import { createFakeClaude } from "@open-factory/harness/testing";
@@ -17,6 +17,7 @@ import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import type { PasswordHasher } from "../auth/options.ts";
 import { type Config, hostSkillsDirOf, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
@@ -137,20 +138,20 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
         },
         o,
       );
-      seeded.set(row.slug, agentWorkdir(factoryHome, testRef(row.id)));
-      seededRefs.set(row.slug, testRef(row.id));
+      seeded.set(row.handle, agentWorkdir(factoryHome, testRef(row.id)));
+      seededRefs.set(row.handle, testRef(row.id));
       return row;
     },
     /** The ref of an agent made by `seedAgent`, synchronously (a URL's `:ref`). */
-    seededRef(slug: string): string {
-      const ref = seededRefs.get(slug);
-      if (!ref) throw new Error(`no seeded agent ${slug}`);
+    seededRef(handle: string): string {
+      const ref = seededRefs.get(handle);
+      if (!ref) throw new Error(`no seeded agent ${handle}`);
       return ref;
     },
     /** The workdir of an agent made by `seedAgent`: named by its ref, not its handle. */
-    seededWorkdir(slug: string): string {
-      const dir = seeded.get(slug);
-      if (!dir) throw new Error(`no seeded agent ${slug}`);
+    seededWorkdir(handle: string): string {
+      const dir = seeded.get(handle);
+      if (!dir) throw new Error(`no seeded agent ${handle}`);
       return dir;
     },
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
@@ -175,7 +176,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
 }
 
 export interface SeedAgentOptions {
-  slug?: string;
+  handle?: string;
   /** The agent's overlay (`agents.config`, I2 §5.1); `{}` runs exactly the `test` template. */
   config?: AgentOverlay;
   credentialValue?: string;
@@ -190,8 +191,8 @@ export const TEST_TEMPLATE_YAML = "name: test\ndisplay_name: Test agent\nruntime
 export async function seedTestAgent(
   app: { db: Db; config: Config; vault: Vault; workspace: Workspace },
   opts: SeedAgentOptions = {},
-): Promise<AgentRow> {
-  const slug = opts.slug ?? "dev";
+): Promise<AgentRecord> {
+  const handle = opts.handle ?? "dev";
   const credentialId = randomUUID();
   await app.db.insert(schema.credentials).values({
     id: credentialId,
@@ -205,12 +206,11 @@ export async function seedTestAgent(
     writeFileSync(path.join(tplDir, "template.yaml"), TEST_TEMPLATE_YAML);
     writeFileSync(path.join(tplDir, "AGENTS.md"), "# Test agent\n");
   }
-  const principal = await seedTestPrincipal(app.db, "agent", slug);
+  const principal = await seedTestPrincipal(app.db, "agent", handle);
   const [row] = await app.db
     .insert(schema.agents)
     .values({
       id: principal.id,
-      slug,
       displayName: "Test agent",
       description: "",
       template: "test",
@@ -224,7 +224,7 @@ export async function seedTestAgent(
   const workdir = agentWorkdir(app.config.factoryHome, principal.ref);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  return row;
+  return { ...row, handle };
 }
 
 /**

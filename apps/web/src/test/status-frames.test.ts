@@ -48,7 +48,7 @@ afterEach(() => {
   Object.defineProperty(document, "hidden", { value: false, configurable: true });
 });
 
-test("frames in one animation frame coalesce: one list write, last frame per slug wins", () => {
+test("frames in one animation frame coalesce: one list write, last frame per handle wins", () => {
   const spy = vi.spyOn(qc, "setQueriesData");
   enqueueStatusFrame(qc, frame("ada", "working"));
   enqueueStatusFrame(qc, frame("ada", "idle"));
@@ -87,7 +87,7 @@ test("entering terminated is computed against the state before the batch; ['agen
   expect(invalidations(["agents"])(spy)).toBe(0);
 });
 
-test("an uncached slug invalidates ['agents'] once per batch, not once per frame", () => {
+test("an uncached handle invalidates ['agents'] once per batch, not once per frame", () => {
   const spy = vi.spyOn(qc, "invalidateQueries");
   applyStatusFrames(qc, [frame("new1", "idle"), frame("new2", "idle"), frame("new1", "working")]);
   expect(invalidations(["agents"])(spy)).toBe(1);
@@ -95,7 +95,7 @@ test("an uncached slug invalidates ['agents'] once per batch, not once per frame
   expect(invalidations(["agent", refFor("new2")])(spy)).toBe(1);
 });
 
-test("cached detail is patched once per slug; an uncached detail is invalidated", () => {
+test("cached detail is patched once per handle; an uncached detail is invalidated", () => {
   qc.setQueryData(["agent", refFor("ada")], { agent: agentSummary({ handle: "ada" }) });
   const spy = vi.spyOn(qc, "setQueryData");
   const inv = vi.spyOn(qc, "invalidateQueries");

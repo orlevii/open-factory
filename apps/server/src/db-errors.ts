@@ -6,7 +6,7 @@ export function pgCode(e: unknown, code: string): boolean {
 }
 
 /** `@a, @b`: how API messages name agents. */
-export const tags = (slugs: string[]) => slugs.map((s) => `@${s}`).join(", ");
+export const tags = (handles: string[]) => handles.map((h) => `@${h}`).join(", ");
 
 /**
  * A delete was blocked because something still uses the row: ON DELETE RESTRICT reports 23001, a plain FK 23503, and the

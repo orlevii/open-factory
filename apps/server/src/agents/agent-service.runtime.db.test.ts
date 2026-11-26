@@ -5,6 +5,7 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import { OrgRefusedError } from "./errors.ts";
@@ -29,20 +30,20 @@ async function factory(env: Record<string, string> = {}) {
     writeFileSync(path.join(d, "template.yaml"), `name: ${name}\ndisplay_name: ${name}\n${yaml}`);
     writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
   };
-  const create = (slug: string, tpl: string) =>
+  const create = (handle: string, tpl: string) =>
     t.app.agents.create(
       {
         template: tpl,
-        slug,
-        displayName: slug,
+        handle,
+        displayName: handle,
         description: "",
         reportsTo: "or",
         credential: "work",
       },
       human,
     );
-  const runtimeOf = async (slug: string) =>
-    (await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug)))[0]?.runtime;
+  const runtimeOf = async (handle: string) =>
+    (await agentRecords(t.db).where(eq(schema.principals.handle, handle)))[0]?.runtime;
   return { t, template, create, runtimeOf };
 }
 
@@ -79,23 +80,20 @@ describe("on a factory that allows local agents", () => {
     ["into local", "dock", "local"],
     ["out of local", "loc", "docker"],
   ] as const)("an agent can't switch another agent %s", async (_n, tpl, to) => {
-    const slug = `target-${to}`;
-    await f.create(slug, tpl);
+    const handle = `target-${to}`;
+    await f.create(handle, tpl);
     await f.create(`asker-${to}`, "dock");
-    const [asker] = await f.t.db
-      .select()
-      .from(schema.agents)
-      .where(eq(schema.agents.slug, `asker-${to}`));
+    const [asker] = await agentRecords(f.t.db).where(eq(schema.principals.handle, `asker-${to}`));
     if (!asker) throw new Error("no asker");
-    const before = await f.runtimeOf(slug);
+    const before = await f.runtimeOf(handle);
     await expect(
       f.t.app.agents.update(
-        await f.t.refOf(slug),
+        await f.t.refOf(handle),
         { runtime: to },
-        { kind: "agent", id: asker.id, ref: testRef(asker.id), slug: asker.slug },
+        { kind: "agent", id: asker.id, ref: testRef(asker.id), handle: asker.handle },
       ),
     ).rejects.toBeInstanceOf(OrgRefusedError);
-    expect(await f.runtimeOf(slug)).toBe(before);
+    expect(await f.runtimeOf(handle)).toBe(before);
   });
 
   test("a template in Bypass mode keeps its agents in Docker: 400 on runtime", async () => {

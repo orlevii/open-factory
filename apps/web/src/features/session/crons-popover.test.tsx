@@ -59,7 +59,7 @@ const crons = [
 ];
 function strip(over: Record<string, unknown> = {}) {
   const agent = agentSummary({
-    slug: "dev",
+    handle: "dev",
     crons,
     waitingOn: { tasks: [], crons: 2 },
     cronZone: "Mars/Zone",
@@ -229,7 +229,7 @@ function Live() {
   const [list, setList] = useState(crons);
   clearLive = () => setList([]);
   const agent = agentSummary({
-    slug: "dev",
+    handle: "dev",
     crons: list,
     waitingOn: { tasks: [], crons: list.length },
   } as never);

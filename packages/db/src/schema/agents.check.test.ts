@@ -11,10 +11,10 @@ beforeAll(async () => {
   await sql`insert into principals (id, kind, handle, ref) values ('u1', 'human', 'or', substr(md5('u1'::text), 1, 8))`;
   await sql`insert into users (id, name, email) values ('u1','Or','or@x.io')`;
   await sql`insert into principals (id, kind, handle, ref) values ('lead', 'agent', 'lead', substr(md5('lead'::text), 1, 8))`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to) values ('lead','lead','Lead','t','{}','local','c1','u1')`;
+  await sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to) values ('lead','Lead','t','{}','local','c1','u1')`;
   await sql`insert into principals (id, kind, handle, ref) values ('kid', 'agent', 'kid-abcd', substr(md5('kid'::text), 1, 8))`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-            values ('kid','kid-abcd','Kid','t','{}','local','c2','ephemeral','lead', now(), 'lead')`;
+  await sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+            values ('kid','Kid','t','{}','local','c2','ephemeral','lead', now(), 'lead')`;
 });
 afterAll(async () => {
   await sql.end();
@@ -41,8 +41,8 @@ test("a persistent agent can't be terminated", async () => {
 const insertAs = (id: string, kind: string, reportsTo: string | null) =>
   sql`insert into principals (id, kind, handle, ref) values (${id}, 'agent', ${id}, substr(md5(${id}::text), 1, 8)) on conflict do nothing`.then(
     () =>
-      sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
-      values (${id}, ${id}, 'X', 't', '{}', 'local', 'c1', ${kind}, ${reportsTo})`,
+      sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to)
+      values (${id}, 'X', 't', '{}', 'local', 'c1', ${kind}, ${reportsTo})`,
   );
 test.each([
   ["a persistent agent", "persistent"],
@@ -76,17 +76,15 @@ test("a live row can't have a null credential", async () => {
 });
 test("kind is persistent or ephemeral", async () => {
   await sql`insert into principals (id, kind, handle, ref) values ('k2', 'agent', 'k2', substr(md5('k2'::text), 1, 8))`;
-  await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
-                   values ('k2','k2','K','t','{}','local','c1','weird','u1')`).rejects.toMatchObject(
-    {
-      code: "23514",
-    },
-  );
+  await expect(sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to)
+                   values ('k2','K','t','{}','local','c1','weird','u1')`).rejects.toMatchObject({
+    code: "23514",
+  });
 });
 test("only a persistent agent can manage the org", async () => {
   await sql`insert into principals (id, kind, handle, ref) values ('e3', 'agent', 'e3-abcd', substr(md5('e3'::text), 1, 8))`;
-  await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, manage_org)
-                   values ('e3','e3-abcd','E','t','{}','local','c1','ephemeral','lead', true)`).rejects.toMatchObject(
+  await expect(sql`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to, manage_org)
+                   values ('e3','E','t','{}','local','c1','ephemeral','lead', true)`).rejects.toMatchObject(
     {
       code: "23514",
     },

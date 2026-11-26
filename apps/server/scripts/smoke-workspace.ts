@@ -24,7 +24,7 @@ import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
 import { principalSql } from "../src/test/principals.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
-import { bySlug } from "./by-slug.ts";
+import { byHandle } from "./by-handle.ts";
 
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 if (!token) {
@@ -112,7 +112,7 @@ function cleanup(): Promise<void> {
       // app.close() runs runtimes.stopAll() (onClose hook); then no process may be running.
       try {
         const rts = await Promise.all(
-          ["smoke-alpha", "smoke-beta"].map((s) => bySlug(app, s).catch(() => undefined)),
+          ["smoke-alpha", "smoke-beta"].map((s) => byHandle(app, s).catch(() => undefined)),
         );
         let closeErr = "";
         await app.close().catch((e) => {
@@ -154,25 +154,26 @@ for (const sig of ["SIGINT", "SIGTERM"] as const)
 
 // ---------- helpers ----------
 const events = new Map<string, AnyEvent[]>();
-async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[]> {
-  const list = events.get(slug) ?? [];
+async function turn(handle: string, body: string, ms = 240_000): Promise<AnyEvent[]> {
+  const list = events.get(handle) ?? [];
   const from = list.length;
-  const rt = await bySlug(app, slug);
-  if (!rt) throw new Error(`no runtime for ${slug}`);
-  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [slug], body, false))
-    .results;
+  const rt = await byHandle(app, handle);
+  if (!rt) throw new Error(`no runtime for ${handle}`);
+  const [sent] = (
+    await app.router.send({ userId: "smoke", handle: "smoke" }, [handle], body, false)
+  ).results;
   if (!sent || sent.status === "refused" || sent.status === "start_failed")
     throw new Error(
-      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+      `send to ${handle} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
     );
   const end = Date.now() + ms;
   while (Date.now() < end) {
     const got = list.slice(from);
     if (got.some((e) => e.type === "turn_end" && !e.originKind)) return got;
-    if (got.some((e) => e.type === "exited")) throw new Error(`${slug} process exited mid-turn`);
+    if (got.some((e) => e.type === "exited")) throw new Error(`${handle} process exited mid-turn`);
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error(`${slug}: turn timed out`);
+  throw new Error(`${handle}: turn timed out`);
 }
 /** What the agent said: its text, and what it sent through send_message (since S6 a reply is usually a message). */
 const textOf = (es: AnyEvent[]) =>
@@ -233,10 +234,10 @@ try {
   appBuilt = true;
   await conn.sql.unsafe(principalSql("smoke", "human", "smoke"));
   await conn.sql`insert into users (id, name, email) values ('smoke', 'Smoke', 'smoke@example.invalid')`;
-  for (const slug of ["smoke-alpha", "smoke-beta"]) {
+  for (const handle of ["smoke-alpha", "smoke-beta"]) {
     const list: AnyEvent[] = [];
-    events.set(slug, list);
-    app.bus.subscribe(slug, (m) => {
+    events.set(handle, list);
+    app.bus.subscribe(handle, (m) => {
       if (m.type === "session_event") list.push(m.event.event);
     });
   }
@@ -314,7 +315,7 @@ try {
     app.agents.create(
       {
         template: "alpha",
-        slug: "smoke-alpha",
+        handle: "smoke-alpha",
         displayName: "Smoke Alpha",
         description: "Smoke agent alpha",
         reportsTo: "smoke",
@@ -327,7 +328,7 @@ try {
     app.agents.create(
       {
         template: "beta",
-        slug: "smoke-beta",
+        handle: "smoke-beta",
         displayName: "Smoke Beta",
         description: "Smoke agent beta",
         reportsTo: "smoke-alpha",
@@ -352,7 +353,7 @@ try {
         "2) With the Edit tool, edit the file at ./projects/smoke-repo/README.md (use that path, under your working directory; this check needs the main checkout, so no worktree) so it contains the text ALPHA-EDIT.",
         "3) Run this exact Bash command: curl -sI https://example.com",
         "4) Read the file ./secret.txt with the Read tool.",
-        "5) Quote your slug and your manager line from your instructions, verbatim.",
+        "5) Quote your handle and your manager line from your instructions, verbatim.",
       ].join("\n"),
     ),
   );
@@ -424,7 +425,7 @@ try {
   const b = await step("6. smoke-beta turn completes", () =>
     turn(
       "smoke-beta",
-      "List the names of the skills you have, then quote your slug and your manager line from your instructions, verbatim.",
+      "List the names of the skills you have, then quote your handle and your manager line from your instructions, verbatim.",
     ),
   );
   const bInit = inits.get("smoke-beta");

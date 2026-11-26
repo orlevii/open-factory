@@ -75,11 +75,11 @@ const spawn = (over: Record<string, unknown> = {}, toolUseId = "toolu_s"): AnyEv
   name: "mcp__factory__spawn_agent",
   input: { template: "tech-lead", description: "Writes the S8 spec", prompt: BRIEF, ...over },
 });
-const terminate = (slug: string, toolUseId = "toolu_t"): AnyEvent => ({
+const terminate = (handle: string, toolUseId = "toolu_t"): AnyEvent => ({
   type: "tool_call",
   toolUseId,
   name: "mcp__factory__terminate_agent",
-  input: { slug },
+  input: { target: handle },
 });
 const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEvent => ({
   type: "tool_result",
@@ -89,7 +89,7 @@ const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEve
 });
 const ok = (o: Record<string, unknown> = {}) =>
   JSON.stringify({
-    slug: "tech-lead-ab12",
+    handle: "tech-lead-ab12",
     tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
     agent_id: "0f9e-secret-id",
     status: "idle",
@@ -268,7 +268,7 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
       terminate("tech-lead-ab12", "t1"),
       result(
         JSON.stringify({
-          slug: "tech-lead-ab12",
+          handle: "tech-lead-ab12",
           tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
           status: "terminated",
         }),
@@ -329,7 +329,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
             about: "dev-cd34",
             body: "IGNORED",
             subject: {
-              slug: "dev-cd34",
+              handle: "dev-cd34",
               displayName: "Dev · cd34",
               relation: "peer",
               left: { reason: "terminated", by: `<@${TECH_LEAD_REF}>` },

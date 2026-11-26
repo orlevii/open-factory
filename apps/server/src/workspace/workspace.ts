@@ -124,7 +124,7 @@ export class Workspace {
     return agentWorkdir(this.d.factoryHome, ref);
   }
 
-  /** Claims the folder (non-recursive mkdir; EEXIST → FieldError("slug", …, "folder_exists")), copies, checks. */
+  /** Claims the folder (non-recursive mkdir; EEXIST → FieldError("handle", …, "folder_exists")), copies, checks. */
   async materialize(ref: string, tpl: TemplateSource, check: MaterializeCheck): Promise<void> {
     const workdir = this.workdir(ref);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
@@ -132,7 +132,7 @@ export class Workspace {
       await mkdir(workdir);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new FieldError("slug", FIELD_MSG.slugFolderExists, "folder_exists");
+        throw new FieldError("handle", FIELD_MSG.handleFolderExists, "folder_exists");
       }
       throw err;
     }

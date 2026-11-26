@@ -246,12 +246,12 @@ test("the sidebar: the count, 99+, nothing at 0", async () => {
   await waitFor(() => expect(screen.getByRole("link", { name: "Inbox" })).toBeInTheDocument());
 });
 
-const chatRow = (slug: string, name: string, unread: number, createdAt: string) => ({
+const chatRow = (handle: string, name: string, unread: number, createdAt: string) => ({
   agent: {
-    ref: refFor(slug),
-    handle: slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -259,8 +259,8 @@ const chatRow = (slug: string, name: string, unread: number, createdAt: string) 
     archivedAt: null,
   },
   unread,
-  firstUnreadId: `${slug}-m`,
-  latest: { messageId: `${slug}-m`, preview: `${name} says hi`, createdAt, urgent: false },
+  firstUnreadId: `${handle}-m`,
+  latest: { messageId: `${handle}-m`, preview: `${name} says hi`, createdAt, urgent: false },
 });
 
 /** An inbox that has chats (and maybe items) and acts like the server for Mark all read and Undo. */

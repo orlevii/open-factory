@@ -62,13 +62,13 @@ const lead = (over: Partial<AgentSummary> = {}) =>
 const patches = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
   api.calls.filter((c) => c.method === "PATCH").map((c) => c.body);
 
-/** Renders `path` and opens Edit agent for `slug` over it, once its form has rendered. */
-async function open(world: World = {}, { slug = "lead", path = "/agents", form = true } = {}) {
+/** Renders `path` and opens Edit agent for `handle` over it, once its form has rendered. */
+async function open(world: World = {}, { handle = "lead", path = "/agents", form = true } = {}) {
   const api = mockWorld({ agents: [lead()], ...world });
   const utils = renderApp(path, alice);
   if (path === "/agents") await screen.findByRole("heading", { level: 1, name: "Agents" });
   else await waitFor(() => expect(utils.router.state.status).toBe("idle"));
-  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(slug) }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(handle) }));
   const dialog = await sheet();
   if (form) {
     await within(dialog).findByRole("button", { name: "Save changes" });
@@ -101,18 +101,18 @@ async function rename(to: string) {
 
 // --- The body ---
 
-test("header Edit agent, an @slug · Template description, every field and no template or slug input", async () => {
+test("header Edit agent, an @handle · Template description, every field and no template or handle input", async () => {
   const { dialog } = await open(
     {
-      agents: [lead({ handle: "a-very-long-agent-slug-that-wraps", template: "lead" })],
+      agents: [lead({ handle: "a-very-long-agent-handle-that-wraps", template: "lead" })],
     },
-    { slug: "a-very-long-agent-slug-that-wraps" },
+    { handle: "a-very-long-agent-handle-that-wraps" },
   );
   expect(
     within(dialog).getByText(
       (_c, el) =>
         el?.getAttribute("data-slot") === "sheet-description" &&
-        el.textContent === "@a-very-long-agent-slug-that-wraps · Template lead",
+        el.textContent === "@a-very-long-agent-handle-that-wraps · Template lead",
     ),
   ).toBeInTheDocument();
   expect(field("Display name")).toHaveValue("Lead");
@@ -146,7 +146,7 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   await open({ agents });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
-  // The closed trigger shows the name and @slug.
+  // The closed trigger shows the name and @handle.
   expect(select).toHaveTextContent("@cto");
   expect(await comboOptionNames(select)).toEqual([
     "You (Alice · @alice)",
@@ -330,7 +330,7 @@ test("Nothing to save: no field changed. stays inline and sends nothing", async 
 
 // --- Save (§6.4, §10.2) ---
 
-test("save over another page closes the sheet, clears the draft, sends the diff and toasts Saved @slug.", async () => {
+test("save over another page closes the sheet, clears the draft, sends the diff and toasts Saved @handle.", async () => {
   const { api } = await open({
     extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ displayName: "Boss" })) },
   });
@@ -488,7 +488,7 @@ test("on its own session, a display-name-only save toasts nothing", async () => 
   expect(notify).not.toHaveBeenCalled();
 });
 
-test("on its own session, any other field toasts Saved @slug.", async () => {
+test("on its own session, any other field toasts Saved @handle.", async () => {
   await open(
     {
       extra: {
@@ -595,7 +595,7 @@ test("a toggle sends the project array", async () => {
 
 // --- Dismissed while saving (break-ui M2) ---
 
-test("a late success toasts Saved @slug. and clears the draft when nothing reopened", async () => {
+test("a late success toasts Saved @handle. and clears the draft when nothing reopened", async () => {
   const patch = held();
   await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
@@ -825,7 +825,7 @@ test("an unknown ref: No agent at this link.", async () => {
           json({ error: { code: "agent_not_found", message: "No agent x." } }, 404),
       },
     },
-    { slug: "x", form: false },
+    { handle: "x", form: false },
   );
   expect(await within(dialog).findByText("No agent at this link.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();

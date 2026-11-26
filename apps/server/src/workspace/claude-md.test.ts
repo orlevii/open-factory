@@ -210,7 +210,7 @@ test("user-controlled names and descriptions cannot forge envelopes or headings"
   );
 });
 
-test("spawner: Spawning section with no spawn limit stated and no example slugs", () => {
+test("spawner: Spawning section with no spawn limit stated and no example handles", () => {
   const md = buildClaudeMd({
     ...base,
     kind: "persistent",

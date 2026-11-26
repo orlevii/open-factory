@@ -16,25 +16,25 @@ test("validation errors carry fields; ApiError extras are rendered", async () =>
   registerErrorHandlers(app);
   app.post(
     "/v",
-    { schema: { body: z.object({ slug: z.string().min(3, "Too short"), name: z.string() }) } },
+    { schema: { body: z.object({ handle: z.string().min(3, "Too short"), name: z.string() }) } },
     async () => ({}),
   );
   app.post("/f", async () => {
-    throw new FieldError("slug", "That slug is taken.", "slug_taken");
+    throw new FieldError("handle", "That handle is taken.", "handle_taken");
   });
   app.post("/e", async () => {
     throw new ApiError(409, "credential_in_use", "Used by @a.", { usedBy: ["a"] });
   });
-  const v = await app.inject({ method: "POST", url: "/v", payload: { slug: "a" } });
+  const v = await app.inject({ method: "POST", url: "/v", payload: { handle: "a" } });
   expect(v.statusCode).toBe(400);
-  expect(v.json().error.fields).toEqual({ slug: "Too short", name: expect.any(String) });
+  expect(v.json().error.fields).toEqual({ handle: "Too short", name: expect.any(String) });
   const f = await app.inject({ method: "POST", url: "/f" });
   expect(f.statusCode).toBe(409);
   expect(f.json()).toEqual({
     error: {
-      code: "slug_taken",
-      message: "That slug is taken.",
-      fields: { slug: "That slug is taken." },
+      code: "handle_taken",
+      message: "That handle is taken.",
+      fields: { handle: "That handle is taken." },
     },
   });
   const e = await app.inject({ method: "POST", url: "/e" });

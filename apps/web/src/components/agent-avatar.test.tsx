@@ -124,7 +124,7 @@ test("no face's parts share a React key (eyes, mouth and accessory are siblings)
   }
 });
 
-test("an explicit colour fills the face over the slug's seed; Auto keeps the seed", () => {
+test("an explicit colour fills the face over the handle's seed; Auto keeps the seed", () => {
   const fillOf = (c: HTMLElement) => c.querySelector("svg g")?.getAttribute("fill");
   const auto = render(<AgentAvatar color={null} agentRef={refFor("lead")} size={20} />);
   const seeded = fillOf(auto.container);

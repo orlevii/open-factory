@@ -85,7 +85,7 @@ export async function wsRoutes(app: FastifyInstance) {
         throw err;
       };
       const rt = await app.runtimes
-        .byRef(normaliseRef(agent) ?? "")
+        .byRef(agent)
         .catch((err) => (current() ? failed(err) : undefined));
       if (!current()) return;
       if (!rt)
@@ -147,17 +147,24 @@ export async function wsRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return send({ type: "error", code: "bad_message", message: "Unknown message" });
       const m = parsed.data;
-      if (m.type === "ping") send({ type: "pong" });
-      else if (m.type === "subscribe")
-        void subscribe(m.agent, m.afterSeq).catch((err) =>
+      if (m.type === "ping") return send({ type: "pong" });
+      // The canonical (lowercase) ref keys every map and appears in every frame sent back.
+      const agent = normaliseRef(m.agent);
+      if (!agent) {
+        if (m.type === "subscribe")
+          send({ type: "error", code: "agent_not_found", message: "No agent at this ref" });
+        return;
+      }
+      if (m.type === "subscribe")
+        void subscribe(agent, m.afterSeq).catch((err) =>
           request.log.error({ err }, "subscribe failed"),
         );
       else if (m.type === "unsubscribe") {
-        nextGeneration(m.agent);
-        stop(m.agent);
+        nextGeneration(agent);
+        stop(agent);
       } else if (m.type === "live_snapshot") {
         // Only for an agent this socket is subscribed to and caught up on: the same reach as its live frames.
-        const snapshot = snapshots.get(m.agent)?.();
+        const snapshot = snapshots.get(agent)?.();
         if (snapshot) send(snapshot);
       }
     });

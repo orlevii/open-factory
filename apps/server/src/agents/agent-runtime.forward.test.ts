@@ -11,7 +11,7 @@ const h = new RuntimeHarness();
 const PEER = "peer-fwd";
 beforeAll(async () => {
   await h.setup();
-  await insertAgent(h.t.sql, { id: PEER, slug: "peerfwd" });
+  await insertAgent(h.t.sql, { id: PEER, handle: "peerfwd" });
 });
 afterAll(() => h.close());
 beforeEach(async () => {

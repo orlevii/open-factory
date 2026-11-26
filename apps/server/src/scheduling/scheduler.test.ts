@@ -42,8 +42,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   store = new ScheduleStore();
   sched = new Scheduler({
     db: t.db,

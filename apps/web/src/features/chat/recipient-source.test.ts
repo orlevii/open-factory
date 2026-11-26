@@ -9,11 +9,11 @@ function setup(added: string[], agents = ["dev", "ops", "qa", "old"]) {
   const qc = new QueryClient();
   qc.setQueryData(
     agentsListQueryOptions("exclude").queryKey,
-    agents.map((slug) =>
+    agents.map((handle) =>
       agentSummary({
-        handle: slug,
-        displayName: slug,
-        ...(slug === "old" ? { archivedAt: "2026-11-01T00:00:00.000Z" } : {}),
+        handle: handle,
+        displayName: handle,
+        ...(handle === "old" ? { archivedAt: "2026-11-01T00:00:00.000Z" } : {}),
       }),
     ),
   );

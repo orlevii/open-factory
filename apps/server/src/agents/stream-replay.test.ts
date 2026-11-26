@@ -53,15 +53,15 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
 
 /**
- * Makes frames stable across runs: per-run ids (uuids, the agent's slug, seqs from a shared test DB) become stable
+ * Makes frames stable across runs: per-run ids (uuids, the agent's handle, seqs from a shared test DB) become stable
  * placeholders in order of appearance, and timestamps a fixed one.
  */
-function normalizer(slug: string) {
+function normalizer(handle: string) {
   const ids = new Map<string, string>();
   const seqs = new Map<number, number>();
   const walk = (v: unknown): unknown => {
     if (typeof v === "string") {
-      if (v === slug) return "dev";
+      if (v === handle) return "dev";
       if (ISO.test(v)) return "2026-11-21T10:00:00.000Z";
       return v.replace(UUID, (u) => {
         if (!ids.has(u))
@@ -93,10 +93,10 @@ interface Replayed {
 
 async function replay(name: string, lines: readonly TraceLine[]): Promise<Replayed> {
   await h.makeRuntime({ holdTimeoutMs: 60_000 });
-  const slug = testRef(h.rt.agent.id);
-  const norm = normalizer(slug);
+  const handle = testRef(h.rt.agent.id);
+  const norm = normalizer(handle);
   const ours = (m: ServerMessage) =>
-    (m.type === "session_event" || m.type === "live") && m.agent === slug;
+    (m.type === "session_event" || m.type === "live") && m.agent === handle;
   const frames: ServerMessage[] = [];
   const snapshots: StreamFixture["snapshots"] = [];
   const off = h.bus.subscribe(h.rt.agent.id, (m) => {

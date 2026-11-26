@@ -5,10 +5,8 @@
 export const MSG = {
   startLetter: "Start with a letter.",
   nameLength: "Use 2 to 40 characters.",
-  slugLength: "Use 3 to 40 characters.",
   nameChars: "Use only a–z, 0–9 and hyphens.",
   noTrailingHyphen: "Don't end with a hyphen.",
-  slugReserved: "That slug is reserved.",
   managerUnknown: "Choose an active agent or person.",
   managerRequired: "Choose who this agent reports to.",
   handleLength: "Use 2 to 40 characters",

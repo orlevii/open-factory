@@ -13,7 +13,7 @@ export type SpawnArgs = { template: string; suffix?: string; description: string
 export type SpawnResult =
   | {
       ok: true;
-      slug: string;
+      handle: string;
       /** The new agent as `<@ref|handle>`. */
       tag: string;
       agentId: string;
@@ -44,7 +44,7 @@ export function spawnAgentTool(d: {
           const r = await d.spawn.spawn(callerOf(tctx), args, toolUseIdOf(tctx));
           if (!r.ok) return toolError(r.message);
           return textResult({
-            slug: r.slug,
+            handle: r.handle,
             tag: r.tag,
             agent_id: r.agentId,
             status: r.status,

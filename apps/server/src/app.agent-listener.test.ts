@@ -17,7 +17,7 @@ const mcpUrlOf = (cwd: string) => {
 
 test("spec §5.3: a boot wake starts the agent with .mcp.json pointing at an agent listener that is already listening", async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
-  const a = await h.seedAgent({ slug: "ada" });
+  const a = await h.seedAgent({ handle: "ada" });
   const u = await signUp(h.app, { handle: "or" });
   // Written behind the first app's back: only the next boot's reconciliation can wake `ada` for it.
   await h.sql`insert into messages (id, kind, from_id, to_id, body,recipient_ids) values ('boot-1', 'message', ${u.user.id}, ${a.id}, 'wake at boot', ${[a.id]})`;

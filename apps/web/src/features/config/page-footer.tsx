@@ -8,8 +8,8 @@ import { CONFIG_PAGE_COPY } from "./messages";
 /**
  * The footer of a page with one save (DESIGN.md → Page forms; spec §12.4 R6): the I4 outcome line above Discard (ghost)
  * and Save changes (primary), side by side at every width. It is sticky at the bottom of the page column only while
- * `sticky` (the form is dirty, or an outcome shows), and otherwise sits in the flow at the end of the form. A plate
- * with a top rule, no blur. Save keeps its shape while it can't run: `aria-disabled`, described by the outcome's notice.
+ * `sticky` (the form is dirty, or an outcome shows), and otherwise sits in the flow at the end of the form. It
+ * uses the page background (no white plate); the sticky bar casts a faint upward shadow instead of a rule. Save keeps its shape while it can't run: `aria-disabled`, described by the outcome's notice.
  * `onHeight` hears the footer's height, for an editor's bottom scroll margin; it must be stable.
  */
 export function PageFooter({
@@ -63,8 +63,8 @@ export function PageFooter({
       data-slot="page-footer"
       data-sticky={sticky ? "" : undefined}
       className={cn(
-        "z-10 grid grid-cols-[minmax(0,1fr)] gap-2 border-t border-border bg-card py-3",
-        sticky && "sticky bottom-0",
+        "z-10 grid grid-cols-[minmax(0,1fr)] gap-2 bg-background py-3",
+        sticky && "sticky bottom-0 shadow-[0_-8px_16px_-12px_rgb(0_0_0/0.14)]",
       )}
     >
       <FormOutcome

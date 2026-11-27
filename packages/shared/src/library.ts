@@ -257,7 +257,6 @@ export const sourceUpdateViewSchema = z.object({
   ),
   removed: z.array(z.string()),
   added: z.array(z.string()),
-  unusable: z.array(z.object({ name: z.string(), detail: z.string() })),
 });
 
 /** `GET /api/library/sources/:id`: the detail, with the update view when a check found a newer commit. */

@@ -152,12 +152,6 @@ export function UpdateView({
           )}
           <NameList title="Removed" names={view.removed} />
           <NameList title="New in this commit, not added" names={view.added} />
-          {view.unusable.length > 0 && (
-            <NameList
-              title="Unusable at this commit"
-              names={view.unusable.map((u) => `${u.name}: ${u.detail}`)}
-            />
-          )}
         </div>
       ) : (
         <p className="text-[0.8125rem] text-muted-foreground">Can't show what changes.</p>

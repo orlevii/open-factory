@@ -207,7 +207,7 @@ describe("preview", () => {
     expect(p.previewId).toBeTruthy();
     expect(p.found.map((f) => [f.name, f.pickable, f.reason, f.takenBy, f.detail])).toEqual([
       ["dup", false, "taken", "Host", undefined],
-      ["other", false, "unusable", undefined, "SKILL.md names it not-other"],
+      ["other", true, undefined, undefined, undefined],
       ["tdd", true, undefined, undefined, undefined],
     ]);
   });
@@ -283,13 +283,10 @@ describe("preview", () => {
 });
 
 describe("add", () => {
-  test("refuses a taken name and an unusable skill", async () => {
-    await makeFixtureRepo(repoDir(), {
-      commits: [{ "tdd/SKILL.md": md("tdd"), "bad/SKILL.md": md("worse") }],
-    });
+  test("refuses a name taken after the preview", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [{ "tdd/SKILL.md": md("tdd") }] });
     const s = setup();
     const p = (await preview(s)).previewId as string;
-    await expectApi(s.svc.add(ghBody(p, ["bad"]), OR), 400, "validation_error");
     // Taken after the preview: a host skill appears before the add.
     mkdirSync(path.join(claude, "skills", "tdd"), { recursive: true });
     writeFileSync(path.join(claude, "skills", "tdd", "SKILL.md"), md("tdd"));
@@ -701,24 +698,22 @@ describe("update view and update edge cases", () => {
     "gone/SKILL.md": md("gone"),
   };
 
-  test("lists removed and unusable skills at the new commit", async () => {
+  test("lists removed skills at the new commit", async () => {
     await twoCommitRepo(base, {
       "tdd/SKILL.md": md("tdd", "x: 1\n"),
-      "lint/SKILL.md": md("elsewhere"),
+      "lint/SKILL.md": md("lint"),
     });
     const s = setup();
     const src = await addedAtOld(s, ["gone", "lint", "tdd"]);
     await s.svc.check(src.id);
     const v = await s.svc.updateView(src.id);
     expect(v.removed).toEqual(["gone"]);
-    expect(v.unusable).toEqual([{ name: "lint", detail: "SKILL.md names it elsewhere" }]);
     expect(v.changed.map((c) => c.name)).toEqual(["tdd"]);
   });
 
-  test("an update is refused when a used skill becomes unusable", async () => {
+  test("an update is refused when a used skill is removed", async () => {
     const r = await twoCommitRepo(base, {
       "tdd/SKILL.md": md("tdd"),
-      "lint/SKILL.md": md("elsewhere"),
       "gone/SKILL.md": md("gone"),
     });
     const s = setup({ users: { lint: { templates: ["dev"], agents: [] } } });

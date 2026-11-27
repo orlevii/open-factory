@@ -106,20 +106,11 @@ test("host discovery skips zips, folders without SKILL.md and invalid names", as
   expect(groups[0]?.skills[0]).toMatchObject({ description: "about good", state: "ok" });
 });
 
-test("a frontmatter name that differs from the folder is unusable", async () => {
+test("a frontmatter name that differs from the folder is still usable, under the folder's name", async () => {
   host("foo", "name: bar");
   const idx = make();
-  expect(await idx.resolveSkill("foo")).toEqual({
-    ok: false,
-    reason: "unusable",
-    detail: "SKILL.md names it bar",
-  });
-  const row = (await idx.skills())[0]?.skills[0];
-  expect(row).toMatchObject({
-    name: "foo",
-    state: "unusable",
-    stateDetail: "SKILL.md names it bar",
-  });
+  expect(await idx.resolveSkill("foo")).toMatchObject({ ok: true, name: "foo" });
+  expect((await idx.skills())[0]?.skills[0]).toMatchObject({ name: "foo", state: "ok" });
 });
 
 test("a host skill resolves to its realpath with ref host", async () => {

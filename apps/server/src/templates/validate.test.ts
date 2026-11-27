@@ -15,9 +15,6 @@ import {
 
 const claude = mkdtempSync(path.join(tmpdir(), "claude-"));
 writeHostSkill(claude, "grilling");
-// A host skill whose SKILL.md names another skill, so the Library calls it unusable.
-mkdirSync(path.join(claude, "skills", "renamed"));
-writeFileSync(path.join(claude, "skills", "renamed", "SKILL.md"), "---\nname: other\n---\n");
 
 const ctx: ValidationContext = {
   projects: new Set(["app"]),
@@ -69,11 +66,6 @@ test.each([
     "a skill that hasn't been added",
     { "template.yaml": "name: tech-lead\ndisplay_name: X\nskills: [nope]\n" },
     /^Skill nope hasn't been added in Skills\.$/,
-  ],
-  [
-    "an unusable skill",
-    { "template.yaml": "name: tech-lead\ndisplay_name: X\nskills: [renamed]\n" },
-    /^Skill renamed is unusable: SKILL\.md names it other\.$/,
   ],
   [
     "a Library skill vs a template skill",

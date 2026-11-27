@@ -95,14 +95,11 @@ export type Found = {
 
 const isDir = async (p: string) => (await stat(p).catch(() => undefined))?.isDirectory() ?? false;
 
-/** The rules every live skill folder meets: SKILL.md present, its name equals the folder's. */
+/** The rule every live skill folder meets: SKILL.md present. The folder's name is the skill's name; a frontmatter `name` is not checked. */
 export async function inspect(name: string, dir: string, missing = "Missing"): Promise<Found> {
   const md = await readSkillMd(dir);
   if (!md) return { state: "missing", detail: missing, dir, description: "" };
   const description = md.description ?? "";
-  if (md.name !== undefined && md.name !== name) {
-    return { state: "unusable", detail: `SKILL.md names it ${md.name}`, dir, description };
-  }
   return { state: "ok", dir, description };
 }
 

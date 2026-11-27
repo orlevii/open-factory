@@ -71,16 +71,11 @@ test("Library skills: resolved to real folders, linked, stale links removed, non
 
 test("resolveSkills fails with the Library's reason as the start's message, fixed in Configuration", async () => {
   const { claude, lib } = hostLib();
-  mkdirSync(path.join(claude, "skills", "renamed"), { recursive: true });
-  writeFileSync(path.join(claude, "skills", "renamed", "SKILL.md"), "---\nname: other\n---\n");
   await expect(resolveSkills(lib, ["nope"])).rejects.toMatchObject({
     name: "WorkspaceError",
     message: "Skill nope hasn't been added in Skills. Fix it in Configuration.",
     diagnosis: "Skill nope hasn't been added in Skills.",
     fix: "config",
-  });
-  await expect(resolveSkills(lib, ["renamed"])).rejects.toMatchObject({
-    message: "Skill renamed is unusable: SKILL.md names it other. Fix it in Configuration.",
   });
   // A name the template itself lists is the template's to fix.
   await expect(resolveSkills(lib, ["nope"], ["nope"])).rejects.toMatchObject({

@@ -582,7 +582,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     // The check reads the pin, then waits at the gate while holding the lock: a pin that didn't take the lock would
     // commit here and still lose its workspace.
     const deletion = s.app.workspace.deleteWorkspace(
-      "boss-ee55",
+      await s.refOf("boss-ee55"),
       async () => {
         const [r] = await s.sql`select workspace_pinned from agents where id = ${id}`;
         checked();

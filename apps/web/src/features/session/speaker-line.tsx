@@ -266,16 +266,16 @@ const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
  *  resolves as it always did. */
 function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
   const s = useSpeakers();
-  const mentionRef = scanMentions(id).tokens[0]?.ref;
-  if (!mentionRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
-  if (mentionRef === s.selfRef) return <SelfMention mentionRef={mentionRef} />;
-  return <Mention mentionRef={mentionRef} />;
+  const principalRef = scanMentions(id).tokens[0]?.ref;
+  if (!principalRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
+  if (principalRef === s.selfRef) return <SelfMention principalRef={principalRef} />;
+  return <Mention principalRef={principalRef} />;
 }
 
 /** The signed-in human's mention: "You", with their avatar, once the principal is known. */
-function SelfMention({ mentionRef }: { mentionRef: string }) {
-  const found = usePrincipal(mentionRef);
-  if (found.status !== "found") return <Mention mentionRef={mentionRef} />;
+function SelfMention({ principalRef }: { principalRef: string }) {
+  const found = usePrincipal(principalRef);
+  if (found.status !== "found") return <Mention principalRef={principalRef} />;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <HumanAvatar name={found.principal.name} />

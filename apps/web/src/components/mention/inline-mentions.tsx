@@ -23,7 +23,7 @@ export function InlineMentions({
   }, [text]);
   return parts.map((p) =>
     p.ref ? (
-      <Mention key={p.key} mentionRef={p.ref} interactive={interactive} />
+      <Mention key={p.key} principalRef={p.ref} interactive={interactive} />
     ) : (
       <Fragment key={p.key}>{p.text}</Fragment>
     ),

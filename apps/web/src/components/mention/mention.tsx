@@ -87,13 +87,13 @@ function FoundMention({ p, interactive }: { p: PrincipalItem; interactive: boole
 
 /** A `<@ref>` as a chip showing the principal's current handle. `interactive={false}` (inside a link) keeps the look only. */
 export function Mention({
-  mentionRef,
+  principalRef,
   interactive = true,
 }: {
-  mentionRef: string;
+  principalRef: string;
   interactive?: boolean;
 }) {
-  const found = usePrincipal(mentionRef);
+  const found = usePrincipal(principalRef);
   if (found.status === "found")
     return <FoundMention p={found.principal} interactive={interactive} />;
   if (found.status === "pending")
@@ -122,7 +122,7 @@ export function Mention({
 }
 
 /** What `Markdown` renders for an `of-mention` element. */
-export function MarkdownMention({ mentionRef }: { mentionRef?: string }) {
+export function MarkdownMention({ principalRef }: { principalRef?: string }) {
   const inside = use(InsideLinkContext);
-  return mentionRef ? <Mention mentionRef={mentionRef} interactive={!inside} /> : null;
+  return principalRef ? <Mention principalRef={principalRef} interactive={!inside} /> : null;
 }

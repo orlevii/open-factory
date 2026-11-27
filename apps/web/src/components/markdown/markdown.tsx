@@ -73,7 +73,7 @@ function imagesAsLinks() {
 
 /** `of-mention` is the element the remark plugin emits; it is not an HTML element, so `Components` lacks it. */
 type MentionComponents = Components & {
-  "of-mention": (props: { mentionRef?: string }) => ReactNode;
+  "of-mention": (props: { principalRef?: string }) => ReactNode;
 };
 
 function makeComponents(newTabNoteId: string, untrusted: boolean): MentionComponents {
@@ -106,8 +106,8 @@ function makeComponents(newTabNoteId: string, untrusted: boolean): MentionCompon
         </a>
       );
     },
-    "of-mention": ({ mentionRef }: { mentionRef?: string }) => (
-      <MarkdownMention mentionRef={mentionRef} />
+    "of-mention": ({ principalRef }: { principalRef?: string }) => (
+      <MarkdownMention principalRef={principalRef} />
     ),
     // Wide tables scroll inside their own box instead of widening the page.
     table: ({ children }) => (

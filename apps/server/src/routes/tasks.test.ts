@@ -264,7 +264,7 @@ test("a comment with an unknown ref is 400 on body and writes no comment", async
   expect(r.statusCode).toBe(400);
   expect(r.json().error).toMatchObject({
     code: "unknown_mention",
-    fields: { body: "Mention isn't anyone here" },
+    fields: { body: "This mention doesn't match anyone" },
   });
   expect(await h.sql`select id from task_comments`).toEqual([]);
 });
@@ -275,7 +275,7 @@ test("a task title with a mention is stored as <@ref>", async () => {
   expect(t.title).toBe(`Review for <@${dev?.ref}>`);
   const bad = await call("POST", "/api/tasks", { title: "Review for <@zzzzzzzz>" });
   expect(bad.statusCode).toBe(400);
-  expect(bad.json().error.fields.title).toBe("Mention isn't anyone here");
+  expect(bad.json().error.fields.title).toBe("This mention doesn't match anyone");
 });
 
 test("GET /api/agents carries openTasks", async () => {

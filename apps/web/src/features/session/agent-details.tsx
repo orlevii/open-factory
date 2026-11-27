@@ -70,7 +70,7 @@ export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
   if (by === null) return `Terminated ${when} after 3 days without activity.`;
   return (
     <>
-      Terminated by <Mention mentionRef={by.ref} /> {when}.
+      Terminated by <Mention principalRef={by.ref} /> {when}.
     </>
   );
 }

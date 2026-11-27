@@ -1417,7 +1417,7 @@ const MENTIONING: CompletionSource = {
       { id: BOB, label: "Bob", detail: "@bob", group: "humans" },
     ].filter((p) => p.detail.slice(1).startsWith(q)),
   accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
-  acceptMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+  toMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
   mentionHandle: (ref) => HANDLES[ref],
 };
 const MENTIONS = { at: MENTIONING };

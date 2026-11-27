@@ -12,7 +12,7 @@ import { ApiError, FieldError } from "../errors.ts";
 import { principalsByHandles, principalsByRefs, type Tx } from "./principal-store.ts";
 
 /** What a human sees on the field that holds an unknown mention. At most 40 characters (the I4 form rule). */
-export const UNKNOWN_MENTION_FIELD_MESSAGE = "Mention isn't anyone here";
+export const UNKNOWN_MENTION_FIELD_MESSAGE = "This mention doesn't match anyone";
 
 /**
  * A mention-holding field names a ref nobody has. For an agent it is a tool error (its message is the sentences that say

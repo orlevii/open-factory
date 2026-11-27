@@ -56,7 +56,7 @@ function NamedAgent({ name, label = false }: { name: string; label?: boolean }) 
 /** Who did it, inside a sentence: a principal's mention is a chip showing its current handle; a word stays plain mono. */
 export function Actor({ by }: { by: string }) {
   const b = formatBy(by);
-  return b.kind === "mention" ? <Mention mentionRef={b.ref} /> : <Mono>{by}</Mono>;
+  return b.kind === "mention" ? <Mention principalRef={b.ref} /> : <Mono>{by}</Mono>;
 }
 
 /** "by @lead" · "by @or" · "after 3 days without activity" (S7 UI design §4.4; never "@factory"). */

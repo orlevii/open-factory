@@ -99,7 +99,7 @@ test("the source offers live principals from the cache with their ref, and a not
   const rows = source.items("");
   expect(rows.map((r) => r.detail)).toEqual(["@alpha", "@bravo", "@dana", "@lead", "@zed"]);
   expect(rows[0]).toEqual(expect.objectContaining({ id: refFor("alpha"), label: "Alpha" }));
-  expect(source.acceptMention?.(rows[0] as never)).toEqual({
+  expect(source.toMention?.(rows[0] as never)).toEqual({
     ref: refFor("alpha"),
     handle: "alpha",
   });

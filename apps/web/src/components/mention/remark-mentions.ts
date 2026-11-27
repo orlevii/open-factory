@@ -10,11 +10,11 @@ function split(node: MdNode): MdNode[] | undefined {
   const out: MdNode[] = [];
   let at = 0;
   for (const m of value.matchAll(MENTION)) {
-    const mentionRef = normaliseRef(m[1] ?? "");
-    if (!mentionRef) continue;
+    const principalRef = normaliseRef(m[1] ?? "");
+    if (!principalRef) continue;
     const start = m.index ?? 0;
     if (start > at) out.push({ type: "text", value: value.slice(at, start) });
-    out.push({ type: "mention", data: { hName: "of-mention", hProperties: { mentionRef } } });
+    out.push({ type: "mention", data: { hName: "of-mention", hProperties: { principalRef } } });
     at = start + m[0].length;
   }
   if (out.length === 0) return undefined;

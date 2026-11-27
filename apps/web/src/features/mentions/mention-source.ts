@@ -68,7 +68,7 @@ export type MentionNote = { note?: string };
 /**
  * The `@` source over the query cache: it mentions. `items(query)` ranks the live principals already cached
  * when the menu asks (only while it is open), so nothing is fetched per keystroke and no list frame
- * renders the composer while the menu is closed. A picked row is a mention range (`acceptMention`, `id` is the
+ * renders the composer while the menu is closed. A picked row is a mention range (`toMention`, `id` is the
  * ref), stored and sent as `<@ref>`; `mentionHandle` hydrates stored mentions back to `@handle`.
  */
 export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): CompletionSource {
@@ -92,7 +92,7 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
       }).map(toItem);
     },
     // The row's detail is `@handle`.
-    acceptMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+    toMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
     accept: (item, text, from, caret) =>
       acceptMention(text, (item.detail ?? "").slice(1), from, caret),
     mentionHandle(ref) {

@@ -254,7 +254,7 @@ test("a body with an unknown ref is 400 and writes nothing", async () => {
   expect(res.statusCode).toBe(400);
   expect(res.json().error).toMatchObject({
     code: "unknown_mention",
-    fields: { body: "Mention isn't anyone here" },
+    fields: { body: "This mention doesn't match anyone" },
   });
   expect(await s.sql`select id from messages where body like '%zzzzzzzz%'`).toEqual([]);
 });

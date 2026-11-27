@@ -141,8 +141,8 @@ export function useMentionMenu({
     if (!el || !menu) return;
     const caret = el.selectionStart ?? el.value.length;
     setMenu(undefined);
-    if (menu.source.acceptMention) {
-      const { ref, handle } = menu.source.acceptMention(item);
+    if (menu.source.toMention) {
+      const { ref, handle } = menu.source.toMention(item);
       mention.pickMention(menu.from, caret, ref, handle);
     } else acceptPlain?.(menu.source, item, el, menu.from, caret);
     el.focus();

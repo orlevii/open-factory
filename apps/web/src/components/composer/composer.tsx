@@ -127,7 +127,7 @@ export type CompletionSource = {
   ): { text: string; caret: number };
   /** An `@` source that mentions: picking a row records a mention range for this principal instead of calling
    *  `accept`. Its presence turns the box into a mention field (atomic ranges, sent as `<@ref>`). */
-  acceptMention?(item: CompletionItem): { ref: string; handle: string };
+  toMention?(item: CompletionItem): { ref: string; handle: string };
   /** For a mention field: a principal's handle by ref (undefined while pending), to hydrate stored mentions. */
   mentionHandle?(ref: string): string | undefined;
   /** For a mention field: calls back when `mentionHandle` may answer differently. Returns the unsubscribe. */
@@ -420,7 +420,7 @@ export const Composer = memo(function Composer({
     value: text,
     setValue: setText,
     sources,
-    mentionSource: at?.acceptMention ? at : undefined,
+    mentionSource: at?.toMention ? at : undefined,
     box: boxRef,
     acceptPlain: (source, item, el, from, caret) => {
       const r = source.accept(item, el.value, from, caret);

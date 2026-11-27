@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:fast": "vitest run --changed origin/main",
     "test:related": "vitest related --run",
-    "typecheck": "pnpm -r --parallel exec tsc --noEmit",
+    "typecheck": "pnpm -r exec tsc --noEmit --checkers 1",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "lint:ci": "biome ci .",

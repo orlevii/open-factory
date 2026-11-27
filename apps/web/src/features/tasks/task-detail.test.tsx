@@ -614,7 +614,7 @@ test("links editor: a bad row's message sits in that row's note, under its targe
   expect(patches(api)).toHaveLength(0);
 });
 
-test("editing a task title with a tag shows @handle and saves <@ref>", async () => {
+test("editing a task title with a mention shows @handle and saves <@ref>", async () => {
   const api = world(() => detail({ title: "Ping" }));
   api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "Ping" }) }));
   renderApp("/tasks/T-42", alice);
@@ -629,7 +629,7 @@ test("editing a task title with a tag shows @handle and saves <@ref>", async () 
   await waitFor(() => expect(patches(api)[0]?.body).toEqual({ title: `Ping <@${refFor("dev")}>` }));
 });
 
-test("Escape closes a title's tag menu and keeps the @query as text, leaving the title editor open", async () => {
+test("Escape closes a title's mention menu and keeps the @query as text, leaving the title editor open", async () => {
   world(() => detail({ title: "Ping" }));
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
@@ -647,7 +647,7 @@ test("Escape closes a title's tag menu and keeps the @query as text, leaving the
   expect(screen.getByLabelText("Title")).toBe(input);
 });
 
-test("a task title is a combobox that is expanded while its tag menu is open; Esc collapses it", async () => {
+test("a task title is a combobox that is expanded while its mention menu is open; Esc collapses it", async () => {
   world(() => detail({ title: "Ping" }));
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
@@ -655,10 +655,10 @@ test("a task title is a combobox that is expanded while its tag menu is open; Es
   await userEvent.clear(input);
   expect(input).toHaveAttribute("aria-expanded", "false");
   await userEvent.type(input, "@");
-  await screen.findByRole("listbox", { name: "Tag someone" });
+  await screen.findByRole("listbox", { name: "Mention someone" });
   expect(input).toHaveAttribute("aria-expanded", "true");
   await userEvent.keyboard("{Escape}");
-  expect(screen.queryByRole("listbox", { name: "Tag someone" })).toBeNull();
+  expect(screen.queryByRole("listbox", { name: "Mention someone" })).toBeNull();
   expect(input).toHaveAttribute("aria-expanded", "false");
 });
 
@@ -713,7 +713,7 @@ test("Reply puts the author's mention at the start of the composer and focuses i
   expect(box).toHaveValue("@dev ");
 });
 
-test("Reply to a comment posts the author's tag as <@ref>", async () => {
+test("Reply to a comment posts the author's mention as <@ref>", async () => {
   const api = world();
   const bodies: string[] = [];
   api.on("POST /api/tasks/T-42/comments", async (req) => {
@@ -760,7 +760,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
   const send = await screen.findByRole("button", { name: "Send" });
   expect(send).toBeDisabled();
   const box = screen.getByRole("combobox", { name: "Comment" });
-  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you tag. Enter to post.");
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you mention. Enter to post.");
   await userEvent.type(box, "hello @nobody");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   // Optimistic (U3 §13.2): the box empties at once; the draft keeps the text until the server takes it.
@@ -883,7 +883,7 @@ test("no assignee: the helper says only mentions are notified", async () => {
   renderApp("/tasks/T-42", alice);
   expect(
     await screen.findByText(
-      "No assignee: only the people and agents you tag are notified. Enter to post.",
+      "No assignee: only the people and agents you mention are notified. Enter to post.",
     ),
   ).toBeInTheDocument();
 });
@@ -893,7 +893,7 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   const api = world();
   renderApp("/tasks/T-42", alice);
   const box = await screen.findByRole("combobox", { name: "Comment" });
-  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you tag.");
+  expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you mention.");
   await userEvent.type(box, "a{Enter}b");
   expect(box).toHaveValue("a\nb");
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);

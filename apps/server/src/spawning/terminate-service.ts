@@ -1,5 +1,5 @@
 import { type Db, schema } from "@open-factory/db";
-import { tagOf, unknownRefError } from "@open-factory/shared/tags";
+import { mentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, PendingRow } from "../agents/event-store.ts";
@@ -38,7 +38,7 @@ export class TerminateService implements TerminatePort {
     callerId: string,
     targetArg: string,
   ): Promise<
-    { ok: true; handle: string; tag: string; warning?: string } | { ok: false; message: string }
+    { ok: true; handle: string; mention: string; warning?: string } | { ok: false; message: string }
   > {
     const found = await this.d.store.agentByArg(targetArg);
     if (found.kind === "unknown_ref") return { ok: false, message: unknownRefError(found.ref) };
@@ -59,7 +59,7 @@ export class TerminateService implements TerminatePort {
     return {
       ok: true,
       handle: a.handle,
-      tag: await this.d.store.agentTag(a.id),
+      mention: await this.d.store.agentMention(a.id),
       ...(found.kind === "agent" && found.warning ? { warning: found.warning } : {}),
     };
   }
@@ -82,8 +82,8 @@ export class TerminateService implements TerminatePort {
     if (rt.agent.kind !== "ephemeral")
       throw new ApiError(409, "not_ephemeral", "Only spawned agents can be terminated.");
     if (!o.latched) rt.markTerminated({ committed: false });
-    // The terminator as the `terminated` event and the peer notices write it: a tag, or `@factory` for the TTL.
-    const terminator = by ? tagOf(by.ref) : "@factory";
+    // The terminator as the `terminated` event and the peer notices write it: a mention, or `@factory` for the TTL.
+    const terminator = by ? mentionOf(by.ref) : "@factory";
     let peerRows: PendingRow[] = [];
     let rejectedFor: string[] = [];
     let already: boolean;

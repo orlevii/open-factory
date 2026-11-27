@@ -74,7 +74,9 @@ const links = z.array(linkInputSchema).max(50, MSG.linksMax);
 export const createTaskToolSchema = z.object({
   title: taskTitleSchema.describe("One line"),
   body: taskBodySchema.optional().describe("Markdown brief"),
-  assignee: name.optional().describe('An agent: their tag <@ref|handle>, ref, or @handle; or "me"'),
+  assignee: name
+    .optional()
+    .describe('An agent: their mention <@ref|handle>, ref, or @handle; or "me"'),
   depends_on: deps.optional().describe("Task keys this task waits on, like T-41"),
   links: links.optional(),
 });
@@ -86,7 +88,7 @@ export const updateTaskToolSchema = z.object({
   assignee: name
     .nullable()
     .optional()
-    .describe('An agent: their tag <@ref|handle>, ref, or @handle; "me"; or null to unassign'),
+    .describe('An agent: their mention <@ref|handle>, ref, or @handle; "me"; or null to unassign'),
   depends_on: deps.optional().describe("The full new list (replaces the old one)"),
   links: links.optional().describe("The full new list (replaces the old one)"),
 });
@@ -96,14 +98,16 @@ export const listTasksToolSchema = z.object({
     .min(1)
     .optional()
     .describe('Default ["open","in_progress"]'),
-  assignee: name.optional().describe('An agent: their tag <@ref|handle>, ref, or @handle; or "me"'),
+  assignee: name
+    .optional()
+    .describe('An agent: their mention <@ref|handle>, ref, or @handle; or "me"'),
   unassigned: z
     .literal(true)
     .optional()
     .describe("Only tasks with no assignee (instead of assignee)"),
   created_by: name
     .optional()
-    .describe('An agent or person: their tag <@ref|handle>, ref, or @handle; or "me"'),
+    .describe('An agent or person: their mention <@ref|handle>, ref, or @handle; or "me"'),
   limit: z.number().int().min(1).max(200).optional().describe("Default 50"),
 });
 export const getTaskToolSchema = z.object({

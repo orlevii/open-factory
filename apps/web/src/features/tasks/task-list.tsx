@@ -5,7 +5,7 @@ import { type KeyboardEvent, memo, useEffect, useMemo, useRef, useState } from "
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
-import { usePlainTags } from "@/components/tag/plain-tags";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
 import { onRowKeyDown, skipFocusPreload } from "@/lib/row-nav";
@@ -84,7 +84,7 @@ const Row = memo(function Row({
   /** The peek shows this task. */
   selected: boolean;
 }) {
-  const title = usePlainTags(t.title);
+  const title = usePlainMentions(t.title);
   const at = new Date(t.updatedAt);
   const time = formatInboxTime(at, now);
   return (

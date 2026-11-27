@@ -1,5 +1,5 @@
 import type { TaskActivity } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
@@ -56,7 +56,7 @@ export function CommentBlock({
           size="xs"
           aria-label={`Reply to ${who}`}
           className="ml-auto"
-          onClick={() => onReply(tagOf(comment.author.ref))}
+          onClick={() => onReply(mentionOf(comment.author.ref))}
         >
           Reply
         </Button>

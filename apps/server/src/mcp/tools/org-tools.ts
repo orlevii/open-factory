@@ -11,7 +11,7 @@ import {
   updateAgentToolSchema,
   writeTemplateFileToolSchema,
 } from "@open-factory/shared";
-import { agentTagOf } from "@open-factory/shared/tags";
+import { agentMentionOf } from "@open-factory/shared/mentions";
 import { z } from "zod";
 import type { AgentService } from "../../agents/agent-service.ts";
 import type { ConfigService } from "../../agents/config-service.ts";
@@ -36,9 +36,9 @@ import { toolErrorOf } from "./org-errors.ts";
 
 export type OrgToolDeps = {
   loadAgent(id: string): Promise<AgentRecord | undefined>;
-  /** The caller's principal ref: the agent actor is named by its tag in stored text. */
+  /** The caller's principal ref: the agent actor is named by its mention in stored text. */
   principalRef(id: string): Promise<string | undefined>;
-  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
   facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
   agents: AgentService;
   config: ConfigService;
@@ -183,17 +183,17 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ target }) => {
-        const { ref, tag, warning } = await d.agents.agentOf(target);
+        const { ref, mention, warning } = await d.agents.agentOf(target);
         const [a, cfg] = await Promise.all([d.agents.summary(ref), d.config.getConfig(ref)]);
         const facing = await d.facing({ texts: [a.description] });
         return {
           handle: a.handle,
-          tag,
+          mention,
           display_name: a.displayName,
           description: facing.render(a.description),
           kind: a.kind,
           template: a.template,
-          reports_to: agentTagOf(a.reportsTo),
+          reports_to: agentMentionOf(a.reportsTo),
           credential: a.credential,
           projects: a.projects,
           manage_org: a.manageOrg,
@@ -214,7 +214,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async (a, actor) => {
         const handle = a.handle.trim().replace(/^@/, "");
         const manager = await d.agents.managerHandleOf(a.reports_to);
-        const tagWarnings: string[] = [];
+        const mentionWarnings: string[] = [];
         await d.agents.create(
           {
             template: a.template.trim(),
@@ -227,15 +227,15 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
             ...(a.config ? { config: a.config } : {}),
           },
           actor,
-          tagWarnings,
+          mentionWarnings,
         );
-        const tag = (await d.facing({ handles: [handle] })).tag(handle);
+        const mention = (await d.facing({ handles: [handle] })).mention(handle);
         return {
           handle,
-          tag,
+          mention,
           status: "created",
-          note: `${tag} is created and starts when it gets its first message.`,
-          ...warned(manager.warning, ...tagWarnings),
+          note: `${mention} is created and starts when it gets its first message.`,
+          ...warned(manager.warning, ...mentionWarnings),
         };
       },
     ),
@@ -244,7 +244,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
-        const { ref, handle, tag, warning } = await d.agents.agentOf(a.target);
+        const { ref, handle, mention, warning } = await d.agents.agentOf(a.target);
         const manager =
           a.reports_to !== undefined ? await d.agents.managerHandleOf(a.reports_to) : undefined;
         const before = await d.agents.summary(ref);
@@ -259,8 +259,8 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           a.config !== undefined && a.base_hash !== undefined
             ? await d.config.planOverlay(ref, a.config, a.base_hash, actor)
             : undefined;
-        const tagWarnings: string[] = [];
-        const r = await d.agents.updateWithOverlay(ref, patch, plan, actor, tagWarnings);
+        const mentionWarnings: string[] = [];
+        const r = await d.agents.updateWithOverlay(ref, patch, plan, actor, mentionWarnings);
         const same = (x: string[], y: string[]) =>
           [...x].sort().join("\0") === [...y].sort().join("\0");
         const fields: string[] = [
@@ -278,13 +278,13 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           (identity && !before.archivedAt && before.status !== "hibernated");
         return {
           handle,
-          tag,
+          mention,
           changed,
           restart,
           ...(r.config?.checked === "schema"
             ? { note: `Checked fully once ${before.template} is fixed.` }
             : {}),
-          ...warned(warning, manager?.warning, ...tagWarnings),
+          ...warned(warning, manager?.warning, ...mentionWarnings),
         };
       },
     ),
@@ -293,11 +293,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Archive an agent (not yourself). Refused while it has reports; the refusal names them.",
       getAgentToolSchema,
       async ({ target }, actor) => {
-        const { ref, tag, warning } = await d.agents.agentOf(target);
+        const { ref, mention, warning } = await d.agents.agentOf(target);
         const a = await d.agents.archive(ref, actor);
         return {
           handle: a.handle,
-          tag,
+          mention,
           archived: true,
           ...warned(warning),
         };
@@ -308,11 +308,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Unarchive an agent. Refused when its manager is archived, or when it can manage the org.",
       getAgentToolSchema,
       async ({ target }, actor) => {
-        const { ref, tag, warning } = await d.agents.agentOf(target);
+        const { ref, mention, warning } = await d.agents.agentOf(target);
         const a = await d.agents.unarchive(ref, actor);
         return {
           handle: a.handle,
-          tag,
+          mention,
           archived: false,
           ...warned(warning),
         };

@@ -85,7 +85,7 @@ async function renderMd(ui: ReactNode) {
   return utils;
 }
 
-test("a tag renders as a link to the agent's chat named by its current handle", async () => {
+test("a mention renders as a link to the agent's chat named by its current handle", async () => {
   setup([DEV]);
   await renderMd(<Markdown source={`Ask <@${DEV.ref}|stale-handle> please`} />);
   const link = await screen.findByRole("link", { name: "@dev, Dev Agent" });
@@ -93,7 +93,7 @@ test("a tag renders as a link to the agent's chat named by its current handle", 
   expect(screen.queryByText(/stale-handle/)).toBeNull();
 });
 
-test("a human tag is not a link", async () => {
+test("a human mention is not a link", async () => {
   setup([SAM]);
   await renderMd(<Markdown source={`cc <@${SAM.ref}>`} />);
   expect(await screen.findByText("@sam")).toBeInTheDocument();
@@ -109,14 +109,14 @@ test("a terminated agent's chip says terminated to a screen reader", async () =>
   ).toBeInTheDocument();
 });
 
-test("a tag inside a code span renders as text", async () => {
+test("a mention inside a code span renders as text", async () => {
   setup([DEV]);
   const { container } = await renderMd(<Markdown source={`Write \`<@${DEV.ref}>\` literally`} />);
   expect(container.querySelector("code")).toHaveTextContent(`<@${DEV.ref}>`);
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-test("text that looks like a tag but isn't a ref stays text", async () => {
+test("text that looks like a mention but isn't a ref stays text", async () => {
   setup([DEV]);
   // The first three characters of "uuuuuuuu" aren't in the ref alphabet.
   await renderMd(<Markdown source={"see <@uuuuuuuu> here"} />);
@@ -139,11 +139,13 @@ test("a ref nobody has reads @unknown and says so to a screen reader", async () 
   await waitFor(() => expect(frames.length).toBeGreaterThan(0));
   await runFrame();
   expect(await screen.findByText("@unknown")).toBeInTheDocument();
-  expect(screen.getByText(", No one in this factory has this tag")).toBeInTheDocument();
+  expect(
+    screen.getByText(", This mention doesn't match anyone in this factory"),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-test("a tag inside a link renders as plain text, not a nested link", async () => {
+test("a mention inside a link renders as plain text, not a nested link", async () => {
   setup([DEV]);
   await renderMd(<Markdown source={`[open <@${DEV.ref}> now](/inbox)`} />);
   const outer = await screen.findByRole("link", { name: /open @dev/ });
@@ -151,20 +153,20 @@ test("a tag inside a link renders as plain text, not a nested link", async () =>
   expect(outer.querySelector("a")).toBeNull();
 });
 
-test("a tool output shows a tag as raw text", async () => {
+test("a tool output shows a mention as raw text", async () => {
   setup([DEV]);
-  await renderMd(<Markdown source={`result <@${DEV.ref}>`} tags={false} untrusted />);
+  await renderMd(<Markdown source={`result <@${DEV.ref}>`} mentions={false} untrusted />);
   expect(screen.getByText(`result <@${DEV.ref}>`)).toBeInTheDocument();
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-test("an untrusted body (a schedule's message) still shows tags as chips", async () => {
+test("an untrusted body (a schedule's message) still shows mentions as chips", async () => {
   setup([DEV]);
   await renderMd(<Markdown source={`ping <@${DEV.ref}>`} untrusted variant="detail" />);
   expect(await screen.findByRole("link", { name: "@dev, Dev Agent" })).toBeInTheDocument();
 });
 
-test("copying a message with a chip puts @handle in text/plain and the tag in text/html", async () => {
+test("copying a message with a chip puts @handle in text/plain and the mention in text/html", async () => {
   setup([DEV]);
   const { container } = await renderMd(<Markdown source={`Ask <@${DEV.ref}> now`} />);
   await screen.findByRole("link", { name: "@dev, Dev Agent" });
@@ -183,7 +185,7 @@ test("copying a message with a chip puts @handle in text/plain and the tag in te
   expect(ev.defaultPrevented).toBe(true);
   const data = Object.fromEntries(setData.mock.calls);
   expect(data["text/plain"]).toBe("Ask @dev now");
-  expect(data["text/html"]).toBe(`Ask <span data-of-tag="${DEV.ref}">@dev</span> now`);
+  expect(data["text/html"]).toBe(`Ask <span data-of-mention="${DEV.ref}">@dev</span> now`);
 });
 
 test("copying text with no chip leaves the browser's own copy alone", async () => {

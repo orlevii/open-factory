@@ -144,7 +144,7 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
   );
 });
 
-test("a schedule_message target given as an unknown tag is refused and creates nothing", async () => {
+test("a schedule_message target given as an unknown mention is refused and creates nothing", async () => {
   const r = await call("dev", "schedule_message", {
     body: "x",
     at: "2026-12-01T09:00",
@@ -152,7 +152,7 @@ test("a schedule_message target given as an unknown tag is refused and creates n
   });
   expect(r.err).toBe(true);
   expect(r.text).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
   expect(await h.sql`select 1 from schedules`).toHaveLength(0);
 });

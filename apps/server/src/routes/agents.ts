@@ -27,7 +27,7 @@ import {
   restartAgentResponseSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -213,7 +213,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/api/agents/:ref/reset-persona",
     { schema: { params: refParams, response: { 200: resetPersonaResponseSchema } } },
-    async (req) => app.agents.resetPersona(req.params.ref, tagOf(user(req).ref)),
+    async (req) => app.agents.resetPersona(req.params.ref, mentionOf(user(req).ref)),
   );
 
   app.post(
@@ -366,7 +366,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       try {
         const item = await rt.compact({
           ...(req.body.focus ? { focus: req.body.focus } : {}),
-          by: tagOf(user(req).ref),
+          by: mentionOf(user(req).ref),
           userId: user(req).id,
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
@@ -427,14 +427,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           cls.kind === "command" && cls.name === "compact"
             ? await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-                by: tagOf(u.ref),
+                by: mentionOf(u.ref),
                 userId: u.id,
                 clientMessageId,
               })
             : await rt.rawInput({
                 text: neutraliseEnvelopeTags(cls.kind === "command" ? text.trimStart() : text),
                 userId: u.id,
-                by: tagOf(u.ref),
+                by: mentionOf(u.ref),
                 clientMessageId,
               });
         app.log.info({ ...audit, kind: cls.kind === "command" ? cls.name : kind }, "input queued");
@@ -479,7 +479,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         const row = await app.store.agentByRef(req.params.ref);
         if (!row) return notFound(reply);
         const outcome = await rt.restartNow({
-          by: tagOf(user(req).ref),
+          by: mentionOf(user(req).ref),
           force: req.body?.force ?? false,
           changes: await restartChanges(app, row),
           // A Restart certain to fail isn't offered (spec §13).
@@ -500,7 +500,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const rt = await app.runtimes.byRef(req.params.ref);
       if (!rt) return notFound(reply);
       try {
-        return await rt.stopCrons(tagOf(user(req).ref));
+        return await rt.stopCrons(mentionOf(user(req).ref));
       } catch (e) {
         return recoveryError(reply, e);
       }
@@ -514,7 +514,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const rt = await app.runtimes.byRef(req.params.ref);
       if (!rt) return notFound(reply);
       try {
-        await rt.resetSession({ by: tagOf(user(req).ref) });
+        await rt.resetSession({ by: mentionOf(user(req).ref) });
         return reply.code(202).send({});
       } catch (e) {
         return recoveryError(reply, e);
@@ -526,7 +526,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     const rt = await app.runtimes.byRef(req.params.ref);
     if (!rt) return notFound(reply);
     try {
-      await rt.interrupt({ by: tagOf(user(req).ref) });
+      await rt.interrupt({ by: mentionOf(user(req).ref) });
       return reply.code(202).send({});
     } catch (e) {
       if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);

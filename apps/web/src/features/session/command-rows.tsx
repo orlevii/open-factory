@@ -113,7 +113,7 @@ export function CommandOutput({
     <div {...rowProps} data-command-output className="group/code relative min-w-0">
       {MARKDOWN_OUTPUT.has(command) ? (
         <div className="pr-8">
-          <Markdown source={text} variant="work" untrusted tags={false} />
+          <Markdown source={text} variant="work" untrusted mentions={false} />
         </div>
       ) : (
         <CodePlate>{text}</CodePlate>

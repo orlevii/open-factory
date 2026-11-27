@@ -4,17 +4,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { CaretMenu } from "./caret-menu";
 import type { CompletionSource } from "./composer";
-import { TagHighlighter } from "./tag-highlighter";
-import { useTagMenu } from "./use-tag-menu";
+import { MentionHighlighter } from "./mention-highlighter";
+import { useMentionMenu } from "./use-mention-menu";
 
 type Box = HTMLTextAreaElement | HTMLInputElement;
 const NO_SOURCES: CompletionSource[] = [];
 
-export type TagFieldProps = {
-  /** The stored text: tags as `<@ref>`. */
+export type MentionFieldProps = {
+  /** The stored text: mentions as `<@ref>`. */
   value: string;
   onValueChange(next: string): void;
-  /** The `@` source that tags. Without one the field is plain text. */
+  /** The `@` source that mentions. Without one the field is plain text. */
   source?: CompletionSource;
 };
 
@@ -24,23 +24,23 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
 }
 
 /**
- * A textarea or input that tags: the shared tag menu (use-tag-menu.tsx) over the field, with the highlighter behind it
+ * A textarea or input that mentions: the shared mention menu (use-mention-menu.tsx) over the field, with the highlighter behind it
  * and the menu beside it. The field spreads `bind` and `combobox`, takes `setBox` as its ref, and `keyDown` as its key
  * handler, and renders `decor`.
  */
-function useTagInput<E extends Box>({
+function useMentionInput<E extends Box>({
   value,
   onValueChange,
   source,
   multiline,
   ref,
-}: TagFieldProps & { multiline: boolean; ref: Ref<E> | undefined }) {
+}: MentionFieldProps & { multiline: boolean; ref: Ref<E> | undefined }) {
   const box = useRef<Box | null>(null);
-  const m = useTagMenu({
+  const m = useMentionMenu({
     value,
     setValue: onValueChange,
     sources: source ? [source] : NO_SOURCES,
-    tagSource: source,
+    mentionSource: source,
     box,
   });
   const { attach } = m;
@@ -64,7 +64,9 @@ function useTagInput<E extends Box>({
 
   const decor = (
     <>
-      {m.tag.highlighter ? <TagHighlighter {...m.tag.highlighter} multiline={multiline} /> : null}
+      {m.mention.highlighter ? (
+        <MentionHighlighter {...m.mention.highlighter} multiline={multiline} />
+      ) : null}
       {m.menu && m.menuOpen && source ? (
         <CaretMenu
           ref={m.menuRef}
@@ -81,13 +83,13 @@ function useTagInput<E extends Box>({
   );
 
   return {
-    shown: m.tag.tagged.text,
+    shown: m.mention.mentioned.text,
     setBox,
     decor,
     keyDown,
     combobox: m.combobox,
     bind: {
-      ...m.tag.bind,
+      ...m.mention.bind,
       onChange: m.change,
       onSelect: (e: { currentTarget: Box }) => m.select(e.currentTarget),
       onPaste: m.paste,
@@ -95,10 +97,11 @@ function useTagInput<E extends Box>({
   };
 }
 
-type TextareaProps = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> & TagFieldProps;
+type TextareaProps = Omit<ComponentProps<typeof Textarea>, "value" | "onChange"> &
+  MentionFieldProps;
 
-/** A textarea that tags: `@` opens the "Tag someone" menu, tags are atomic and the value is stored as `<@ref>`. */
-export function TagTextarea({
+/** A textarea that mentions: `@` opens the "Mention someone" menu, mentions are atomic and the value is stored as `<@ref>`. */
+export function MentionTextarea({
   value,
   onValueChange,
   source,
@@ -107,7 +110,7 @@ export function TagTextarea({
   className,
   ...rest
 }: TextareaProps & { ref?: Ref<HTMLTextAreaElement> }) {
-  const t = useTagInput({ value, onValueChange, source, multiline: true, ref });
+  const t = useMentionInput({ value, onValueChange, source, multiline: true, ref });
   return (
     <div className="relative isolate min-w-0 rounded-lg bg-card">
       {t.decor}
@@ -124,10 +127,10 @@ export function TagTextarea({
   );
 }
 
-type InputProps = Omit<ComponentProps<typeof Input>, "value" | "onChange"> & TagFieldProps;
+type InputProps = Omit<ComponentProps<typeof Input>, "value" | "onChange"> & MentionFieldProps;
 
-/** A single-line input that tags. Enter keeps its own meaning: it picks a row while a menu is open, else it's the field's. */
-export function TagInput({
+/** A single-line input that mentions. Enter keeps its own meaning: it picks a row while a menu is open, else it's the field's. */
+export function MentionInput({
   value,
   onValueChange,
   source,
@@ -136,7 +139,7 @@ export function TagInput({
   className,
   ...rest
 }: InputProps & { ref?: Ref<HTMLInputElement> }) {
-  const t = useTagInput({ value, onValueChange, source, multiline: false, ref });
+  const t = useMentionInput({ value, onValueChange, source, multiline: false, ref });
   return (
     <div className="relative isolate min-w-0 rounded-lg bg-card">
       {t.decor}

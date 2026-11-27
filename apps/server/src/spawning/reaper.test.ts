@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { refOf } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
@@ -550,7 +550,7 @@ test("the sweep appends a terminated event a crash after the commit lost", async
   await s.reaper.run();
   const evs = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);
   expect(evs.filter((e) => e.type === "terminated")).toEqual([
-    { type: "terminated", by: tagOf(boss.ref) },
+    { type: "terminated", by: mentionOf(boss.ref) },
   ]);
   await s.reaper.run();
   const again = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);

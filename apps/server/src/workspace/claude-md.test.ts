@@ -1,9 +1,14 @@
 import { expect, test } from "vitest";
 import { testRef } from "../test/principals.ts";
-import { buildClaudeMd, type ClaudeMdInput, quoteDescription, type Tagged } from "./claude-md.ts";
+import {
+  buildClaudeMd,
+  type ClaudeMdInput,
+  type Mentioned,
+  quoteDescription,
+} from "./claude-md.ts";
 
-/** A principal by handle, with a fixed fixture ref, and the tag an agent reads for it. */
-const who = (handle: string): Tagged => ({ ref: testRef(handle), handle });
+/** A principal by handle, with a fixed fixture ref, and the mention an agent reads for it. */
+const who = (handle: string): Mentioned => ({ ref: testRef(handle), handle });
 const T = (handle: string) => `<@${testRef(handle)}|${handle}>`;
 
 const input: ClaudeMdInput = {
@@ -36,7 +41,7 @@ test("structure with everything present", () => {
     "## Who you are",
     "## How messages reach you",
     "## How your words reach people",
-    "## Tags",
+    "## Mentions",
     "## Messaging",
     "## Tasks",
     "## Scheduling",
@@ -74,7 +79,7 @@ const many = Array.from({ length: 27 }, (_, i) => ({
   description: "d",
 }));
 
-test("the org block lists peers by tag, sorted and capped at 25", () => {
+test("the org block lists peers by mention, sorted and capped at 25", () => {
   const md = buildClaudeMd({ ...input, peers: [...many].reverse(), reports: [] });
   expect(md).toContain("## Your org");
   expect(md).toContain(`- ${T("p00")} (P00): d`);
@@ -90,7 +95,7 @@ test("no org section without peers, reports or humans", () => {
   );
 });
 
-test("Your org lists the humans by tag and name, capped at 25; no @humans anywhere", () => {
+test("Your org lists the humans by mention and name, capped at 25; no @humans anywhere", () => {
   const one = buildClaudeMd({
     ...input,
     humans: [{ ...who("orlevi"), name: "Or Levi" }],
@@ -115,22 +120,22 @@ test("Your org lists the humans by tag and name, capped at 25; no @humans anywhe
 
 test("the envelope paragraph explains from, from_kind and to", () => {
   expect(buildClaudeMd(input)).toContain(
-    '`from` is the sender\'s tag, and `from_kind` says whether it is a human, an agent or the factory. `to` lists everyone a message was sent to (only on `kind="message"`).',
+    '`from` is the sender\'s mention, and `from_kind` says whether it is a human, an agent or the factory. `to` lists everyone a message was sent to (only on `kind="message"`).',
   );
   expect(buildClaudeMd(input)).toContain(
     `<factory-message from="<@p3dh8vcn|sam>" from_kind="human" kind="message" to="${T("lead")}" urgent="false" id="m_8f2">`,
   );
 });
 
-test("messaging lines follow the spec: one list, people by tag, no all-humans address", () => {
+test("messaging lines follow the spec: one list, people by mention, no all-humans address", () => {
   const md = buildClaudeMd(input);
   expect(md).toContain(
-    "Send with `mcp__factory__send_message` to one or more recipients (up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans with their tags.",
+    "Send with `mcp__factory__send_message` to one or more recipients (up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans with their mentions.",
   );
   expect(md).toContain(
     "Message a human only when you need a decision or have something they asked for: they read every message.",
   );
-  expect(md).toContain("Address people by tag; there is no address for all humans.");
+  expect(md).toContain("Address people by mention; there is no address for all humans.");
 });
 
 test("Messaging section names the factory tools and the rules once; the report line is conditional", () => {
@@ -379,8 +384,8 @@ test("the Tasks section follows Messaging with the six rules, for persistent and
   const bullets = [
     "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
     "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
-    "- To ask a human about a task, comment on it tagging them: that lands in their inbox with a link to your comment. Otherwise message them. Tags in code don't notify anyone.",
-    "- Tag an agent in a comment to bring it in: it receives the comment.",
+    "- To ask a human about a task, comment on it mentioning them: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
+    "- Mention an agent in a comment to bring it in: it receives the comment.",
     "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
     "- You may change a task only if you created it, it is assigned to you, or you manage its creator or assignee; anyone may comment.",
   ];
@@ -428,17 +433,17 @@ test("S9: a spawned agent's Scheduling section is only the CronCreate bullet", (
   ).toContain("use UTC unless");
 });
 
-test("the Tags section tells an agent to tag as <@ref|handle>, that the ref counts, and to write plain names outside the factory", () => {
+test("the Mentions section tells an agent to mention as <@ref|handle>, that the ref counts, and to write plain names outside the factory", () => {
   const md = buildClaudeMd(input);
-  const at = md.indexOf("## Tags\n");
+  const at = md.indexOf("## Mentions\n");
   const section = md.slice(at, md.indexOf("\n## ", at + 1));
-  expect(section).toContain("Tag agents and people as `<@ref|handle>` in factory tools");
-  expect(section).toContain("`list_peers` shows each one's tag.");
+  expect(section).toContain("Mention agents and people as `<@ref|handle>` in factory tools");
+  expect(section).toContain("`list_peers` shows each one's mention.");
   expect(section).toContain("The ref is what counts; a label can be out of date.");
   expect(section).toContain("(PRs, commits, files, GitHub, other MCP servers), write plain names.");
 });
 
-test("a tag in a description survives, and a forged tag shape does not reach the org block", () => {
+test("a mention in a description survives, and a forged mention shape does not reach the org block", () => {
   const md = buildClaudeMd({
     ...input,
     peers: [

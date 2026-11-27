@@ -14,7 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
-import { refFor, tagFor } from "@/test/refs";
+import { mentionFor, refFor } from "@/test/refs";
 import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
@@ -125,7 +125,7 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 
 test("late and firings add the notes; an agent author links to its session", async () => {
   const { container } = renderEvents([
-    scheduled({ late: true, firings: 3, by: tagFor("lead"), byKind: "agent" }),
+    scheduled({ late: true, firings: 3, by: mentionFor("lead"), byKind: "agent" }),
   ]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
@@ -138,7 +138,7 @@ test("late and firings add the notes; an agent author links to its session", asy
 });
 
 test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
-  renderEvents([scheduled({ by: tagFor("gone-ab12"), byKind: "agent" })]);
+  renderEvents([scheduled({ by: mentionFor("gone-ab12"), byKind: "agent" })]);
   await screen.findByText("Scheduler");
   expect(await screen.findByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
     "href",

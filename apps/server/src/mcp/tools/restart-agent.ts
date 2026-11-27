@@ -1,6 +1,6 @@
 import type { Db } from "@open-factory/db";
 import { restartAgentToolSchema } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
   AgentArchivedError,
@@ -12,7 +12,7 @@ import { restartChanges, restartRuntimeAllowed } from "../../agents/restart-chan
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Router } from "../../messaging/router.ts";
 import type { AgentRecord } from "../../principals/principal-store.ts";
-import { resolveText, UnknownTagsError } from "../../principals/principal-text.ts";
+import { resolveText, UnknownMentionsError } from "../../principals/principal-text.ts";
 import {
   callerOf,
   type McpServer,
@@ -28,11 +28,11 @@ type RestartAgentDeps = {
   /** The caller read at call time: `manage_org` is decided from the fresh row (I7 §5.2). */
   loadAgent(id: string): Promise<AgentRecord | undefined>;
   /** The target's row by name, read fresh (a runtime's row can be stale). */
-  store: Pick<EventStore, "agentByArg" | "principalTag" | "agentTag">;
+  store: Pick<EventStore, "agentByArg" | "principalMention" | "agentMention">;
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
-  /** Checks the note's tags before anything restarts. */
+  /** Checks the note's mentions before anything restarts. */
   db: Db;
   /** The local gate, read live (`() => config.allowLocalRuntime`). */
   localRuntimeAllowed(): boolean;
@@ -76,12 +76,12 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
           if (row.terminatedAt)
             return toolError(`${label} was terminated and can't receive messages.`);
 
-          // An unknown tag in the note refuses the call before the restart: nothing happens, nothing is sent.
+          // An unknown mention in the note refuses the call before the restart: nothing happens, nothing is sent.
           if (args.note !== undefined) {
             try {
               await resolveText(d.db, args.note, "agent");
             } catch (e) {
-              if (e instanceof UnknownTagsError) return toolError(e.message);
+              if (e instanceof UnknownMentionsError) return toolError(e.message);
               throw e;
             }
           }
@@ -99,10 +99,10 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             rt.live().errorKind !== "resume_unrecoverable";
           try {
             const early = noteFirst
-              ? await sendNote(d, await d.store.agentTag(row.id), args.note as string)
+              ? await sendNote(d, await d.store.agentMention(row.id), args.note as string)
               : undefined;
             const outcome = await rt.restartNow({
-              by: await d.store.principalTag(d.caller.id),
+              by: await d.store.principalMention(d.caller.id),
               force: args.force ?? false,
               // Computed here, outside the runtime's job: the resolver reads the disk (I7 §9.2).
               changes: await restartChanges(d, row),
@@ -114,7 +114,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             const sent = noteFirst
               ? early
               : args.note
-                ? await sendNote(d, await d.store.agentTag(row.id), args.note)
+                ? await sendNote(d, await d.store.agentMention(row.id), args.note)
                 : undefined;
             const lost = sent?.lost;
             const warnings = [
@@ -124,7 +124,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
               ]),
             ];
             return textResult({
-              target: await d.store.agentTag(row.id),
+              target: await d.store.agentMention(row.id),
               status: outcome.status,
               ...(outcome.note ? { note: outcome.note } : {}),
               ...(lost ? { note_delivered: false, note_error: lost } : {}),
@@ -144,17 +144,22 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
   };
 }
 
-/** Sends the caller's note: a path-free sentence when it wasn't accepted, and the tag warnings. */
+/** Sends the caller's note: a path-free sentence when it wasn't accepted, and the mention warnings. */
 async function sendNote(
   d: RestartAgentDeps,
-  tag: string,
+  mention: string,
   note: string,
 ): Promise<{ lost?: string; warnings: string[] }> {
-  const { results, warnings } = await d.router.send({ agentId: d.caller.id }, [tag], note, false);
+  const { results, warnings } = await d.router.send(
+    { agentId: d.caller.id },
+    [mention],
+    note,
+    false,
+  );
   const r = results[0];
-  if (!r) return { lost: `Your note to ${tag} wasn't delivered.`, warnings };
+  if (!r) return { lost: `Your note to ${mention} wasn't delivered.`, warnings };
   if (r.status === "refused") return { lost: `Your note wasn't delivered: ${r.reason}`, warnings };
   if (r.status === "start_failed")
-    return { lost: `Your note is queued, but ${tag} couldn't be started.`, warnings };
+    return { lost: `Your note is queued, but ${mention} couldn't be started.`, warnings };
   return { warnings };
 }

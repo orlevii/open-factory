@@ -5,7 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./tags": "./src/tags.ts"
+    "./mentions": "./src/mentions.ts"
   },
   "dependencies": {
     "croner": "11.0.0",

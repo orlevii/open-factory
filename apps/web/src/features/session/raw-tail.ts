@@ -17,15 +17,15 @@ export function rawTailRows(
   queue: QueueItem[],
   sending: readonly SendingBlock[],
   cancelled: ReadonlyMap<string, CancelledEntry>,
-  /** The signed-in human's tag: their own queued sends are the ones with Cancel. */
-  selfTag: string | undefined,
+  /** The signed-in human's mention: their own queued sends are the ones with Cancel. */
+  selfMention: string | undefined,
   onCancel: ((item: QueueItem) => void) | undefined,
 ): readonly CommandRow[] {
   const rows: CommandRow[] = [];
   for (const v of queueView(queue, cancelled)) {
     if (v.kind !== "item" || v.item.kind !== "raw") continue;
     const q = v.item;
-    const mine = onCancel !== undefined && selfTag !== undefined && q.from === selfTag;
+    const mine = onCancel !== undefined && selfMention !== undefined && q.from === selfMention;
     const pending: RawPending = {
       sending: false,
       ...(mine ? { onCancel: () => onCancel(q) } : {}),
@@ -48,7 +48,7 @@ export function rawTailRows(
       kind: "command",
       seq: Number.POSITIVE_INFINITY,
       at: b.at ?? "",
-      by: selfTag ?? "you",
+      by: selfMention ?? "you",
       fromKind: "human",
       text: b.body,
       key: rawKey(b.clientMessageId),

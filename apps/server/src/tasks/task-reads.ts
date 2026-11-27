@@ -1,6 +1,6 @@
 import { type Db, schema } from "@open-factory/db";
 import { parseTaskKey, type TaskStatus, taskKey } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { resolveArg } from "../principals/principal-args.ts";
@@ -40,7 +40,7 @@ export type ListFilter = {
   /** An agent handle, or "me" (an agent caller). */
   assignee?: string;
   unassigned?: boolean;
-  /** A tag, ref, or `@handle` of an agent or a person; or "me" (the caller). */
+  /** A mention, ref, or `@handle` of an agent or a person; or "me" (the caller). */
   createdBy?: string;
   /** `T-41` style keys: just those tasks. */
   keys?: string[];

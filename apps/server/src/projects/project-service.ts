@@ -3,7 +3,7 @@ import { type Db, schema } from "@open-factory/db";
 import type { ProjectSummary } from "@open-factory/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
-import { inUseViolation, pgCode, tags } from "../db-errors.ts";
+import { inUseViolation, mentions, pgCode } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { resolveHostFolder } from "../host-path.ts";
@@ -194,7 +194,7 @@ export class ProjectService {
     const archivedGrantedTo = g.archived.map((a) => a.handle);
     const direct = g.active.filter((a) => !a.spawnedBy).map((a) => a.handle);
     const message = [
-      direct.length ? `Granted to ${tags(direct)}. Remove the grant first.` : "",
+      direct.length ? `Granted to ${mentions(direct)}. Remove the grant first.` : "",
       ...g.active
         .filter((a) => a.spawnedBy)
         .map(
@@ -202,7 +202,7 @@ export class ProjectService {
             `Granted to @${a.handle} (spawned by @${a.spawnedBy}); change @${a.spawnedBy}'s grants or terminate it first.`,
         ),
       archivedGrantedTo.length
-        ? `Archived agents ${tags(archivedGrantedTo)} still hold a grant.`
+        ? `Archived agents ${mentions(archivedGrantedTo)} still hold a grant.`
         : "",
     ]
       .filter(Boolean)

@@ -232,7 +232,7 @@ test("the result's kind is matched to the argument whatever its case", async () 
   expect(line.querySelectorAll("[data-agent-avatar]")).toHaveLength(2);
 });
 
-test("a send written with a tag, a ref or a plain handle matches its tagged result by ref", async () => {
+test("a send written with a mention, a ref or a plain handle matches its mentioned result by ref", async () => {
   const bob = "<@b0b00001|bob>";
   await show(
     row(
@@ -274,7 +274,7 @@ test("a send written with a tag, a ref or a plain handle matches its tagged resu
   ).toMatchObject({ to: "c4r01000", label: "View in @carol's session" });
 });
 
-test("a recipient named by a result's tag shows its live handle after a rename", async () => {
+test("a recipient named by a result's mention shows its live handle after a rename", async () => {
   const qc = new QueryClient();
   qc.setQueryData<PrincipalsCache>(principalsQueryOptions.queryKey, {
     byRef: new Map([[refFor("bob"), principal(refFor("bob"), "bob")]]),

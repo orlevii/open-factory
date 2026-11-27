@@ -238,7 +238,7 @@ test("GET detail: activity oldest first with comments and history interleaved; b
   expect(next.blockedBy).toEqual(["T-1"]);
 });
 
-test("a comment's tag reaches the tagged agent", async () => {
+test("a comment's mention reaches the mentioned agent", async () => {
   await create({ title: "t", assignee: "lead" });
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
   const [samP] = await h.sql`select ref from principals where handle = 'sam'`;
@@ -263,19 +263,19 @@ test("a comment with an unknown ref is 400 on body and writes no comment", async
   const r = await call("POST", "/api/tasks/T-1/comments", { body: "look <@zzzzzzzz>" });
   expect(r.statusCode).toBe(400);
   expect(r.json().error).toMatchObject({
-    code: "unknown_tag",
-    fields: { body: "Tag isn't anyone here" },
+    code: "unknown_mention",
+    fields: { body: "Mention isn't anyone here" },
   });
   expect(await h.sql`select id from task_comments`).toEqual([]);
 });
 
-test("a task title with a tag is stored as <@ref>", async () => {
+test("a task title with a mention is stored as <@ref>", async () => {
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
   const t = await create({ title: `Review for <@${dev?.ref}|dev>` });
   expect(t.title).toBe(`Review for <@${dev?.ref}>`);
   const bad = await call("POST", "/api/tasks", { title: "Review for <@zzzzzzzz>" });
   expect(bad.statusCode).toBe(400);
-  expect(bad.json().error.fields.title).toBe("Tag isn't anyone here");
+  expect(bad.json().error.fields.title).toBe("Mention isn't anyone here");
 });
 
 test("GET /api/agents carries openTasks", async () => {

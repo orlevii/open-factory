@@ -6,7 +6,7 @@ import {
   type AgentOverlay,
   type AgentSummary,
   actorBy,
-  actorTag,
+  actorMention,
   agentOverlaySchema,
   agentPolicyIssues,
   type ConfigDoc,
@@ -21,7 +21,7 @@ import {
   touchesLocalRuntime,
   treeOrder,
 } from "@open-factory/shared";
-import { agentTagOf, unknownRefError } from "@open-factory/shared/tags";
+import { agentMentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
@@ -34,11 +34,11 @@ import {
   createPrincipal,
   HandleTakenError,
   isHandleTaken,
+  mentionOfPrincipal,
   type Principal,
   principalById,
   principalsByHandles,
   principalsByIds,
-  tagOfPrincipal,
 } from "../principals/principal-store.ts";
 import { resolveField } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -112,10 +112,12 @@ function spawnedMessage(spawner: string, handles: string[]): string {
 }
 
 function reportsMessage(handles: string[]): string {
-  const tags = handles.map((h) => `@${h}`);
+  const mentions = handles.map((h) => `@${h}`);
   const who =
-    tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags[tags.length - 1]}`;
-  return `${who} ${tags.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
+    mentions.length === 1
+      ? mentions[0]
+      : `${mentions.slice(0, -1).join(", ")} and ${mentions[mentions.length - 1]}`;
+  return `${who} ${mentions.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
 }
 
 /** The ended list's cap (S7 §14): the newest 200; one more row is read to know whether older ones exist. */
@@ -198,9 +200,9 @@ export class AgentService {
     }
   }
 
-  /** The `by` of a peer event (spec I7 §8.2): an agent actor's tag; a human's act is visible in the UI. */
+  /** The `by` of a peer event (spec I7 §8.2): an agent actor's mention; a human's act is visible in the UI. */
   private byOf(actor: Actor): { by?: string } {
-    return actor.kind === "agent" ? { by: actorTag(actor) } : {};
+    return actor.kind === "agent" ? { by: actorMention(actor) } : {};
   }
 
   /** I7 §8.3: the human bus hears of an agent actor's create, archive or unarchive, after the commit. */
@@ -543,13 +545,13 @@ export class AgentService {
   }
 
   /**
-   * The agent an org tool's argument names (a tag, a ref or a handle), for the services that take refs, with the
-   * plain-tag warning when it was a plain handle. A ref nobody holds is refused with the fix-it sentence; a name that
+   * The agent an org tool's argument names (a mention, a ref or a handle), for the services that take refs, with the
+   * plain-mention warning when it was a plain handle. A ref nobody holds is refused with the fix-it sentence; a name that
    * isn't an agent is a 404.
    */
   async agentOf(
     raw: string,
-  ): Promise<{ ref: string; handle: string; tag: string; warning?: string }> {
+  ): Promise<{ ref: string; handle: string; mention: string; warning?: string }> {
     const r = await resolveAgentArg(this.d.db, raw);
     if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
     if (r.kind === "not_agent")
@@ -557,7 +559,7 @@ export class AgentService {
     return {
       ref: r.ref,
       handle: r.handle,
-      tag: agentTagOf({ ref: r.ref, handle: r.handle }),
+      mention: agentMentionOf({ ref: r.ref, handle: r.handle }),
       ...(r.warning ? { warning: r.warning } : {}),
     };
   }
@@ -682,7 +684,7 @@ export class AgentService {
     const { db, workspace } = this.d;
     // The cheap pre-read before materialising; the principal insert in the transaction is the guarantee (spec §4.1).
     if ((await principalsByHandles(db, [b.handle])).size) throw handleTaken();
-    // Spec §4.3: the description's tags are stored as `<@ref>`; an unknown ref refuses the create.
+    // Spec §4.3: the description's mentions are stored as `<@ref>`; an unknown ref refuses the create.
     b = {
       ...b,
       description: (await resolveField(db, b.description, actor.kind, "description", warnings))
@@ -860,7 +862,7 @@ export class AgentService {
       set.displayName = b.displayName;
       changed.text = true;
     }
-    // Spec §4.3: the description's tags are stored as `<@ref>`; an unknown ref refuses the change.
+    // Spec §4.3: the description's mentions are stored as `<@ref>`; an unknown ref refuses the change.
     const description =
       b.description === undefined
         ? undefined
@@ -898,7 +900,7 @@ export class AgentService {
       if (managerId !== row.reportsTo) {
         set.reportsTo = managerId;
         moved = {
-          to: await tagOfPrincipal(db, manager.kind === "agent" ? manager.row.id : manager.id),
+          to: await mentionOfPrincipal(db, manager.kind === "agent" ? manager.row.id : manager.id),
         };
         movedTo = manager;
         changed.feeds = true;
@@ -1036,7 +1038,7 @@ export class AgentService {
    */
   async resetPersona(
     ref: string,
-    /** The requester's tag, `<@ref>`: the `config_changed` event's `by`. */
+    /** The requester's mention, `<@ref>`: the `config_changed` event's `by`. */
     by: string,
   ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
     const { runtimes, workspace } = this.d;

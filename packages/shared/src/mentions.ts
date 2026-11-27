@@ -4,28 +4,28 @@ import { gfm } from "micromark-extension-gfm";
 import { HANDLE_PATTERN } from "./handle.ts";
 import { normaliseRef } from "./ref.ts";
 
-/** The only two tag shapes that may pass a sanitiser: <@ref> and <@ref|handle>. Global; use matchAll / replace. */
-export const TAG_SHAPE = /<@[0-9a-hjkmnp-tv-z]{8}(?:\|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?>/g;
+/** The only two mention shapes that may pass a sanitiser: <@ref> and <@ref|handle>. Global; use matchAll / replace. */
+export const MENTION_SHAPE = /<@[0-9a-hjkmnp-tv-z]{8}(?:\|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?>/g;
 
 /** Before `@`: start, or not a letter/digit/_ and not / . @ ; after the name: not a letter/digit/_ or hyphen. */
-const MENTION = /(?<![\p{L}\p{N}_/.@])@([a-z0-9][a-z0-9-]*)(?![\p{L}\p{N}_-])/gu;
-/** A tag-looking token: its name may be a ref (any case, with look-alikes) or a handle written in its place. */
+const PLAIN_AT = /(?<![\p{L}\p{N}_/.@])@([a-z0-9][a-z0-9-]*)(?![\p{L}\p{N}_-])/gu;
+/** A mention-looking token: its name may be a ref (any case, with look-alikes) or a handle written in its place. */
 const TOKEN = /<@([0-9A-Za-z][0-9A-Za-z-]*)(?:\|[^<>\n]*)?>/g;
 const TRAILING_HYPHENS = /-+$/;
 
-export type TagToken = { ref: string; start: number; end: number; name: string };
+export type MentionToken = { ref: string; start: number; end: number; name: string };
 export type PlainCandidate = { name: string; start: number; end: number };
-export type TagScan = { tokens: TagToken[]; plain: PlainCandidate[] };
-export type TagPrincipal = { ref: string; handle: string };
-export type TagLookup = {
-  byRef: ReadonlyMap<string, TagPrincipal>;
-  byHandle: ReadonlyMap<string, TagPrincipal>;
+export type MentionScan = { tokens: MentionToken[]; plain: PlainCandidate[] };
+export type MentionPrincipal = { ref: string; handle: string };
+export type MentionLookup = {
+  byRef: ReadonlyMap<string, MentionPrincipal>;
+  byHandle: ReadonlyMap<string, MentionPrincipal>;
 };
-export type TagWarning = { written: string; ref: string; handle: string };
-export type AppliedTags = {
+export type MentionWarning = { written: string; ref: string; handle: string };
+export type AppliedMentions = {
   text: string;
   refs: string[];
-  warnings: TagWarning[];
+  warnings: MentionWarning[];
   unknownRefs: string[];
 };
 
@@ -44,7 +44,7 @@ function span(n: Node): Range | undefined {
   return start === undefined || end === undefined ? undefined : [start, end];
 }
 
-/** Source ranges where a tag or mention is not parsed: code, URLs, and a link's target (its text still counts). */
+/** Source ranges where no mention is parsed (neither a token nor a plain `@name`): code, URLs, and a link's target (its text still counts). */
 function excludedRanges(text: string): Range[] {
   const tree = fromMarkdown(text, {
     extensions: [gfm()],
@@ -103,9 +103,9 @@ function inside(ranges: Range[], i: number): boolean {
  * Spec §4.3: the tokens (`<@ref…>`) and plain `@name` candidates outside code and URLs, over the whole source
  * (a `|` in a table row splits cells, so per-text-node scanning would cut a label). Pure.
  */
-export function scanTags(text: string): TagScan {
+export function scanMentions(text: string): MentionScan {
   const ranges = excludedRanges(text);
-  const tokens: TagToken[] = [];
+  const tokens: MentionToken[] = [];
   const plain: PlainCandidate[] = [];
   /** An escaped token is text, and its `@name` is not a mention either. */
   const escaped: Range[] = [];
@@ -125,7 +125,7 @@ export function scanTags(text: string): TagScan {
   const taken: Range[] = [...tokens, ...plain].map((t): Range => [t.start, t.end]);
   taken.push(...escaped);
   taken.sort((a, b) => a[0] - b[0]);
-  for (const m of text.matchAll(MENTION)) {
+  for (const m of text.matchAll(PLAIN_AT)) {
     const start = m.index ?? 0;
     if (text[start - 1] === "\\" || inside(ranges, start) || inside(taken, start)) continue;
     const name = (m[1] ?? "").replace(TRAILING_HYPHENS, "");
@@ -135,25 +135,31 @@ export function scanTags(text: string): TagScan {
   return { tokens, plain };
 }
 
-export const tagOf = (ref: string): string => `<@${ref}>`;
-export const agentTagOf = (p: TagPrincipal): string => `<@${p.ref}|${p.handle}>`;
+export const mentionOf = (ref: string): string => `<@${ref}>`;
+export const agentMentionOf = (p: MentionPrincipal): string => `<@${p.ref}|${p.handle}>`;
 
-type Edit = { start: number; end: number; hit?: TagPrincipal; unknown?: string; written?: string };
+type Edit = {
+  start: number;
+  end: number;
+  hit?: MentionPrincipal;
+  unknown?: string;
+  written?: string;
+};
 
 /**
  * Rewrites every known token to `<@ref>`. An unknown ref is left as written and reported. A plain `@name` (or a
  * `<@handle>` written in a ref's place) resolves on an exact handle match, only with `resolvePlain`, and warns.
  */
-export function applyTags(
+export function applyMentions(
   text: string,
-  scan: TagScan,
-  lookup: TagLookup,
+  scan: MentionScan,
+  lookup: MentionLookup,
   opts: { resolvePlain: boolean },
-): AppliedTags {
+): AppliedMentions {
   const edits: Edit[] = [];
   for (const t of scan.tokens) {
     const known = lookup.byRef.get(t.ref);
-    // A handle in a ref's place is plain: it resolves only when plain tags are allowed.
+    // A handle in a ref's place is plain: it resolves only when plain mentions are allowed.
     const asHandle = known ? undefined : lookup.byHandle.get(t.name);
     if (known) edits.push({ start: t.start, end: t.end, hit: known });
     else if (asHandle && opts.resolvePlain)
@@ -174,7 +180,7 @@ export function applyTags(
   edits.sort((a, b) => a.start - b.start);
   const refs: string[] = [];
   const unknownRefs: string[] = [];
-  const warnings: TagWarning[] = [];
+  const warnings: MentionWarning[] = [];
   let out = "";
   let at = 0;
   for (const e of edits) {
@@ -183,7 +189,7 @@ export function applyTags(
       if (!unknownRefs.includes(u)) unknownRefs.push(u);
       continue;
     }
-    out += text.slice(at, e.start) + tagOf(e.hit.ref);
+    out += text.slice(at, e.start) + mentionOf(e.hit.ref);
     at = e.end;
     if (!refs.includes(e.hit.ref)) refs.push(e.hit.ref);
     if (e.written) warnings.push({ written: e.written, ref: e.hit.ref, handle: e.hit.handle });
@@ -192,23 +198,23 @@ export function applyTags(
 }
 
 /** Replaces tokens only: `"agent"` → `<@ref|handle>`, `"plain"` → `@handle`; an unknown ref → `unknown`. */
-export function renderTags(
+export function renderMentions(
   text: string,
-  lookup: (ref: string) => TagPrincipal | undefined,
+  lookup: (ref: string) => MentionPrincipal | undefined,
   style: "agent" | "plain",
 ): string {
   let out = "";
   let at = 0;
-  for (const t of scanTags(text).tokens) {
+  for (const t of scanMentions(text).tokens) {
     const p = lookup(t.ref) ?? { ref: t.ref, handle: "unknown" };
-    out += text.slice(at, t.start) + (style === "agent" ? agentTagOf(p) : `@${p.handle}`);
+    out += text.slice(at, t.start) + (style === "agent" ? agentMentionOf(p) : `@${p.handle}`);
     at = t.end;
   }
   return out + text.slice(at);
 }
 
-export const plainTagWarning = (w: TagWarning): string =>
-  `Plain tag detected: @${w.written.replace(/^<?@/, "").replace(/(?:\|[^>]*)?>$/, "")} was resolved to <@${w.ref}|${w.handle}>. Tag as <@ref|handle>.`;
+export const plainMentionWarning = (w: MentionWarning): string =>
+  `Plain mention detected: @${w.written.replace(/^<?@/, "").replace(/(?:\|[^>]*)?>$/, "")} was resolved to <@${w.ref}|${w.handle}>. Mention as <@ref|handle>.`;
 
 export const unknownRefError = (ref: string): string =>
-  `<@${ref}> isn't anyone in this factory; list_peers shows each agent and human with their tag.`;
+  `<@${ref}> isn't anyone in this factory; list_peers shows each agent and human with their mention.`;

@@ -7,7 +7,7 @@ import {
   sendCommandToolSchema,
   typedCommandName,
 } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import { knownCommandNames } from "../../agents/commands.ts";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
@@ -34,12 +34,12 @@ const utf8 = new TextEncoder();
 /**
  * `send_command(target, command)` (I1 §7): a slash command for yourself or a direct report (spawned agents included).
  * Registered for every caller; a spawned agent's version says "only yourself" and refuses any other target. The entry
- * is the caller's own (`by` is the caller's tag, `self` when it targets itself): no human sender, so nobody can cancel it.
+ * is the caller's own (`by` is the caller's mention, `self` when it targets itself): no human sender, so nobody can cancel it.
  */
 export function sendCommandTool(d: {
   caller: AgentRecord;
   runtimes: AgentRuntimes;
-  store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalTag" | "agentTag">;
+  store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalMention" | "agentMention">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
   resolver: Pick<ConfigResolver, "skillsOf">;
   spawned: boolean;
@@ -109,7 +109,7 @@ export function sendCommandTool(d: {
           const note = noteFor({
             self,
             name: cls.kind === "command" ? cls.name : typedCommandName(command),
-            tag: await d.store.agentTag(target.id),
+            mention: await d.store.agentMention(target.id),
             errored: live.status === "errored",
             turnOpen: live.turnOpen,
             idle: live.status === "idle",
@@ -118,13 +118,13 @@ export function sendCommandTool(d: {
             if (cls.kind === "command" && cls.name === "compact")
               await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-                by: await d.store.principalTag(d.caller.id),
+                by: await d.store.principalMention(d.caller.id),
                 ...(self ? { self: true } : {}),
               });
             else
               await rt.rawInput({
                 text: neutraliseEnvelopeTags(command),
-                by: await d.store.principalTag(d.caller.id),
+                by: await d.store.principalMention(d.caller.id),
                 ...(self ? { self: true } : {}),
               });
           } catch (e) {
@@ -138,7 +138,7 @@ export function sendCommandTool(d: {
             throw e;
           }
           return textResult({
-            target: await d.store.agentTag(target.id),
+            target: await d.store.agentMention(target.id),
             status: "queued",
             note,
             ...(warning ? { warnings: [warning] } : {}),
@@ -154,7 +154,7 @@ function noteFor(i: {
   self: boolean;
   name: string;
   /** The target as `<@ref|handle>`. */
-  tag: string;
+  mention: string;
   errored: boolean;
   turnOpen: boolean;
   idle: boolean;
@@ -164,8 +164,8 @@ function noteFor(i: {
       ? "Your /compact runs when this turn ends. Write down where you are before you end the turn."
       : `Your /${i.name} runs when this turn ends.`;
   if (i.errored)
-    return `${i.tag} is errored; it runs after it is restarted (restart_agent, or a human).`;
-  if (i.turnOpen) return `Runs when ${i.tag}'s current turn ends.`;
+    return `${i.mention} is errored; it runs after it is restarted (restart_agent, or a human).`;
+  if (i.turnOpen) return `Runs when ${i.mention}'s current turn ends.`;
   if (i.idle) return "Runs now.";
-  return `Wakes ${i.tag} to run it.`;
+  return `Wakes ${i.mention} to run it.`;
 }

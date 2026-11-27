@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { refOf } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq, getTableColumns, inArray } from "drizzle-orm";
 
 /** An agent's row with its current handle and ref, which live on `principals` (the agent's id is its principal's id). */
@@ -80,16 +80,16 @@ const toPrincipal = (r: typeof schema.principals.$inferSelect): Principal => ({
   handle: r.handle,
 });
 
-/** The tag of the principal `id`, read from `principals`; a missing principal is an error. */
-export async function tagOfPrincipal(tx: Tx, id: string): Promise<string> {
+/** The mention of the principal `id`, read from `principals`; a missing principal is an error. */
+export async function mentionOfPrincipal(tx: Tx, id: string): Promise<string> {
   const p = await principalById(tx, id);
   if (!p) throw new Error(`No principal ${id}`);
-  return tagOf(p.ref);
+  return mentionOf(p.ref);
 }
 
-/** Who ended an agent as the `terminated` event and peer notices write it: a principal's tag, or `@factory` for the TTL (null). */
-export async function terminatorTag(tx: Tx, terminatedBy: string | null): Promise<string> {
-  return terminatedBy ? tagOfPrincipal(tx, terminatedBy) : "@factory";
+/** Who ended an agent as the `terminated` event and peer notices write it: a principal's mention, or `@factory` for the TTL (null). */
+export async function terminatorMention(tx: Tx, terminatedBy: string | null): Promise<string> {
+  return terminatedBy ? mentionOfPrincipal(tx, terminatedBy) : "@factory";
 }
 
 export async function principalById(tx: Tx, id: string): Promise<Principal | undefined> {

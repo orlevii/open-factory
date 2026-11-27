@@ -28,7 +28,7 @@ export function usePrincipal(rawRef: string): PrincipalLookup {
   return data ?? { status: "pending" };
 }
 
-/** For rendering tags as plain text: the handle of a ref the cache knows. */
+/** For rendering mentions as plain text: the handle of a ref the cache knows. */
 export function usePrincipalLookup(): (ref: string) => { ref: string; handle: string } | undefined {
   const { data } = useQuery(principalsQueryOptions);
   const byRef = data?.byRef;

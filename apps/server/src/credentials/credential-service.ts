@@ -5,7 +5,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
-import { inUseViolation, pgCode, tags } from "../db-errors.ts";
+import { inUseViolation, mentions, pgCode } from "../db-errors.ts";
 import { ApiError } from "../errors.ts";
 import { toRateLimitState } from "./rate-limit-state.ts";
 import type { CredentialVerifier, VerifyResult } from "./verify.ts";
@@ -103,9 +103,9 @@ export class CredentialService {
     const usedBy = handles(u.active);
     const archivedUsedBy = handles(u.archived);
     const message = [
-      usedBy.length ? `Used by ${tags(usedBy)}. Change their credential first.` : "",
+      usedBy.length ? `Used by ${mentions(usedBy)}. Change their credential first.` : "",
       archivedUsedBy.length
-        ? `Archived agents ${tags(archivedUsedBy)} still reference it. Edit them first.`
+        ? `Archived agents ${mentions(archivedUsedBy)} still reference it. Edit them first.`
         : "",
     ]
       .filter(Boolean)

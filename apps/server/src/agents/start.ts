@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
-import { renderTags } from "@open-factory/shared/tags";
+import { renderMentions } from "@open-factory/shared/mentions";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
@@ -12,13 +12,13 @@ import {
   principalById,
   principalsByIds,
 } from "../principals/principal-store.ts";
-import { tagLookupFor } from "../principals/principal-text.ts";
+import { mentionLookupFor } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
-import type { ManagerRef, Tagged } from "../workspace/claude-md.ts";
+import type { ManagerRef, Mentioned } from "../workspace/claude-md.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
@@ -276,7 +276,7 @@ export function createPrepareStart(d: {
 
       const hood = await d.neighborhood.of(agent.id);
       const humans = await d.neighborhood.humans();
-      // Every principal this file names, in one query: tags show the current handle.
+      // Every principal this file names, in one query: mentions show the current handle.
       const spawnerId = spawned?.spawner.id;
       const named = await principalsByIds(d.db, [
         ...new Set([
@@ -290,45 +290,46 @@ export function createPrepareStart(d: {
           ...hood.reports.map((a) => a.id),
         ]),
       ]);
-      const tagged = (id: string): Tagged => {
+      const mentioned = (id: string): Mentioned => {
         const p = named.get(id);
         if (!p) throw new Error(`No principal ${id}`);
         return { ref: p.ref, handle: p.handle };
       };
-      const self = tagged(agent.id);
+      const self = mentioned(agent.id);
       const ref = self.ref;
       let manager: ManagerRef | undefined;
       const [m] = await d.db
         .select({ displayName: schema.agents.displayName })
         .from(schema.agents)
         .where(eq(schema.agents.id, agent.reportsTo));
-      if (m) manager = { kind: "agent", ...tagged(agent.reportsTo), ...m };
+      if (m) manager = { kind: "agent", ...mentioned(agent.reportsTo), ...m };
       else {
         const [u] = await d.db
           .select({ name: schema.users.name })
           .from(schema.users)
           .where(eq(schema.users.id, agent.reportsTo));
-        if (u) manager = { kind: "human", ...tagged(agent.reportsTo), ...u };
+        if (u) manager = { kind: "human", ...mentioned(agent.reportsTo), ...u };
       }
       if (!manager)
         throw new AgentStartError(
           `@${agent.handle}'s manager no longer exists, so it can't start.`,
         );
-      // Descriptions are stored with `<@ref>` tags: rendered once for the whole file.
-      const descriptions = await tagLookupFor(d.db, [
+      // Descriptions are stored with `<@ref>` mentions: rendered once for the whole file.
+      const descriptions = await mentionLookupFor(d.db, [
         agent.description,
         ...hood.peers.map((a) => a.description),
         ...hood.reports.map((a) => a.description),
       ]);
-      const show = (text: string) => renderTags(text, descriptions, "agent");
+      const show = (text: string) => renderMentions(text, descriptions, "agent");
       // The writer of a description is `description_by`, so a rename keeps the quoting (I7 §10).
-      const writtenBy = (a: AgentRecord) => (a.descriptionBy ? tagged(a.descriptionBy) : undefined);
+      const writtenBy = (a: AgentRecord) =>
+        a.descriptionBy ? mentioned(a.descriptionBy) : undefined;
       const entry = (a: AgentRecord) => {
         // A spawned agent's description was written by its spawner: every peer shares this agent's manager, so the
         // principal is always among the ones read above.
-        const writer = a.kind === "ephemeral" ? tagged(a.reportsTo) : writtenBy(a);
+        const writer = a.kind === "ephemeral" ? mentioned(a.reportsTo) : writtenBy(a);
         return {
-          ...tagged(a.id),
+          ...mentioned(a.id),
           displayName: a.displayName,
           description: show(a.description),
           ...(writer ? { writtenBy: writer } : {}),
@@ -372,7 +373,7 @@ export function createPrepareStart(d: {
           reports: hood.reports.map(entry),
           humans,
           kind: spawned ? "ephemeral" : "persistent",
-          spawner: spawned ? tagged(spawned.spawner.id) : null,
+          spawner: spawned ? mentioned(spawned.spawner.id) : null,
           spawning: maySpawn(agent, config),
           // S9 §10.5: only persistent agents hold the schedule tools.
           scheduling: spawned

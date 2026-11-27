@@ -101,7 +101,7 @@ test("after a rename the old handle is free for a new agent", async () => {
   expect(made.statusCode, made.body).toBe(201);
 });
 
-test("creating an agent publishes principal_updated with its tag data", async () => {
+test("creating an agent publishes principal_updated with its mention data", async () => {
   const made = await send("POST", "/api/agents", {
     ...newAgent(),
     handle: "fresh",

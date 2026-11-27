@@ -6,7 +6,7 @@ import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 
 const EMPTY: ReadonlySet<string> = new Set();
 const HELP =
-  "How agents and people tag this agent, like @team-lead. Lowercase letters, numbers and hyphens.";
+  "How agents and people mention this agent, like @team-lead. Lowercase letters, numbers and hyphens.";
 const EDIT_HELP = `${HELP} Everything already written shows the new handle. The old one is free for anyone.`;
 
 /** The avatar slot. A new agent has no face yet (it comes from the ref the server makes), so it shows a plain plate. */

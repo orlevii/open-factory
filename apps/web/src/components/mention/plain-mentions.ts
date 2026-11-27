@@ -1,4 +1,4 @@
-import { renderTags, type TagPrincipal } from "@open-factory/shared/tags";
+import { type MentionPrincipal, renderMentions } from "@open-factory/shared/mentions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
 import {
@@ -11,9 +11,9 @@ type Plain = { text: string; pending: string[] };
 
 function render(text: string, cache: PrincipalsCache | undefined): Plain {
   const pending: string[] = [];
-  const out = renderTags(
+  const out = renderMentions(
     text,
-    (ref): TagPrincipal | undefined => {
+    (ref): MentionPrincipal | undefined => {
       const p = cache?.byRef.get(ref);
       if (p) return p;
       // Nobody until the server says so; until then `@…`, like the chip.
@@ -28,7 +28,7 @@ function render(text: string, cache: PrincipalsCache | undefined): Plain {
 
 /** The text with each `<@ref>` as `@handle`, for surfaces that can't show a chip (a row title, the document title).
  *  A ref the cache lacks reads `@…` and is fetched; `@unknown` only once the server has said so. */
-export function usePlainTags(text: string): string {
+export function usePlainMentions(text: string): string {
   const qc = useQueryClient();
   const { data } = useQuery({
     ...principalsQueryOptions,

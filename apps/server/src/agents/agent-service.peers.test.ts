@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { agentRowOf, makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
@@ -35,10 +35,11 @@ const held = async (handle: string) =>
     await h.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
                 where a.id = (select id from principals where handle = ${handle}) and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
-/** An agent's tag, as the factory writes it in a body (its principal's ref). */
-const tag = async (handle: string) => tagOf(testRef((await agentRowOf(h.app, handle))?.id ?? ""));
-/** The signed-in human `or`'s tag. */
-const OR = tagOf(testRef("u-or"));
+/** An agent's mention, as the factory writes it in a body (its principal's ref). */
+const mention = async (handle: string) =>
+  mentionOf(testRef((await agentRowOf(h.app, handle))?.id ?? ""));
+/** The signed-in human `or`'s mention. */
+const OR = mentionOf(testRef("u-or"));
 function create(handle: string, displayName: string, reportsTo: string) {
   return h.app.agents.create(
     {
@@ -55,7 +56,7 @@ function create(handle: string, displayName: string, reportsTo: string) {
 
 test("create: peers get 'joined as your peer', the manager 'joined as your report'", async () => {
   await create("pmo", "PMO", "lead");
-  const pmo = await tag("pmo");
+  const pmo = await mention("pmo");
   expect(await held("dev")).toEqual([
     { kind: "peer_joined", notice: "peer", body: `${pmo} (PMO) joined as your peer.` },
   ]);
@@ -72,7 +73,7 @@ test("manager change: left the old neighborhood, joined the new; the moved agent
     { reportsTo: "boss" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const [dev_, boss_] = [await tag("dev"), await tag("boss")];
+  const [dev_, boss_] = [await mention("dev"), await mention("boss")];
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: now reports to ${boss_}.` },
   ]);
@@ -92,7 +93,7 @@ test("moving to a human manager: 'now reports to @or'; agents under the same hum
     { reportsTo: "or" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const dev_ = await tag("dev");
+  const dev_ = await mention("dev");
   // lead loses a report and gains a peer under the same human; boss gains a peer. Order by created_at is deterministic.
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: now reports to ${OR}.` },
@@ -117,7 +118,7 @@ test("archive and unarchive send left and joined; archived agents receive nothin
     ref: "k7x2m9qd",
     handle: "or",
   });
-  const dev_ = await tag("dev");
+  const dev_ = await mention("dev");
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: archived.` },
   ]);

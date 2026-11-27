@@ -1,4 +1,4 @@
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-const ALICE = tagOf(refFor("alice"));
+const ALICE = mentionOf(refFor("alice"));
 const local = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 const msg = (o: Record<string, unknown>) =>
   ({ kind: "message", from: ALICE, body: "hello", createdAt: local(13, 59), ...o }) as never;
@@ -59,7 +59,7 @@ test("three queued messages all show; five show two and '+3 more queued' expands
   vi.useRealTimers();
   const five = ["a", "b", "c", "d", "e"].map((id) => msg({ id, body: `body ${id}` }));
   const ui = (items: never[]) => (
-    <QueueItems items={items} agent={agentSummary()} selfTag={ALICE} onCancel={() => {}} />
+    <QueueItems items={items} agent={agentSummary()} selfMention={ALICE} onCancel={() => {}} />
   );
   const { rerender } = render(ui(five.slice(0, 3)));
   expect(document.querySelectorAll("[data-message-block]")).toHaveLength(3);
@@ -91,7 +91,7 @@ test("Cancel only on your own held messages: not others', task comments, schedul
         msg({ id: "note", kind: "notice", body: "note" }),
       ]}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onCancel={onCancel}
     />,
   );
@@ -113,7 +113,7 @@ test("a cancelled message shows the line in its place with Undo; back in the box
       items={[msg({ id: "a", body: "a" }), c]}
       cancelled={new Map([["b", { item: b, index: 1 }]])}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onUndo={onUndo}
     />,
   );
@@ -132,7 +132,7 @@ test("a cancelled message shows the line in its place with Undo; back in the box
       items={[c]}
       cancelled={new Map([["b", { item: b, index: 0, inBox: true }]])}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onUndo={onUndo}
     />,
   );
@@ -147,7 +147,7 @@ test("a failed restore keeps the line, says why and drops Undo", () => {
         new Map([["b", { item: msg({ id: "b" }), index: 0, error: "This agent has ended." }]])
       }
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onUndo={() => {}}
     />,
   );
@@ -170,7 +170,7 @@ test("a failed cancel shows the message again with the reason under it", () => {
         ])
       }
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
     />,
   );
   expect(screen.getByText("b")).toBeInTheDocument();
@@ -190,7 +190,7 @@ test("a cancel that lost the race (the frame already dropped the item) still say
         ])
       }
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
     />,
   );
   const alert = screen.getByRole("alert");
@@ -205,7 +205,7 @@ test("once restored, the line offers no second Undo", () => {
       items={[]}
       cancelled={new Map([["b", { item: msg({ id: "b" }), index: 0, restored: true }]])}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onUndo={() => {}}
     />,
   );
@@ -221,7 +221,7 @@ test("a failed restore moves focus from Undo to the error line", async () => {
       items={[]}
       cancelled={new Map([["b", e]])}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
       onUndo={() => {}}
     />
   );
@@ -246,7 +246,7 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
         items={items}
         cancelled={cancelled as never}
         agent={agentSummary()}
-        selfTag={ALICE}
+        selfMention={ALICE}
         onCancel={() => {}}
         onUndo={() => {}}
       />
@@ -283,7 +283,7 @@ test("a raw queue item and a raw sending block draw nothing in the queue area", 
       items={[raw]}
       sending={[{ clientMessageId: "x", body: "hi", urgent: false, raw: true }]}
       agent={agentSummary()}
-      selfTag={ALICE}
+      selfMention={ALICE}
     />,
   );
   expect(container).toBeEmptyDOMElement();

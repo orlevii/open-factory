@@ -229,7 +229,7 @@ export const sendMessageToolSchema = z.object({
   urgent: z.boolean().default(false),
 });
 export const sendCommandToolSchema = z.object({
-  target: z.string().max(80), // a tag <@ref|handle>, a ref or an @handle
+  target: z.string().max(80), // a mention <@ref|handle>, a ref or an @handle
   command: z.string(),
 });
 export const listPeersToolSchema = z.object({

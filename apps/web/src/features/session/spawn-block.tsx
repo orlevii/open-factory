@@ -2,7 +2,7 @@ import { normaliseRef } from "@open-factory/shared";
 import { CircleX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
-import { Tag } from "@/components/tag/tag";
+import { Mention } from "@/components/mention/mention";
 import { useHandle } from "@/features/agents/use-agent-index";
 import { usePrincipalLookup, useRefOfHandle } from "@/features/principals/use-principal";
 import { formatBy } from "./format-by";
@@ -22,26 +22,26 @@ const Mono = ({ children }: { children: ReactNode }) => (
 
 const spawnResultSchema = z.object({
   handle: z.string(),
-  tag: z.string().optional(),
+  mention: z.string().optional(),
   status: z.string(),
   note: z.string().optional(),
 });
 
-/** The tool's success result (`{ handle, tag, agent_id, status, note? }`; the id is never shown), or
- *  undefined for an error or odd text. `ref` is the spawned agent's, read from its tag. */
+/** The tool's success result (`{ handle, mention, agent_id, status, note? }`; the id is never shown), or
+ *  undefined for an error or odd text. `ref` is the spawned agent's, read from its mention. */
 export function parseSpawnResult(result: SpawnRow["result"]) {
   if (!result || result.isError) return undefined;
   try {
     const r = spawnResultSchema.safeParse(JSON.parse(result.content));
     if (!r.success) return undefined;
-    const { tag, ...rest } = r.data;
-    return { ...rest, ref: tag ? refOfWho(tag) : undefined };
+    const { mention, ...rest } = r.data;
+    return { ...rest, ref: mention ? refOfWho(mention) : undefined };
   } catch {
     return undefined;
   }
 }
 
-/** An agent a tool call names by handle, tag or ref: a link when its ref is known, else its mono handle. */
+/** An agent a tool call names by handle, mention or ref: a link when its ref is known, else its mono handle. */
 function NamedAgent({ name, label = false }: { name: string; label?: boolean }) {
   const refOfHandle = useRefOfHandle();
   const lookup = usePrincipalLookup();
@@ -53,10 +53,10 @@ function NamedAgent({ name, label = false }: { name: string; label?: boolean }) 
   return <Mono>@{whoHandle(name)}</Mono>;
 }
 
-/** Who did it, inside a sentence: a principal's tag is a chip showing its current handle; a word stays plain mono. */
+/** Who did it, inside a sentence: a principal's mention is a chip showing its current handle; a word stays plain mono. */
 export function Actor({ by }: { by: string }) {
   const b = formatBy(by);
-  return b.kind === "tag" ? <Tag tagRef={b.ref} /> : <Mono>{by}</Mono>;
+  return b.kind === "mention" ? <Mention mentionRef={b.ref} /> : <Mono>{by}</Mono>;
 }
 
 /** "by @lead" · "by @or" · "after 3 days without activity" (S7 UI design §4.4; never "@factory"). */

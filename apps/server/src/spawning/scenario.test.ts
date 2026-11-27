@@ -17,7 +17,7 @@ afterEach(async () => {
   t = undefined;
 });
 
-/** An envelope sender is a tag; the scenario reads its handle. */
+/** An envelope sender is a mention; the scenario reads its handle. */
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 const writeTemplate = (home: string, name: string, extra = "") => {
   const d = path.join(home, "templates", name);

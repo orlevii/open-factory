@@ -1,5 +1,5 @@
 import { type AgentStatus, listPeersToolSchema } from "@open-factory/shared";
-import { agentTagOf, renderTags } from "@open-factory/shared/tags";
+import { agentMentionOf, renderMentions } from "@open-factory/shared/mentions";
 import { inline } from "../../messaging/inline.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
 import type { AgentRecord } from "../../principals/principal-store.ts";
@@ -24,7 +24,7 @@ export function listPeersTool(d: {
         "list_peers",
         {
           description:
-            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle and a tag to write them as. Pass scope "all" to see every agent.',
+            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle and a mention to write them as. Pass scope "all" to see every agent.',
           inputSchema: listPeersToolSchema,
         },
         async (args: { scope?: "neighborhood" | "all" }, tctx: ToolContext) => {
@@ -48,21 +48,21 @@ export function listPeersTool(d: {
             if (!p) throw new Error(`No principal ${a.id}`);
             return { relation, a, p };
           });
-          const lookup = await d.neighborhood.tagLookup(listed.map(({ a }) => a.description));
+          const lookup = await d.neighborhood.mentionLookup(listed.map(({ a }) => a.description));
           return textResult({
             peers: [
               ...listed.map(({ relation, a, p }) => ({
                 handle: `@${p.handle}`,
-                tag: agentTagOf(p),
+                mention: agentMentionOf(p),
                 kind: "agent" as const,
                 displayName: inline(a.displayName),
-                description: inline(renderTags(a.description, lookup, "agent")),
+                description: inline(renderMentions(a.description, lookup, "agent")),
                 relation,
                 status: d.statusOf(a),
               })),
               ...humans.map((h) => ({
                 handle: `@${h.handle}`,
-                tag: agentTagOf(h),
+                mention: agentMentionOf(h),
                 kind: "human" as const,
                 name: inline(h.name),
               })),

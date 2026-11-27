@@ -1,6 +1,6 @@
 import type { ClipboardEvent } from "react";
 
-const CHIP = "[data-of-tag]";
+const CHIP = "[data-of-mention]";
 export const BLOCKS = new Set([
   "P",
   "LI",
@@ -27,10 +27,10 @@ function textOf(node: Node): string {
 
 /**
  * An `onCopy` for a container that may hold chips: the selection goes to `text/plain` with `@handle` and to
- * `text/html` with `<span data-of-tag="ref">@handle</span>` (a composer paste reads these back into tags).
+ * `text/html` with `<span data-of-mention="ref">@handle</span>` (a composer paste reads these back into mentions).
  * A selection with no chip in it is left to the browser.
  */
-export function onCopyTags(e: ClipboardEvent<HTMLElement>): void {
+export function onCopyMentions(e: ClipboardEvent<HTMLElement>): void {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !e.clipboardData) return;
   const wrap = document.createElement("div");
@@ -39,7 +39,7 @@ export function onCopyTags(e: ClipboardEvent<HTMLElement>): void {
   if (chips.length === 0) return;
   for (const chip of chips) {
     const span = document.createElement("span");
-    span.dataset.ofTag = chip.dataset.ofTag ?? "";
+    span.dataset.ofMention = chip.dataset.ofMention ?? "";
     span.textContent = `@${chip.dataset.handle ?? ""}`;
     chip.replaceWith(span);
   }

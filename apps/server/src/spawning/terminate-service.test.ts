@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { and, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentTerminatedError } from "../agents/errors.ts";
@@ -140,7 +140,7 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
   expect(child.proc.stopped).toBe(true);
   const evs = (await t.app.store.after(child.id, 0, 1000)).map((e) => e.event);
   expect(evs.filter((e) => e.type === "terminated")).toEqual([
-    { type: "terminated", by: tagOf(or.ref) },
+    { type: "terminated", by: mentionOf(or.ref) },
   ]);
 
   // A human terminated it: the spawner hears it as a report, its other report as a peer; both bodies round-trip.
@@ -148,9 +148,12 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
   expect(toLead).toEqual([
     expect.objectContaining({ subjectAgentId: child.id, notice: "report", state: "pending" }),
   ]);
-  expect(peerLeftOf(toLead[0]?.body ?? "")).toEqual({ reason: "terminated", by: tagOf(or.ref) });
+  expect(peerLeftOf(toLead[0]?.body ?? "")).toEqual({
+    reason: "terminated",
+    by: mentionOf(or.ref),
+  });
   expect(toLead[0]?.body).toBe(
-    `${tagOf(testRef(child.id))} (Dev · x1) left: terminated by ${tagOf(or.ref)}.`,
+    `${mentionOf(testRef(child.id))} (Dev · x1) left: terminated by ${mentionOf(or.ref)}.`,
   );
   expect(await rowsTo(t, pm.id, "peer_left")).toEqual([
     expect.objectContaining({ subjectAgentId: child.id, notice: "peer" }),
@@ -206,7 +209,7 @@ test("the spawner gets no peer row about its own terminate; the other reports do
     const rows = await rowsTo(t, id, "peer_left");
     expect(rows).toEqual([expect.objectContaining({ subjectAgentId: a.id, notice: "peer" })]);
     expect(rows[0]?.body).toBe(
-      `${tagOf(testRef(a.id))} (Dev · aa) left: terminated by ${tagOf(testRef(lead.id))}.`,
+      `${mentionOf(testRef(a.id))} (Dev · aa) left: terminated by ${mentionOf(testRef(lead.id))}.`,
     );
   }
 });
@@ -456,7 +459,7 @@ test("boot rejects loop-held rows to terminated agents and leaves the others", a
   expect(await stateOf(t, toB.id)).toBe("loop_held");
 });
 
-test("terminate_agent by its tag terminates silently; by a plain handle it warns", async () => {
+test("terminate_agent by its mention terminates silently; by a plain handle it warns", async () => {
   const { t, driver, lead } = await setup();
   const url = `http://127.0.0.1:${t.app.agentListener.port}`;
   const token = t.app.agentTokens.mint(lead.id).token;
@@ -464,15 +467,17 @@ test("terminate_agent by its tag terminates silently; by a plain handle it warns
   const b = await spawnIdle(t, driver, lead, "w2");
   const [aRef] = await t.sql`select ref from principals where handle = ${a.handle}`;
   const [bRef] = await t.sql`select ref from principals where handle = ${b.handle}`;
-  const tagged = await callTool(url, token, "terminate_agent", { target: `<@${aRef?.ref}|stale>` });
-  expect(tagged.isError).toBeFalsy();
-  expect(JSON.parse(tagged.content[0]?.text ?? "")).toEqual({
+  const mentioned = await callTool(url, token, "terminate_agent", {
+    target: `<@${aRef?.ref}|stale>`,
+  });
+  expect(mentioned.isError).toBeFalsy();
+  expect(JSON.parse(mentioned.content[0]?.text ?? "")).toEqual({
     handle: a.handle,
-    tag: `<@${aRef?.ref}|${a.handle}>`,
+    mention: `<@${aRef?.ref}|${a.handle}>`,
     status: "terminated",
   });
   const plain = await callTool(url, token, "terminate_agent", { target: b.handle });
   expect(JSON.parse(plain.content[0]?.text ?? "").warnings).toEqual([
-    `Plain tag detected: @${b.handle} was resolved to <@${bRef?.ref}|${b.handle}>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @${b.handle} was resolved to <@${bRef?.ref}|${b.handle}>. Mention as <@ref|handle>.`,
   ]);
 });

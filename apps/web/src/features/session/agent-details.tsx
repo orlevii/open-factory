@@ -20,8 +20,8 @@ import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
 import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
 import { HumanAvatar } from "@/components/human-avatar";
+import { Mention } from "@/components/mention/mention";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Tag } from "@/components/tag/tag";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -70,7 +70,7 @@ export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
   if (by === null) return `Terminated ${when} after 3 days without activity.`;
   return (
     <>
-      Terminated by <Tag tagRef={by.ref} /> {when}.
+      Terminated by <Mention mentionRef={by.ref} /> {when}.
     </>
   );
 }

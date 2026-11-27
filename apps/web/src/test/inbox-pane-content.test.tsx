@@ -243,7 +243,7 @@ test("the reply composer says the comment goes to the assignee by handle, never 
   setup([mention(1, "h1", { kind: "human", ref: refFor("bob"), handle: "bob" })]);
   await visit("/inbox?item=i1");
   const box = await within(pane()).findByRole("combobox", { name: "Comment" });
-  expect(box).toHaveAccessibleDescription(/^Goes to @dev and anyone you tag\./);
+  expect(box).toHaveAccessibleDescription(/^Goes to @dev and anyone you mention\./);
 });
 
 test("a task event shows the fact and Open task, with no composer", async () => {

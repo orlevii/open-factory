@@ -488,16 +488,16 @@ export function uploadsUsedSince(
   return out;
 }
 
-/** ↑ in an empty composer (U3 §13.2, I1 §5): your newest raw input in the loaded timeline, as typed. `selfTag` is
- *  the signed-in human's tag, which is what a stored `operator_input` names. */
+/** ↑ in an empty composer (U3 §13.2, I1 §5): your newest raw input in the loaded timeline, as typed. `selfMention` is
+ *  the signed-in human's mention, which is what a stored `operator_input` names. */
 export function recallText(
   ordered: readonly SessionEvent[],
-  selfTag: string | undefined,
+  selfMention: string | undefined,
 ): string | undefined {
-  if (!selfTag) return undefined;
+  if (!selfMention) return undefined;
   for (let i = ordered.length - 1; i >= 0; i--) {
     const ev = (ordered[i] as SessionEvent).event;
-    if (ev.type === "operator_input" && ev.by === selfTag) return ev.text;
+    if (ev.type === "operator_input" && ev.by === selfMention) return ev.text;
   }
   return undefined;
 }

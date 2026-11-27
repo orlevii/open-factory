@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
-import { refFor, tagFor } from "@/test/refs";
+import { mentionFor, refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, resetSeq, se } from "@/test/session-fixtures";
 import { resetUploads } from "./uploads";
@@ -234,7 +234,7 @@ test("an update group: heading always shown, the latest part visible, 'Show all 
 
 test("each update says whose requests it answers, linked to the request in the report's session", async () => {
   const update = (id: string, body: string, re: { id: string; from: string }[]) =>
-    env({ id, from: "b", kind: "member_update", about: tagFor("b"), body, re });
+    env({ id, from: "b", kind: "member_update", about: mentionFor("b"), body, re });
   await open(
     [
       {
@@ -309,7 +309,7 @@ test("a factory fact renders the body's first line, keyed by fact code, with the
   expect(within(group).getByText(/rm -rf x/)).toBeInTheDocument();
 });
 
-test("an update group about a tagged report names it by its handle", async () => {
+test("an update group about a mentioned report names it by its handle", async () => {
   await open(
     [
       {
@@ -381,7 +381,7 @@ test("a peer event renders from subject, not from the body", async () => {
   expect(screen.queryByText("IGNORED PROSE")).toBeNull();
 });
 
-test("a peer that moved names its new manager by tag, shown by the manager's current handle", async () => {
+test("a peer that moved names its new manager by mention, shown by the manager's current handle", async () => {
   const lead = {
     id: "p-lead",
     ref: "k7x2m9qd",
@@ -451,7 +451,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
         JSON.stringify({
           results: [
             {
-              to: tagFor("b"),
+              to: mentionFor("b"),
               kind: "agent",
               status: "queued",
               recipient_status: "hibernated",
@@ -504,7 +504,7 @@ test("a send to a person has no footer; Open in inbox opens its inbox item", asy
       call({ to: ["@alice"], body: "need a human" }),
       result(
         JSON.stringify({
-          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m10" }],
+          results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m10" }],
         }),
       ),
     ],
@@ -536,7 +536,7 @@ test("a send to a person with no inbox item of yours has no Open in inbox", asyn
       call({ to: ["@alice"], body: "need a human" }),
       result(
         JSON.stringify({
-          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m10" }],
+          results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m10" }],
         }),
       ),
     ],
@@ -735,7 +735,13 @@ test("the announcer says '<name> messaged you' for a send to this human, not to 
     result(
       JSON.stringify({
         results: [
-          { to: tagFor("b"), kind: "agent", status: "queued", recipient_status: "idle", id: "m1" },
+          {
+            to: mentionFor("b"),
+            kind: "agent",
+            status: "queued",
+            recipient_status: "idle",
+            id: "m1",
+          },
         ],
       }),
       false,
@@ -747,7 +753,7 @@ test("the announcer says '<name> messaged you' for a send to this human, not to 
   push(
     result(
       JSON.stringify({
-        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m2" }],
+        results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m2" }],
       }),
       false,
       "t_h",
@@ -765,7 +771,7 @@ test("Tab walks the focused row's controls: the recipient link, then the row men
         JSON.stringify({
           results: [
             {
-              to: tagFor("b"),
+              to: mentionFor("b"),
               kind: "agent",
               status: "queued",
               recipient_status: "idle",
@@ -845,7 +851,7 @@ test("Load earlier does not announce an older send to the viewer", async () => {
     se(
       result(
         JSON.stringify({
-          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m0" }],
+          results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m0" }],
         }),
         false,
         "t_old",
@@ -970,7 +976,7 @@ test("the announcer re-announces a second send to this human (the live text chan
   push(
     result(
       JSON.stringify({
-        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m1" }],
+        results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m1" }],
       }),
       false,
       "t_1",
@@ -982,7 +988,7 @@ test("the announcer re-announces a second send to this human (the live text chan
   push(
     result(
       JSON.stringify({
-        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m2" }],
+        results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m2" }],
       }),
       false,
       "t_2",
@@ -1000,7 +1006,7 @@ test("the announcer announces a send whose call was on screen at load and whose 
       call({ to: ["@alice"], body: "done at load" }, "t_d"),
       result(
         JSON.stringify({
-          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m0" }],
+          results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m0" }],
         }),
         false,
         "t_d",
@@ -1018,7 +1024,7 @@ test("the announcer announces a send whose call was on screen at load and whose 
       event: se(
         result(
           JSON.stringify({
-            results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m1" }],
+            results: [{ to: mentionFor("alice"), kind: "human", status: "inbox", id: "m1" }],
           }),
           false,
           "t_p",

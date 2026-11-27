@@ -1,4 +1,4 @@
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
   AgentArchivedError,
@@ -94,7 +94,7 @@ test('self by "me" and by its own handle; the entry is the agent\'s own', async 
     expect(item).toMatchObject({
       kind: "raw",
       body: "/context",
-      from: tagOf(testRef(ids.lead as string)),
+      from: mentionOf(testRef(ids.lead as string)),
       fromKind: "agent",
     });
     // one pending self-command at a time: clear it for the next loop turn
@@ -118,7 +118,7 @@ test("a self /compact says to write down where you are", async () => {
   expect(await rawQueue("lead")).toMatchObject([
     {
       kind: "compact",
-      from: tagOf(testRef(ids.lead as string)),
+      from: mentionOf(testRef(ids.lead as string)),
       fromKind: "agent",
       focus: "keep the plan",
     },
@@ -172,18 +172,18 @@ test("an errored report holds it until it is restarted (restart_agent, or a huma
   expect(drv.starts).toHaveLength(starts);
 });
 
-test("a direct report named by its tag runs it with no warning; by a plain handle it warns", async () => {
+test("a direct report named by its mention runs it with no warning; by a plain handle it warns", async () => {
   await start("dev", false);
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
-  const tagged = await call("lead", "/context", `<@${dev?.ref}|stale>`);
-  expect(tagged.json).toEqual({
+  const mentioned = await call("lead", "/context", `<@${dev?.ref}|stale>`);
+  expect(mentioned.json).toEqual({
     target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
     note: "Runs now.",
   });
   const plain = await call("lead", "/context", "dev");
   expect(plain.json.warnings).toEqual([
-    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @dev was resolved to <@${dev?.ref}|dev>. Mention as <@ref|handle>.`,
   ]);
 });
 
@@ -191,7 +191,7 @@ test("a ref nobody holds is refused with the fix-it error", async () => {
   const r = await call("lead", "/context", "<@zzzzzzzz>");
   expect(r.err).toBe(true);
   expect(r.text).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
 });
 
@@ -264,7 +264,7 @@ test("arguments are neutralised and the line is written as typed", async () => {
   ]);
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events.filter((e) => e.type === "operator_input")).toEqual([
-    expect.objectContaining({ by: tagOf(testRef(ids.lead as string)) }),
+    expect.objectContaining({ by: mentionOf(testRef(ids.lead as string)) }),
   ]);
 });
 
@@ -288,7 +288,7 @@ test("/compact focus on a report takes the Compact flow, by the caller", async (
   expect(events.filter((e) => e.type === "control")).toEqual([
     expect.objectContaining({
       cmd: "compact",
-      by: tagOf(testRef(ids.lead as string)),
+      by: mentionOf(testRef(ids.lead as string)),
       arg: "the API work",
     }),
   ]);
@@ -302,8 +302,8 @@ test("nobody can cancel an agent's queued command from the UI", async () => {
   expect(items.map((q) => q.kind)).toEqual(["raw", "compact"]);
   // sent by an agent (a manager), not a human
   expect(items.map((q) => [q.from, q.fromKind])).toEqual([
-    [tagOf(testRef(ids.lead as string)), "agent"],
-    [tagOf(testRef(ids.lead as string)), "agent"],
+    [mentionOf(testRef(ids.lead as string)), "agent"],
+    [mentionOf(testRef(ids.lead as string)), "agent"],
   ]);
   for (const item of items) {
     const res = await h.app.inject({

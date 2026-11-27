@@ -28,7 +28,7 @@ function quoteBody(text: string, room: number): string {
 }
 
 export type TaskAssignedInput = {
-  /** Who assigned it, as a principal's tag (`<@ref>`). */
+  /** Who assigned it, as a principal's mention (`<@ref>`). */
   actor: string;
   key: string;
   title: string;

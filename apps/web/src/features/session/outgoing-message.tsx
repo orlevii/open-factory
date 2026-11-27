@@ -1,5 +1,5 @@
 import { normaliseRef } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -65,7 +65,7 @@ function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
   const key = row.result ?? row.call;
   let parties = recipientsOf.get(key);
   if (!parties) {
-    // A result names its recipient as a tag; the call may have written a tag, a ref or a plain handle.
+    // A result names its recipient as a mention; the call may have written a mention, a ref or a plain handle.
     type Found = { name: string; kind: PartyKind; ref: string | undefined };
     const byRef = new Map<string, Found>();
     const byName = new Map<string, Found>();
@@ -79,12 +79,12 @@ function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
     parties = to.map((t) => {
       const written = parseWho(t)?.ref ?? normaliseRef(t);
       const found = (written && byRef.get(written)) || byName.get(whoName(t).toLowerCase());
-      // A known ref names the recipient by tag, so the line shows its live handle and links after a rename.
+      // A known ref names the recipient by mention, so the line shows its live handle and links after a rename.
       const ref = written ?? found?.ref;
       return {
         handle: found?.name ?? whoName(t),
         kind: found?.kind,
-        ...(ref ? { tag: tagOf(ref) } : {}),
+        ...(ref ? { mention: mentionOf(ref) } : {}),
       };
     });
     recipientsOf.set(key, parties);

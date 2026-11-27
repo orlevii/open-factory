@@ -31,7 +31,7 @@ function rpc(method: string, params: unknown, id = 1) {
   });
 }
 
-test("list_peers returns each peer's tag, relation and status for the authenticated caller", async () => {
+test("list_peers returns each peer's mention, relation and status for the authenticated caller", async () => {
   const errors: Error[] = [];
   const mcp = createFactoryMcp({
     version: "0.0.0",
@@ -56,15 +56,15 @@ test("list_peers returns each peer's tag, relation and status for the authentica
     peers: [
       {
         handle: "@lead",
-        tag: `<@${testRef("lead")}|lead>`,
+        mention: `<@${testRef("lead")}|lead>`,
         kind: "agent",
         displayName: "Lead",
         description: "",
         relation: "manager",
         status: "idle",
       },
-      { handle: "@ana", tag: `<@${testRef("u2")}|ana>`, kind: "human", name: "Ana" },
-      { handle: "@or", tag: `<@${testRef("u1")}|or>`, kind: "human", name: "Or" },
+      { handle: "@ana", mention: `<@${testRef("u2")}|ana>`, kind: "human", name: "Ana" },
+      { handle: "@or", mention: `<@${testRef("u1")}|or>`, kind: "human", name: "Or" },
     ],
   });
   const lead = await call("lead", "all");

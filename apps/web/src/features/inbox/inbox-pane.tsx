@@ -1,5 +1,5 @@
 import { ApiError, type TaskActivity, type TaskDetail } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -296,7 +296,7 @@ function MentionReply({
   replyRef: RefObject<CommentComposerHandle | null>;
 }) {
   const replied = useMarkReplied(item);
-  const mention = item.from.kind === "agent" ? tagOf(item.from.ref) : undefined;
+  const mention = item.from.kind === "agent" ? mentionOf(item.from.ref) : undefined;
   // Once per item (the pane remounts this per item): only into an empty draft, as the task page does.
   useEffect(() => {
     if (mention) replyRef.current?.prefill(mention);

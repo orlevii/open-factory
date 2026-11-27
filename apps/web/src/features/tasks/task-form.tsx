@@ -1,7 +1,7 @@
 import { ApiError, taskBodySchema, taskTitleSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { TagInput } from "@/components/composer/tag-field";
+import { MentionInput } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
@@ -9,7 +9,7 @@ import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import type { ComboOption } from "@/components/ui/combobox";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
-import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
@@ -71,7 +71,7 @@ export function TaskForm({
   useFocusOnOpen(form);
   const active = useQuery(agentsListQueryOptions("exclude"));
   const ended = useQuery(agentsListQueryOptions("only"));
-  const at = useMentionSource({ note: FIELD_TAG_NOTE });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const known =
     active.data && ended.data
       ? new Set([...active.data, ...ended.data].map((a) => a.handle))
@@ -181,7 +181,7 @@ export function TaskForm({
         <fieldset disabled={pending} className="field-stack">
           <FieldShell name="title" label="Title" error={f.errors.title}>
             {(a) => (
-              <TagInput
+              <MentionInput
                 id={a.id}
                 name="title"
                 value={title}
@@ -225,7 +225,7 @@ export function TaskForm({
               <MarkdownEditor
                 id={a.id}
                 value={body}
-                tagSource={at}
+                mentionSource={at}
                 invalid={Boolean(f.errors.body)}
                 view={bodyView}
                 onViewChange={setBodyView}

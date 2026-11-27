@@ -1,9 +1,9 @@
-import type { TagRange } from "./tag-ranges";
+import type { MentionRange } from "./mention-ranges";
 
-/** One state of a tag field: what undo goes back to. */
+/** One state of a mention field: what undo goes back to. */
 export type Snapshot = {
   text: string;
-  ranges: readonly TagRange[];
+  ranges: readonly MentionRange[];
   selection: readonly [number, number];
 };
 
@@ -13,9 +13,9 @@ const MAX_STEPS = 200;
 const isSpace = (s: string) => /\s/.test(s);
 
 /**
- * The undo history of a tag field. Typing coalesces into one step per word (a space after a word
+ * The undo history of a mention field. Typing coalesces into one step per word (a space after a word
  * starts the next step) and per pause; `step` records a change that is always its own (a pick, a
- * whole-tag delete, a paste). Each call gets the state *before* the change.
+ * whole-mention delete, a paste). Each call gets the state *before* the change.
  */
 export class UndoStack {
   #past: Snapshot[] = [];

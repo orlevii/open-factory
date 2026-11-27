@@ -9,7 +9,7 @@ export const RESERVED_HANDLES = [
   "factory",
   "all",
   "system",
-  "unknown", // how a dangling tag renders
+  "unknown", // how a dangling mention renders
 ] as const;
 
 export const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;

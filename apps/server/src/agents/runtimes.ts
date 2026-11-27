@@ -5,7 +5,7 @@ import {
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
@@ -109,7 +109,7 @@ export function dockerCleanup(
 
 /** The sender as the urgent interrupt's `by` stores it: a principal's `<@ref>`; the scheduler and the factory stay words. */
 function senderLabel(row: PendingRow): string {
-  if (row.fromRef) return tagOf(row.fromRef);
+  if (row.fromRef) return mentionOf(row.fromRef);
   if (row.kind === "scheduled") return "@scheduler";
   // S8: `task_assigned` and `task_update` have no sender columns; they are from the factory (spec §7.4).
   if (row.kind !== "message") return "@factory";
@@ -475,7 +475,7 @@ export class AgentRuntimes {
       notice: "report_config_changed",
       body: notices.reportConfigChanged({
         by,
-        report: await this.d.store.principalTag(reportId),
+        report: await this.d.store.principalMention(reportId),
         lines,
       }),
       subjectAgentId: reportId,

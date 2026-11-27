@@ -1,5 +1,5 @@
 import { schema } from "@open-factory/db";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
@@ -349,12 +349,12 @@ describe("notices on open", () => {
     }
   });
 
-  test("the loop notice names both agents by tag", async () => {
+  test("the loop notice names both agents by mention", async () => {
     await trip("a1", "a2");
     const [msg] =
       await t.sql`select body from messages where notice = 'loop_held' and to_all_humans`;
     expect(msg?.body).toBe(
-      `${tagOf(testRef("a1"))} and ${tagOf(testRef("a2"))} exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
+      `${mentionOf(testRef("a1"))} and ${mentionOf(testRef("a2"))} exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
     );
   });
 
@@ -372,7 +372,7 @@ describe("notices on open", () => {
       loop_hold_id: null,
     });
     expect(n?.body).toBe(
-      `${tagOf(testRef(x))} and ${tagOf(testRef(y))} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
+      `${mentionOf(testRef(x))} and ${mentionOf(testRef(y))} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
     );
     expect(r.managerRows.map((row) => [row.id, row.toId])).toEqual([[n?.id, m]]);
   });

@@ -224,7 +224,7 @@ test("a queued agent raw item keeps its node into the timeline row", () => {
   );
 });
 
-test("a command row names its sender by tag, shown by the sender's current handle", async () => {
+test("a command row names its sender by mention, shown by the sender's current handle", async () => {
   vi.useRealTimers();
   render(view({ rows: operatorInput }));
   expect(await screen.findByText(/@alice/, { selector: "span" })).toBeInTheDocument();

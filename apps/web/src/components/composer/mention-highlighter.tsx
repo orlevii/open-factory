@@ -1,22 +1,22 @@
 import { type ReactNode, type RefObject, useLayoutEffect, useRef } from "react";
 import { COPY_PROPS } from "./caret-menu";
-import type { TagRange } from "./tag-ranges";
+import type { MentionRange } from "./mention-ranges";
 
 /**
- * The layer behind a tag field that paints each tag range with the chip's fill. It lays the same text out
+ * The layer behind a mention field that paints each mention range with the chip's fill. It lays the same text out
  * as the field (the same font, padding and wrap, through `COPY_PROPS`, narrower by the scrollbar gutter)
  * and follows its scroll; its own text is transparent, so only the fills show, and the field's text, caret,
  * IME and spellcheck stay the browser's. A single-line input doesn't wrap and centres its line, like the input.
  * Decorative: `aria-hidden`.
  */
-export function TagHighlighter({
+export function MentionHighlighter({
   text,
   ranges,
   box,
   multiline = true,
 }: {
   text: string;
-  ranges: readonly TagRange[];
+  ranges: readonly MentionRange[];
   box: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   multiline?: boolean;
 }) {
@@ -69,7 +69,7 @@ export function TagHighlighter({
     <div
       ref={layer}
       aria-hidden="true"
-      data-tag-highlighter
+      data-mention-highlighter
       className={`pointer-events-none absolute inset-0 -z-10 overflow-hidden text-transparent ${multiline ? "whitespace-pre-wrap break-words" : "flex items-center whitespace-pre"}`}
     >
       {parts}

@@ -5,7 +5,7 @@ import {
   type QueueItem,
   type RefusalCode,
 } from "@open-factory/shared";
-import { agentTagOf, unknownRefError } from "@open-factory/shared/tags";
+import { agentMentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
@@ -55,8 +55,8 @@ export type RecipientResult =
 
 /**
  * What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. `by` (I7 §8.2) is the
- * `<@ref>` tag of an agent actor, set only when one caused the change; a terminator's `by` is its own field, a tag or
- * `@factory`. `moved.to` is the new manager's tag.
+ * `<@ref>` mention of an agent actor, set only when one caused the change; a terminator's `by` is its own field, a mention or
+ * `@factory`. `moved.to` is the new manager's mention.
  */
 export type PeerChange =
   | { kind: "joined"; by?: string }
@@ -87,7 +87,7 @@ type Target = {
   refused?: RecipientResult;
   agent?: AgentRecord;
   user?: { userId: string; handle: string };
-  /** The plain-tag warning, when the recipient was named without a tag. */
+  /** The plain-mention warning, when the recipient was named without a mention. */
   warning?: string;
 };
 
@@ -176,15 +176,15 @@ export class Router {
           ),
         };
     }
-    // Spec §4.3: every tag in the body is stored as `<@ref>`. An unknown ref throws before anything is written.
-    const tagged = await resolveField(
+    // Spec §4.3: every mention in the body is stored as `<@ref>`. An unknown ref throws before anything is written.
+    const mentioned = await resolveField(
       this.d.db,
       body,
       "userId" in from ? "human" : "agent",
       "body",
       warnings,
     );
-    body = tagged.text;
+    body = mentioned.text;
     const targets = await this.resolveTargets(from, to);
     for (const t of targets) if (t.warning) warnings.push(t.warning);
     const accepted = targets.filter((t) => !t.refused);
@@ -387,7 +387,7 @@ export class Router {
               "handing over failed",
             );
             outcome.set(w.target, {
-              to: await this.d.store.agentTag(agent.id),
+              to: await this.d.store.agentMention(agent.id),
               kind: "agent",
               status: "start_failed",
               id: row.id,
@@ -400,7 +400,7 @@ export class Router {
     return { results: targets.map((t) => t.refused ?? (outcome.get(t) as RecipientResult)) };
   }
 
-  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`, its tag) is dropped. */
+  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`, its mention) is dropped. */
   private async resolveTargets(from: Sender, to: string[]): Promise<Target[]> {
     const resolved = await resolveArgs(this.d.db, to);
     const ids = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
@@ -467,7 +467,7 @@ export class Router {
         case "principal": {
           const a = agentById.get(r.p.id);
           const u = userById.get(r.p.id);
-          const label = agentTagOf(r.p);
+          const label = agentMentionOf(r.p);
           const at = `@${r.p.handle}`; // the sentences stay `@handle`
           if (a) {
             t = { to: label, key: `agent:${a.id}`, agent: a };
@@ -523,7 +523,7 @@ export class Router {
     agent: AgentRecord,
     row: PendingRow,
   ): Promise<RecipientResult> {
-    const to = await this.d.store.agentTag(agent.id);
+    const to = await this.d.store.agentMention(agent.id);
     if ("userId" in from) {
       if (this.closed) throw new Error(SHUTTING_DOWN);
       const status = await this.statusOf(agent.id);
@@ -582,7 +582,7 @@ export class Router {
     if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
     const rt = await this.d.runtimes.load(agent.id);
     return {
-      to: await this.d.store.agentTag(agent.id),
+      to: await this.d.store.agentMention(agent.id),
       kind: "agent",
       status: "queued",
       recipient_status: this.d.runtimes.statusOf(agent),
@@ -906,7 +906,7 @@ export class Router {
   }
 }
 
-/** How a result names a raw recipient: a channel or a tag as typed, anything else as `@handle` (one leading `@` dropped). */
+/** How a result names a raw recipient: a channel or a mention as typed, anything else as `@handle` (one leading `@` dropped). */
 function recipientLabel(raw: string): string {
   const t = raw.trim();
   return t.startsWith("#") || t.startsWith("<@") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;

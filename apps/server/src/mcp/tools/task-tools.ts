@@ -6,9 +6,9 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
-import { agentTagOf } from "@open-factory/shared/tags";
+import { agentMentionOf } from "@open-factory/shared/mentions";
 import type { AgentRecord, Principal } from "../../principals/principal-store.ts";
-import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
+import { type AgentFacing, UnknownMentionsError } from "../../principals/principal-text.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -28,7 +28,7 @@ const listNote = (limit: number) =>
     : `Showing the ${limit} most recently updated; pass a larger limit (max 200) or narrow the filter.`;
 
 /** A principal as an agent reads it: `<@ref|handle>`. */
-const principal = (p: { ref: string; handle: string }) => agentTagOf(p);
+const principal = (p: { ref: string; handle: string }) => agentMentionOf(p);
 
 type TaskTools = {
   tasks: TaskService;
@@ -36,7 +36,7 @@ type TaskTools = {
   loadAgent(id: string): Promise<AgentRecord | undefined>;
   /** The calling agent's principal: its ref and handle, which the actor carries. */
   loadPrincipal(id: string): Promise<Principal | undefined>;
-  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
   facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
@@ -47,7 +47,7 @@ type TaskTools = {
 const NOT_REACHED_TEXT = {
   archived: (n: string) => `${n} is archived and can't receive messages.`,
   terminated: (n: string) => `${n} was terminated and can't receive messages.`,
-  too_many: (n: string) => `Too many tags in one comment; ${n} was left out.`,
+  too_many: (n: string) => `Too many mentions in one comment; ${n} was left out.`,
 };
 /** One sentence per `not_reached` entry, so the tool's entries all have the same shape. */
 const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
@@ -69,7 +69,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof TaskError || e instanceof UnknownTagsError) return toolError(e.message);
+      if (e instanceof TaskError || e instanceof UnknownMentionsError) return toolError(e.message);
       throw e;
     }
   };
@@ -87,7 +87,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
     return {
       key: r.task.key,
       status: r.task.status,
-      ...(r.task.assignee ? { assignee: agentTagOf(r.task.assignee) } : {}),
+      ...(r.task.assignee ? { assignee: agentMentionOf(r.task.assignee) } : {}),
       ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
       blocked_by: r.task.blockedBy,
     };
@@ -259,7 +259,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                   key: x.key,
                   title: facing.render(x.title),
                   status: x.status,
-                  ...(x.assignee ? { assignee: facing.tag(x.assignee) } : {}),
+                  ...(x.assignee ? { assignee: facing.mention(x.assignee) } : {}),
                 })),
                 links: t.links.map((l) => ({
                   kind: l.kind,
@@ -287,7 +287,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Tag an agent or a person as <@ref|handle> to bring them in; it also goes to the assignee.",
+              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Mention an agent or a person as <@ref|handle> to bring them in; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>
@@ -296,10 +296,10 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
               const facing = await d.facing({ handles: r.notReached.map((n) => n.name) });
               return {
                 id: r.id,
-                delivered_to: r.deliveredTo.map(agentTagOf),
-                mentioned_humans: r.mentionedHumans.map(agentTagOf),
+                delivered_to: r.deliveredTo.map(agentMentionOf),
+                mentioned_humans: r.mentionedHumans.map(agentMentionOf),
                 not_reached: r.notReached.map((n) => {
-                  const name = facing.tag(n.name);
+                  const name = facing.mention(n.name);
                   return { ...n, name, detail: notReachedText({ ...n, name }) };
                 }),
                 held: r.held,

@@ -1,4 +1,4 @@
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { testRef } from "../test/principals.ts";
 import { CAP_BYTES } from "./cap.ts";
@@ -132,7 +132,7 @@ test("errors and denials are factory facts about the report", async () => {
   );
   await h.rt.settled();
   expect(facts()).toEqual(["turn_failed", "denied"]);
-  const me = tagOf(testRef(h.rt.agent.id));
+  const me = mentionOf(testRef(h.rt.agent.id));
   expect(h.forwarded[1]?.body).toBe(
     `Bash was denied for ${me}. The reason, reported by ${me}:\n> risky`,
   );
@@ -148,7 +148,7 @@ test("a recoverable crash is crashed, never errored; errored is forwarded once p
   h.driver.last.exit(1);
   await h.rt.settled();
   expect(facts()).toEqual(["crashed", "errored"]);
-  const me = tagOf(testRef(h.rt.agent.id));
+  const me = mentionOf(testRef(h.rt.agent.id));
   expect(h.forwarded[1]?.body).toBe(
     `${me} is errored and needs a human. Reported by ${me}:\n> Exited unexpectedly (code 1)`,
   );
@@ -210,7 +210,7 @@ test("a start failure is errored, once per episode", async () => {
   await h.send("hi").catch(() => {});
   await h.rt.settled();
   expect(facts()).toEqual(["errored"]);
-  expect(h.forwarded[0]?.body).toContain(`Reported by ${tagOf(testRef(h.rt.agent.id))}`);
+  expect(h.forwarded[0]?.body).toContain(`Reported by ${mentionOf(testRef(h.rt.agent.id))}`);
   await h.send("again").catch(() => {}); // a human retry inside the episode
   await h.rt.settled();
   expect(facts()).toEqual(["errored"]);

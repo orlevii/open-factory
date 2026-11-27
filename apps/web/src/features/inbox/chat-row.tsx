@@ -2,8 +2,8 @@ import type { ChatRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { type MouseEvent, memo } from "react";
 import { AgentChip } from "@/components/agent-chip";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { ROW_GRID } from "@/components/row-grid";
-import { usePlainTags } from "@/components/tag/plain-tags";
 import { formatInboxTime } from "@/features/session/format";
 import { skipFocusPreload } from "@/lib/row-nav";
 import { chatRowId } from "./api";
@@ -45,7 +45,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   updates?: boolean;
 }) {
   const { agent, unread, latest } = row;
-  const preview = usePlainTags(latest.preview);
+  const preview = usePlainMentions(latest.preview);
   const read = unread === 0;
   const at = new Date(latest.createdAt);
   const time = formatInboxTime(at, new Date(now));

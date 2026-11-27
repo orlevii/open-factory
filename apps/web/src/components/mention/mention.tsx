@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 export const InsideLinkContext = createContext(false);
 
 const ENDED = { archived: "Archived", terminated: "Terminated", disabled: "Disabled" } as const;
-const NOBODY = "No one in this factory has this tag";
+const NOBODY = "This mention doesn't match anyone in this factory";
 
 const CHIP =
   "inline rounded-[4px] bg-muted px-px font-medium dark:bg-selected [&_[data-agent-avatar]]:align-[-0.2em] [&_[data-human-avatar]]:align-[-0.2em]";
@@ -47,7 +47,7 @@ function Handle({ p, ended }: { p: PrincipalItem; ended: boolean }) {
   );
 }
 
-function FoundTag({ p, interactive }: { p: PrincipalItem; interactive: boolean }) {
+function FoundMention({ p, interactive }: { p: PrincipalItem; interactive: boolean }) {
   const ended = p.state !== "live";
   const cls = cn(CHIP, ended && "text-muted-foreground");
   const body = (
@@ -59,7 +59,7 @@ function FoundTag({ p, interactive }: { p: PrincipalItem; interactive: boolean }
       </Sr>
     </>
   );
-  const marks = { "data-of-tag": p.ref, "data-handle": p.handle };
+  const marks = { "data-of-mention": p.ref, "data-handle": p.handle };
   if (!interactive)
     return (
       <span className={cls} {...marks}>
@@ -86,9 +86,16 @@ function FoundTag({ p, interactive }: { p: PrincipalItem; interactive: boolean }
 }
 
 /** A `<@ref>` as a chip showing the principal's current handle. `interactive={false}` (inside a link) keeps the look only. */
-export function Tag({ tagRef, interactive = true }: { tagRef: string; interactive?: boolean }) {
-  const found = usePrincipal(tagRef);
-  if (found.status === "found") return <FoundTag p={found.principal} interactive={interactive} />;
+export function Mention({
+  mentionRef,
+  interactive = true,
+}: {
+  mentionRef: string;
+  interactive?: boolean;
+}) {
+  const found = usePrincipal(mentionRef);
+  if (found.status === "found")
+    return <FoundMention p={found.principal} interactive={interactive} />;
   if (found.status === "pending")
     return (
       <span className={CHIP}>
@@ -114,8 +121,8 @@ export function Tag({ tagRef, interactive = true }: { tagRef: string; interactiv
   );
 }
 
-/** What `Markdown` renders for an `of-tag` element. */
-export function MarkdownTag({ tagRef }: { tagRef?: string }) {
+/** What `Markdown` renders for an `of-mention` element. */
+export function MarkdownMention({ mentionRef }: { mentionRef?: string }) {
   const inside = use(InsideLinkContext);
-  return tagRef ? <Tag tagRef={tagRef} interactive={!inside} /> : null;
+  return mentionRef ? <Mention mentionRef={mentionRef} interactive={!inside} /> : null;
 }

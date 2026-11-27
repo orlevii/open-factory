@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { usePlainTags } from "@/components/tag/plain-tags";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { LINK_CLASS } from "@/features/session/message-block";
 
 /**
@@ -18,7 +18,7 @@ export function TaskBadge({
   link?: boolean | { comment?: string | undefined };
   className?: string;
 }) {
-  const plain = usePlainTags(title ?? "");
+  const plain = usePlainMentions(title ?? "");
   const body = (
     <>
       <span className="shrink-0 font-mono text-foreground">{taskKey}</span>

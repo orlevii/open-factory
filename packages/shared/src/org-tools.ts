@@ -13,7 +13,7 @@ const principalRef = z
   .trim()
   .min(1)
   .max(80)
-  .describe("An agent or person: their tag <@ref|handle>, ref, or @handle");
+  .describe("An agent or person: their mention <@ref|handle>, ref, or @handle");
 
 export const getTemplateToolSchema = z.object({ name: ref.describe("The template's name") });
 
@@ -25,7 +25,7 @@ export const createAgentToolSchema = z.object({
   display_name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500),
   reports_to: ref.describe(
-    "Who it reports to: an agent or a person, as their tag <@ref|handle>, ref, or @handle",
+    "Who it reports to: an agent or a person, as their mention <@ref|handle>, ref, or @handle",
   ),
   credential: ref.describe("A credential's name"),
   projects: z.array(ref).optional().describe("Project names (default: the template's)"),
@@ -40,7 +40,7 @@ export const updateAgentToolSchema = z
     reports_to: ref
       .optional()
       .describe(
-        "Who it reports to now: an agent or a person, as their tag <@ref|handle>, ref, or @handle",
+        "Who it reports to now: an agent or a person, as their mention <@ref|handle>, ref, or @handle",
       ),
     credential: ref.optional(),
     projects: z.array(ref).optional().describe("The full new list (replaces the old one)"),
@@ -60,7 +60,7 @@ export const updateAgentToolSchema = z
 /** I7 §9.1: `restart_agent`; the note is an ordinary message, at most the message body limit. */
 export const restartAgentToolSchema = z.object({
   target: principalRef.describe(
-    "A direct report: their tag <@ref|handle>, ref, or @handle; with manage_org, any agent",
+    "A direct report: their mention <@ref|handle>, ref, or @handle; with manage_org, any agent",
   ),
   note: z
     .string()

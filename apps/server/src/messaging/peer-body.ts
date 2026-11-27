@@ -1,11 +1,11 @@
 import type { Envelope } from "@open-factory/shared";
-import { scanTags, tagOf } from "@open-factory/shared/tags";
+import { mentionOf, scanMentions } from "@open-factory/shared/mentions";
 
 type Subject = NonNullable<Envelope["subject"]>;
 export type PeerLeft = NonNullable<Subject["left"]>;
 /**
- * `by`: the actor's tag, `<@ref>`, when an agent caused the change (human-made changes carry none, spec I7 §8.2).
- * `left.to` and `left.by` are tags too, or `@factory` for the idle TTL.
+ * `by`: the actor's mention, `<@ref>`, when an agent caused the change (human-made changes carry none, spec I7 §8.2).
+ * `left.to` and `left.by` are mentions too, or `@factory` for the idle TTL.
  */
 export type PeerBodyEvent =
   | { kind: "peer_joined"; by?: string }
@@ -21,9 +21,9 @@ export function peerBody(
   change: PeerBodyEvent,
   recipientRef: string,
 ): string {
-  const who = `${tagOf(subject.ref)} (${subject.displayName})`;
+  const who = `${mentionOf(subject.ref)} (${subject.displayName})`;
   // The recipient needn't be told about its own act.
-  const by = change.by && change.by !== tagOf(recipientRef) ? `, by ${change.by}` : "";
+  const by = change.by && change.by !== mentionOf(recipientRef) ? `, by ${change.by}` : "";
   if (change.kind === "peer_joined") return `${who} joined as your ${relation}${by}.`;
   const { left } = change;
   if (left.reason === "terminated") return `${who} left: terminated ${terminatedBy(left.by)}.`;
@@ -31,7 +31,7 @@ export function peerBody(
   return `${who} left: now reports to ${left.to}${by}.`;
 }
 
-/** The idle TTL's `terminated_by` (S7 §10.3) is the `@factory` word; any other terminator is a tag. */
+/** The idle TTL's `terminated_by` (S7 §10.3) is the `@factory` word; any other terminator is a mention. */
 const FACTORY = "@factory";
 const TTL_WORDS = "after 3 days without activity";
 const terminatedBy = (by: string): string => (by === FACTORY ? TTL_WORDS : `by ${by}`);
@@ -40,15 +40,15 @@ const terminatedBy = (by: string): string => (by === FACTORY ? TTL_WORDS : `by $
 const LEFT =
   / left: (?:(archived)|now reports to (\S+?)|terminated (?:by (\S+?)|(after 3 days without activity)))(?:, by \S+?)?\.$/;
 
-/** A tag, as the body wrote it: the one token of `text`, or undefined when it holds none. */
-const tagIn = (text: string): string | undefined => {
-  const [t] = scanTags(text).tokens;
-  return t ? tagOf(t.ref) : undefined;
+/** A mention, as the body wrote it: the one token of `text`, or undefined when it holds none. */
+const mentionIn = (text: string): string | undefined => {
+  const [t] = scanMentions(text).tokens;
+  return t ? mentionOf(t.ref) : undefined;
 };
 
 /**
  * How the subject left, read back from a `peer_left` body written by `peerBody`; undefined for any other text. The
- * principals come back as the tags the body holds (`<@ref>`), or `@factory` for the idle TTL.
+ * principals come back as the mentions the body holds (`<@ref>`), or `@factory` for the idle TTL.
  */
 export function peerLeftOf(body: string): PeerLeft | undefined {
   const m = LEFT.exec(body);
@@ -56,9 +56,9 @@ export function peerLeftOf(body: string): PeerLeft | undefined {
   if (m[1]) return { reason: "archived" };
   if (m[4]) return { reason: "terminated", by: FACTORY };
   if (m[3]) {
-    const by = tagIn(m[3]);
+    const by = mentionIn(m[3]);
     return by ? { reason: "terminated", by } : undefined;
   }
-  const to = tagIn(m[2] ?? "");
+  const to = mentionIn(m[2] ?? "");
   return to ? { reason: "moved", to } : undefined;
 }

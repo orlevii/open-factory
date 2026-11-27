@@ -103,14 +103,14 @@ test("update_task: null unassigns, a no-op reports changed [], an unrelated agen
   );
 });
 
-test("comment_task reports a tagged human as reached", async () => {
+test("comment_task reports a mentioned human as reached", async () => {
   await call("lead", "create_task", { title: "Plan", assignee: "dev" });
   const r = await call("dev", "comment_task", { id: "T-1", body: `look <@${or.ref}|or>` });
   expect(r.err).toBe(false);
   expect(r.json).toMatchObject({ mentioned_humans: [`<@${or.ref}|or>`], not_reached: [] });
 });
 
-test("get_task shows a tag in the body and in comments with the principal's current handle", async () => {
+test("get_task shows a mention in the body and in comments with the principal's current handle", async () => {
   const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
   await call("lead", "create_task", {
     title: "Plan",
@@ -128,7 +128,7 @@ test("get_task shows a tag in the body and in comments with the principal's curr
   }
 });
 
-test("task titles that carry a tag read back as <@ref|handle> in list_tasks and get_task", async () => {
+test("task titles that carry a mention read back as <@ref|handle> in list_tasks and get_task", async () => {
   const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
   await call("lead", "create_task", { title: `Ask <@${qa?.ref}> first`, assignee: "dev" });
   await call("lead", "create_task", {
@@ -148,7 +148,7 @@ test("task titles that carry a tag read back as <@ref|handle> in list_tasks and 
   expect(t2.depends_on[0].title).toBe(want("Ask QA first"));
 });
 
-test("filtering list_tasks by a person's tag is refused naming the person by handle", async () => {
+test("filtering list_tasks by a person's mention is refused naming the person by handle", async () => {
   const r = await call("lead", "list_tasks", { assignee: `<@${or.ref}|or>` });
   expect(r.err).toBe(true);
   expect(r.text).toBe("No agent @or.");
@@ -162,12 +162,12 @@ test("comment_task: a plain @handle reaches the agent and warns; an unknown ref 
     expect.arrayContaining([expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/)]),
   );
   expect(r.json.warnings).toEqual([
-    `Plain tag detected: @qa was resolved to <@${qa?.ref}|qa>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @qa was resolved to <@${qa?.ref}|qa>. Mention as <@ref|handle>.`,
   ]);
   const bad = await call("dev", "comment_task", { id: "T-1", body: "<@zzzzzzzz> look" });
   expect(bad.err).toBe(true);
   expect(bad.text).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
   expect((await h.sql`select id from task_comments`).length).toBe(1);
   const d = await mcpCall(url, tok.dev as string, "tools/list", {});
@@ -199,7 +199,7 @@ test("list_tasks: defaults, filters and the more note", async () => {
   expect((await call("qa", "list_tasks", {})).json).toMatchObject({ more: false });
 });
 
-test("list_tasks filters by a creator given as a tag", async () => {
+test("list_tasks filters by a creator given as a mention", async () => {
   await h.app.tasks.create(or, { title: "D" });
   await call("lead", "create_task", { title: "A" });
   const [lead] = await h.sql`select ref from principals where handle = 'lead'`;
@@ -280,13 +280,18 @@ test("comment_task: a looping peer is listed under held, the comment is still po
   expect(c?.body).toBe(`<@${qa?.ref}> thoughts?`);
 });
 
-test("a task assignee given as a plain handle warns; given as its tag it does not", async () => {
+test("a task assignee given as a plain handle warns; given as its mention it does not", async () => {
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
   const plain = await call("lead", "create_task", { title: "A", assignee: "dev" });
   expect(plain.json.warnings).toEqual([
-    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @dev was resolved to <@${dev?.ref}|dev>. Mention as <@ref|handle>.`,
   ]);
-  const tagged = await call("lead", "create_task", { title: "B", assignee: `<@${dev?.ref}|old>` });
-  expect(tagged.json).toMatchObject({ assignee: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/) });
-  expect(tagged.json).not.toHaveProperty("warnings");
+  const mentioned = await call("lead", "create_task", {
+    title: "B",
+    assignee: `<@${dev?.ref}|old>`,
+  });
+  expect(mentioned.json).toMatchObject({
+    assignee: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+  });
+  expect(mentioned.json).not.toHaveProperty("warnings");
 });

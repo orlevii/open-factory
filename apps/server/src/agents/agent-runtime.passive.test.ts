@@ -1,4 +1,4 @@
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
 import { principalSql, testRef } from "../test/principals.ts";

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "@/lib/query-client";
 import { json, mockApi } from "@/test/mock-api";
-import { usePlainTags } from "./plain-tags";
+import { usePlainMentions } from "./plain-mentions";
 
 const person = (ref: string, handle: string): PrincipalItem => ({
   id: `id-${ref}`,
@@ -42,7 +42,7 @@ function setup(text: string) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  return renderHook(() => usePlainTags(text), { wrapper });
+  return renderHook(() => usePlainMentions(text), { wrapper });
 }
 
 test("an unfetched ref reads @… then its handle once the batch answers, never @unknown", async () => {

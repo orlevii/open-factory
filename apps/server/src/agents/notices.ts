@@ -45,7 +45,7 @@ const cronsSentence = (crons: string[]) =>
 const hhmm = (d: Date) =>
   `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
-/** The `by` of a notice is the requester's tag (`<@ref>`) or `@factory` / `@scheduler`, written as the caller holds it. */
+/** The `by` of a notice is the requester's mention (`<@ref>`) or `@factory` / `@scheduler`, written as the caller holds it. */
 export const notices = {
   crash(i: {
     exit: { code: number | null; signal: string | null };
@@ -111,7 +111,7 @@ export const notices = {
         : []),
     ].join(" ");
   },
-  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). `by` is a tag. */
+  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). `by` is a mention. */
   cronsStopped(i: { by: string; crons: string[] }): string {
     return `${i.by} stopped your crons: ${i.crons.join("; ")}. A human stopped them on purpose, so don't recreate them unless you are asked to.`;
   },
@@ -125,7 +125,7 @@ export const notices = {
   configChanged: renderConfigNotice,
   /**
    * I7 §8.2: passive, to an agent's manager; one pending row per (manager, report) accumulates the lines, and the
-   * header names the latest actor. `by` and `report` are tags (`<@ref>`). The `config_changed` shape, so
+   * header names the latest actor. `by` and `report` are mentions (`<@ref>`). The `config_changed` shape, so
    * `parseConfigNotice` reads it back.
    */
   reportConfigChanged(i: { by: string; report: string; lines: readonly string[] }): string {

@@ -17,11 +17,11 @@ import {
   agentRecords,
   createPrincipal,
   HandleTakenError,
+  mentionOfPrincipal,
   principalById,
   principalsByHandles,
-  tagOfPrincipal,
 } from "../principals/principal-store.ts";
-import { resolveText, UnknownTagsError } from "../principals/principal-text.ts";
+import { resolveText, UnknownMentionsError } from "../principals/principal-text.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { Workspace } from "../workspace/workspace.ts";
@@ -92,7 +92,7 @@ export class SpawnService {
     if (!rawDesc || rawDesc.length > 500) return fail("Give a description of 1 to 500 characters.");
     const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
     if (!body.success) return fail(body.error.issues[0]?.message ?? "The prompt is invalid.");
-    // Spec §4.3: tags in the description and the brief are stored as `<@ref>`; an unknown ref refuses the spawn.
+    // Spec §4.3: mentions in the description and the brief are stored as `<@ref>`; an unknown ref refuses the spawn.
     let desc: string;
     let prompt: string;
     const warnings: string[] = [];
@@ -105,7 +105,7 @@ export class SpawnService {
       prompt = p.text;
       warnings.push(...new Set([...d.warnings, ...p.warnings]));
     } catch (e) {
-      if (e instanceof UnknownTagsError) return fail(e.message);
+      if (e instanceof UnknownMentionsError) return fail(e.message);
       throw e;
     }
     let tpl: Template;
@@ -328,7 +328,7 @@ export class SpawnService {
         await store.append(
           id,
           null,
-          { type: "spawned", by: await tagOfPrincipal(tx, spawner.id), template },
+          { type: "spawned", by: await mentionOfPrincipal(tx, spawner.id), template },
           tx,
         );
         const peers = await router.persistPeerEvents(
@@ -362,7 +362,7 @@ export class SpawnService {
     return {
       ok: true,
       handle,
-      tag: await store.agentTag(out.child.id),
+      mention: await store.agentMention(out.child.id),
       agentId: out.child.id,
       status,
       ...(note ? { note } : {}),

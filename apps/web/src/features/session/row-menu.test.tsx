@@ -90,7 +90,7 @@ const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
 });
 
 test("Open in chat: on your own messages with this agent, and on a send to you", () => {
-  // Stored envelopes and send results write principals as tags; your ref is what says "you".
+  // Stored envelopes and send results write principals as mentions; your ref is what says "you".
   const OR = "<@k7x2m9qd|or>";
   const SAM = "<@p3dh8vcn|sam>";
   const chat = (row: Row, selfRef?: string) =>
@@ -110,7 +110,7 @@ test("Open in chat: on your own messages with this agent, and on a send to you",
   expect(chat(outgoing("@sam", { results: [reached(SAM, "human")] }), "k7x2m9qd")).toEqual([]);
 });
 
-test("the drawer title names a tagged sender and a tagged report by their handle", () => {
+test("the drawer title names a mentioned sender and a mentioned report by their handle", () => {
   expect(rowMenuTitle(messageFrom("<@k7x2m9qd|or>", "human"), "dev")).toMatch(
     /^Message from @or · /,
   );

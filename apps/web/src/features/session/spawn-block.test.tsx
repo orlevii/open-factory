@@ -25,7 +25,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The spawned agent's ref: the events name it by its tag, `<@ref>`, and the principals cache resolves that tag. */
+/** The spawned agent's ref: the events name it by its mention, `<@ref>`, and the principals cache resolves that mention. */
 const TECH_LEAD_REF = refFor("tech-lead-ab12");
 /** Opens /agents/lead with these events; `@tech-lead-ab12` is a live spawned agent. */
 async function open(events: AnyEvent[], firstText: string | RegExp) {
@@ -90,7 +90,7 @@ const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEve
 const ok = (o: Record<string, unknown> = {}) =>
   JSON.stringify({
     handle: "tech-lead-ab12",
-    tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+    mention: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
     agent_id: "0f9e-secret-id",
     status: "idle",
     ...o,
@@ -269,7 +269,7 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
       result(
         JSON.stringify({
           handle: "tech-lead-ab12",
-          tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+          mention: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
           status: "terminated",
         }),
         false,

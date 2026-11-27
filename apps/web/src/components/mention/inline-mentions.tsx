@@ -1,13 +1,19 @@
-import { scanTags } from "@open-factory/shared/tags";
+import { scanMentions } from "@open-factory/shared/mentions";
 import { Fragment, useMemo } from "react";
-import { Tag } from "./tag";
+import { Mention } from "./mention";
 
 /** Text with each `<@ref>` as a chip, for a heading that isn't markdown. */
-export function InlineTags({ text, interactive = true }: { text: string; interactive?: boolean }) {
+export function InlineMentions({
+  text,
+  interactive = true,
+}: {
+  text: string;
+  interactive?: boolean;
+}) {
   const parts = useMemo(() => {
     const out: { key: number; text?: string; ref?: string }[] = [];
     let at = 0;
-    for (const t of scanTags(text).tokens) {
+    for (const t of scanMentions(text).tokens) {
       if (t.start > at) out.push({ key: at, text: text.slice(at, t.start) });
       out.push({ key: t.start, ref: t.ref });
       at = t.end;
@@ -17,7 +23,7 @@ export function InlineTags({ text, interactive = true }: { text: string; interac
   }, [text]);
   return parts.map((p) =>
     p.ref ? (
-      <Tag key={p.key} tagRef={p.ref} interactive={interactive} />
+      <Mention key={p.key} mentionRef={p.ref} interactive={interactive} />
     ) : (
       <Fragment key={p.key}>{p.text}</Fragment>
     ),

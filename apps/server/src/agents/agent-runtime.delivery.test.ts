@@ -79,7 +79,7 @@ async function makeRuntime(
   await rt.init();
   return rt;
 }
-const OR_TAG = `<@${testRef("u1")}|or>`;
+const OR_MENTION = `<@${testRef("u1")}|or>`;
 const send = (body: string, urgent = false) =>
   sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
@@ -437,8 +437,8 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await send("new"); // starts the process
   expect(driver.last.sent[0]).toMatchObject([
     { from: "@factory", kind: "system", body: "it crashed" },
-    { from: OR_TAG, kind: "message", body: "old" },
-    { from: OR_TAG, kind: "message", body: "new" },
+    { from: OR_MENTION, kind: "message", body: "old" },
+    { from: OR_MENTION, kind: "message", body: "new" },
   ]);
 });
 
@@ -451,8 +451,8 @@ test("a notice is written ahead of older pending messages in one batch", async (
   await rt.postNotice("factory_restarted", "restarted");
   expect(driver.last.sent.at(-1)).toMatchObject([
     { from: "@factory", kind: "system", body: "restarted" },
-    { from: OR_TAG, kind: "message", body: "a" },
-    { from: OR_TAG, kind: "message", body: "b" },
+    { from: OR_MENTION, kind: "message", body: "a" },
+    { from: OR_MENTION, kind: "message", body: "b" },
   ]);
   const hist = (await events()).find(
     (e) => e.event.type === "message_in" && e.event.messages[0]?.kind === "system",
@@ -529,7 +529,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   expect(text).toBe(renderEnvelopes(sent.map(({ clientMessageId: _c, ...m }) => m)));
 });
 
-test("after a rename, a new delivery shows the new handle in from and in a body tag", async () => {
+test("after a rename, a new delivery shows the new handle in from and in a body mention", async () => {
   await t.sql.unsafe(principalSql("rn-human", "human", "rn-old"));
   await t.sql`insert into users (id, name, email) values ('rn-human', 'Rn', 'rn@x.io')`;
   await insertAgent(t.sql, { id: "rn-peer", handle: "rn-peer-old" });

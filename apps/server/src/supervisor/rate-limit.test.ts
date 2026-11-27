@@ -19,7 +19,7 @@ import { createTestDb } from "../test/helpers.ts";
 import { principalSql } from "../test/principals.ts";
 import { Supervisor } from "./supervisor.ts";
 
-/** An envelope sender is a tag; this test reads its handle. */
+/** An envelope sender is a mention; this test reads its handle. */
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 
 let t: Awaited<ReturnType<typeof createTestDb>>;

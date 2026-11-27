@@ -19,7 +19,7 @@ export function uuidFor(handle: string): string {
   return `00000000-0000-4000-8000-00${n.toString(16).padStart(10, "0")}`;
 }
 
-/** A fixture agent as the server tags it: `<@ref|handle>`. */
-export function tagFor(handle: string): string {
+/** A fixture agent as the server mentions it: `<@ref|handle>`. */
+export function mentionFor(handle: string): string {
   return `<@${refFor(handle)}|${handle}>`;
 }

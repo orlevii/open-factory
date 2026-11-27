@@ -28,7 +28,7 @@ export interface FactoryMessage {
   from: string;
   fromKind: "human" | "agent" | "factory";
   kind: MessageKind;
-  /** The recipients of a `kind: "message"`, as tags; rendered as the envelope's `to`. */
+  /** The recipients of a `kind: "message"`, as mentions; rendered as the envelope's `to`. */
   to?: string[];
   urgent: boolean;
   /** Already escaped by groupEnvelopes (single/merge); renderEnvelopes writes it as given. */

@@ -32,7 +32,7 @@ export const KIND_LABEL: Record<CredentialKind, string> = {
 };
 
 /** "@a", "@a and @b", "@a, @b and @c". */
-export const tags = (handles: string[]) => {
+export const mentions = (handles: string[]) => {
   const t = handles.map((s) => `@${s}`);
   return t.length <= 1 ? (t[0] ?? "") : `${t.slice(0, -1).join(", ")} and ${t.at(-1)}`;
 };

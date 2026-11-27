@@ -156,14 +156,14 @@ test("after principal_updated, a chat speaker line shows the new handle", async 
   expect(within(line()).queryByText("@dev")).toBeNull();
 });
 
-test("a principal_updated frame relabels a tag chip in a message body with no principals fetch", async () => {
+test("a principal_updated frame relabels a mention chip in a message body with no principals fetch", async () => {
   stubChatApi({
     principals: [principal(QA_REF, "qa")],
     chat: () => page([chatMsg(1, { body: `ask <@${QA_REF}> about it` })]),
   });
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText(/about it/);
-  const chip = () => document.querySelector<HTMLElement>(`[data-of-tag="${QA_REF}"]`);
+  const chip = () => document.querySelector<HTMLElement>(`[data-of-mention="${QA_REF}"]`);
   await waitFor(() => expect(chip()).toHaveTextContent("@qa"));
   const principalFetches = () =>
     vi.mocked(fetch).mock.calls.filter((c) => String(c[0]).startsWith("/api/principals")).length;

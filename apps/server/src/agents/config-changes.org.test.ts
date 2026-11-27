@@ -84,7 +84,7 @@ function world(live: AgentRecord[] = []) {
   return { changes, reportNotices, own, events, restarts };
 }
 
-/** The `hr` agent's tag, as the factory writes it (its principal's ref). */
+/** The `hr` agent's mention, as the factory writes it (its principal's ref). */
 const HR = `<@${testRef("hr-id")}>`;
 const before = doc({ model: "sonnet" });
 const after = doc({ model: "haiku" });

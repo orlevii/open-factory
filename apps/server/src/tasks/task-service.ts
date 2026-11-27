@@ -9,7 +9,7 @@ import {
   taskCommentBodySchema,
   taskKey,
 } from "@open-factory/shared";
-import { agentTagOf, tagOf, unknownRefError } from "@open-factory/shared/tags";
+import { agentMentionOf, mentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -32,7 +32,7 @@ export type TaskView = {
   key: string;
   title: string;
   status: TaskStatus;
-  /** The assignee's principal; an MCP result writes it as its tag. */
+  /** The assignee's principal; an MCP result writes it as its mention. */
   assignee?: { ref: string; handle: string };
   assigneeEnded?: "archived" | "terminated";
   blockedBy: string[];
@@ -41,13 +41,13 @@ export type ChangeResult = {
   task: TaskView;
   changed: string[];
   note?: string;
-  /** Plain-tag warnings for a name written without a tag; absent when there are none. */
+  /** Plain-mention warnings for a name written without a mention; absent when there are none. */
   warnings?: string[];
 };
 
 export type CommentResult = {
   id: string;
-  /** The stored text: every tag as `<@ref>`. */
+  /** The stored text: every mention as `<@ref>`. */
   body: string;
   createdAt: Date;
   deliveredTo: { ref: string; handle: string }[];
@@ -56,7 +56,7 @@ export type CommentResult = {
   /** Agent recipients the loop guard parked (I8 §6.3): the comment is posted, their copy waits for a human's Resume. */
   held: { to: string; note: string }[];
   note?: string;
-  /** Plain-tag warnings for a name written without a tag; absent when there are none. */
+  /** Plain-mention warnings for a name written without a mention; absent when there are none. */
   warnings?: string[];
 };
 
@@ -249,7 +249,7 @@ export class TaskService {
     const [task] = await T.lockTasks(tx, [pre.id]);
     if (!task) throw new TaskError("task_not_found", `No task ${key}.`, 404);
 
-    // The tags are the mentions: the stored text and the refs they name (an unknown ref refuses the comment).
+    // The mentions: the stored text and the refs they name (an unknown ref refuses the comment).
     const { text, refs } = await resolveField(tx, raw, actor.kind, "body", warnings);
     const notReached: CommentResult["notReached"] = [];
     const candidates: { id: string; handle: string }[] = [];
@@ -257,8 +257,8 @@ export class TaskService {
     const handles = new Map<string, { ref: string; handle: string }>();
     const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.id === id;
     const isAuthorUser = (id: string) => actor.kind === "human" && actor.id === id;
-    const tagged = await principalsByRefs(tx, refs);
-    const reached = refs.slice(0, MAX_MENTIONS).flatMap((r) => tagged.get(r) ?? []);
+    const mentioned = await principalsByRefs(tx, refs);
+    const reached = refs.slice(0, MAX_MENTIONS).flatMap((r) => mentioned.get(r) ?? []);
     const agentRows = reached.length
       ? await tx
           .select()
@@ -282,7 +282,7 @@ export class TaskService {
         candidates.push({ id: agent.id, handle: p.handle });
     }
     for (const r of refs.slice(MAX_MENTIONS))
-      notReached.push({ name: tagged.get(r)?.handle ?? r, reason: "too_many" });
+      notReached.push({ name: mentioned.get(r)?.handle ?? r, reason: "too_many" });
 
     // Step 5: agents FOR SHARE in one statement.
     const involved = new Set<string>(candidates.map((c) => c.id));
@@ -360,7 +360,7 @@ export class TaskService {
       .flatMap((u) => handles.get(u) ?? []);
     const held: CommentResult["held"] = [];
     for (const g of written.loopHeld) {
-      const to = await this.tagOf(tx, g.toAgentId);
+      const to = await this.mentionOf(tx, g.toAgentId);
       held.push({
         to,
         note: g.verdict.opened
@@ -412,13 +412,13 @@ export class TaskService {
     warnings: string[],
   ): Promise<Outcome> {
     const T = this.d.tasks;
-    // Spec §4.3: the tags in the title and the body are stored as `<@ref>`; an unknown ref refuses the write.
-    const tagged: Input = { ...input };
+    // Spec §4.3: the mentions in the title and the body are stored as `<@ref>`; an unknown ref refuses the write.
+    const mentioned: Input = { ...input };
     if (input.title !== undefined)
-      tagged.title = (await resolveField(tx, input.title, actor.kind, "title", warnings)).text;
+      mentioned.title = (await resolveField(tx, input.title, actor.kind, "title", warnings)).text;
     if (input.body !== undefined)
-      tagged.body = (await resolveField(tx, input.body, actor.kind, "body", warnings)).text;
-    input = tagged;
+      mentioned.body = (await resolveField(tx, input.body, actor.kind, "body", warnings)).text;
+    input = mentioned;
     // 1. Unlocked read of the acted-on task; which rows to lock comes from the input.
     let pre: TaskRow | undefined;
     if (key !== null) {
@@ -799,10 +799,10 @@ export class TaskService {
       ].filter((x): x is string => !!x),
     );
     const people = await principalsByIds(tx, [...ids]);
-    // A principal named in a stored body is its tag, so the text shows the current handle wherever it is read.
+    // A principal named in a stored body is its mention, so the text shows the current handle wherever it is read.
     const label = (id: string) => {
       const p = people.get(id);
-      return p ? tagOf(p.ref) : id;
+      return p ? mentionOf(p.ref) : id;
     };
     const creatorPerson = people.get(i.row.createdById);
     const creator: Who = {
@@ -811,7 +811,7 @@ export class TaskService {
     };
     return plan({
       actor: i.actor,
-      actorLabel: tagOf(i.actor.ref),
+      actorLabel: mentionOf(i.actor.ref),
       live: i.live,
       task: {
         id: i.row.id,
@@ -908,10 +908,10 @@ export class TaskService {
   }
 
   /** `<@ref|handle>` of a principal, read from `principals`, as an agent reads it. */
-  private async tagOf(tx: Exec, id: string): Promise<string> {
+  private async mentionOf(tx: Exec, id: string): Promise<string> {
     const p = (await principalsByIds(tx, [id])).get(id);
     if (!p) throw new Error(`No principal ${id}`);
-    return agentTagOf(p);
+    return agentMentionOf(p);
   }
 
   /** `@handle` of a principal, read from `principals` . */

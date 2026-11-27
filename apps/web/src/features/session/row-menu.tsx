@@ -102,7 +102,7 @@ export function rowMenuItems(row: Row, agentRef: string, selfRef?: string): RowM
         if (selfRef && refOfWho(only.to) === selfRef)
           items.push({ kind: "chat", label: "Open in chat", agentRef, messageId: only.id });
       } else {
-        // The recipient's tag names its ref, which the session route is keyed by.
+        // The recipient's mention names its ref, which the session route is keyed by.
         const to = refOfWho(only.to);
         const bare = whoHandle(only.to);
         if (to)

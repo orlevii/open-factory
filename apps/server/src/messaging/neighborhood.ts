@@ -7,7 +7,7 @@ import {
   type Principal,
   principalsByIds,
 } from "../principals/principal-store.ts";
-import { tagLookupFor } from "../principals/principal-text.ts";
+import { mentionLookupFor } from "../principals/principal-text.ts";
 
 /** An agent that is neither archived nor terminated. */
 export const liveAgent = and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt));
@@ -59,8 +59,8 @@ export class Neighborhood {
   }
 
   /** For rendering stored text as an agent reads it: one query for every ref in `texts`. */
-  tagLookup(texts: readonly string[]) {
-    return tagLookupFor(this.db, texts);
+  mentionLookup(texts: readonly string[]) {
+    return mentionLookupFor(this.db, texts);
   }
 
   async humans(): Promise<{ ref: string; handle: string; name: string }[]> {

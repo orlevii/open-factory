@@ -17,7 +17,7 @@ export interface PrincipalsCache {
 export const handleText = (cache: PrincipalsCache, ref: string): string =>
   cache.byRef.get(ref)?.handle ?? (cache.unknown.has(ref) ? "unknown" : "…");
 
-/** Everyone, fetched once; tags that name someone newer join through `requestPrincipal`'s batches. */
+/** Everyone, fetched once; mentions that name someone newer join through `requestPrincipal`'s batches. */
 export const principalsQueryOptions = queryOptions({
   queryKey: ["principals"],
   queryFn: async ({ client }): Promise<PrincipalsCache> => {

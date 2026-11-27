@@ -40,8 +40,8 @@ export const refusedBecause = (r: {
   reason?: string | undefined;
 }) => (r.code && WHY[r.code]) ?? (r.reason?.replace(/\.$/, "") || "refused");
 
-/** A result names its recipient as a tag, `<@ref|handle>` (the label as of the send). */
+/** A result names its recipient as a mention, `<@ref|handle>` (the label as of the send). */
 export const handleOfResult = (to: string) => whoHandle(to).toLowerCase();
 
-/** Whether a result is for the chat's agent: its tag names the agent's ref. */
+/** Whether a result is for the chat's agent: its mention names the agent's ref. */
 export const isResultFor = (to: string, agentRef: string) => refOfWho(to) === agentRef;

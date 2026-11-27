@@ -12,9 +12,9 @@ import { checkAgentFrontmatter, checkProjectSettings, scrubAgentFolders } from "
 import {
   buildClaudeMd,
   type ManagerRef,
+  type Mentioned,
   type OrgEntry,
   type OrgHuman,
-  type Tagged,
 } from "./claude-md.ts";
 import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
 import { linkProjects, linkSkills, resolveSkills, resolveTemplateSkills } from "./links.ts";
@@ -36,8 +36,8 @@ export interface PrepareInput {
   ref: string;
   /** The agent's handle at this start (the system prompt and the git identity name it). */
   handle: string;
-  /** The agent as CLAUDE.md names it: a tag with its current handle. */
-  self: Tagged;
+  /** The agent as CLAUDE.md names it: a mention with its current handle. */
+  self: Mentioned;
   displayName: string;
   description: string;
   template: string;
@@ -52,7 +52,7 @@ export interface PrepareInput {
   mcpUrl: string;
   kind: "persistent" | "ephemeral";
   /** A spawned agent's spawner; null for a persistent agent. */
-  spawner: Tagged | null;
+  spawner: Mentioned | null;
   /** Set for an agent that holds the spawn tools (S7 §11.3). */
   spawning: boolean;
   /** Set for a persistent agent (S9 §10.5); absent means none. */
@@ -64,7 +64,7 @@ export interface PrepareInput {
   /** The agent holds manage_org (I7 §10). */
   manageOrg: boolean;
   /** The agent that last wrote this agent's own description, or null (I7 §10). */
-  descriptionWrittenBy: Tagged | null;
+  descriptionWrittenBy: Mentioned | null;
   /** The member-update debounce in seconds at this start (I9 §4.8). */
   memberUpdateSeconds: number;
 }

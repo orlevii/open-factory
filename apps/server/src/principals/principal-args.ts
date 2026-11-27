@@ -1,6 +1,6 @@
 import { schema } from "@open-factory/db";
 import { normaliseRef, RESERVED_HANDLES } from "@open-factory/shared";
-import { plainTagWarning } from "@open-factory/shared/tags";
+import { plainMentionWarning } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import {
   type AgentRecord,
@@ -23,20 +23,20 @@ export type ArgResolution =
   | { kind: "none"; name: string };
 
 const RESERVED: readonly string[] = RESERVED_HANDLES;
-/** A full tag: its name may be a ref in any case, or a handle written in a ref's place; the label is ignored. */
-const TAG = /^<@([0-9A-Za-z][0-9A-Za-z-]*)(?:\|[^<>\n]*)?>$/;
+/** A full mention: its name may be a ref in any case, or a handle written in a ref's place; the label is ignored. */
+const MENTION = /^<@([0-9A-Za-z][0-9A-Za-z-]*)(?:\|[^<>\n]*)?>$/;
 
 type Parsed =
   | { kind: "channel"; name: string }
-  | { kind: "tag"; name: string; ref: string | undefined; written: string }
+  | { kind: "mention"; name: string; ref: string | undefined; written: string }
   | { kind: "plain"; raw: string; ref: string | undefined; name: string };
 
 function parse(raw: string): Parsed {
   if (raw.startsWith("#")) return { kind: "channel", name: raw };
-  const tag = TAG.exec(raw);
-  if (tag) {
-    const x = tag[1] as string;
-    return { kind: "tag", name: x.toLowerCase(), ref: normaliseRef(x), written: raw };
+  const mention = MENTION.exec(raw);
+  if (mention) {
+    const x = mention[1] as string;
+    return { kind: "mention", name: x.toLowerCase(), ref: normaliseRef(x), written: raw };
   }
   return {
     kind: "plain",
@@ -48,7 +48,7 @@ function parse(raw: string): Parsed {
 
 /**
  * Resolves principal arguments with one lookup by ref and one by handle. Accepts `<@ref|…>`, `<@ref>`, a bare ref,
- * `@handle` or `handle`. A plain handle resolves with a warning; only a full tag whose ref is unknown is `unknown_ref`.
+ * `@handle` or `handle`. A plain handle resolves with a warning; only a full mention whose ref is unknown is `unknown_ref`.
  * Archived and ended agents resolve (callers refuse them).
  */
 export async function resolveArgs(tx: Tx, raws: readonly string[]): Promise<ArgResolution[]> {
@@ -58,7 +58,7 @@ export async function resolveArgs(tx: Tx, raws: readonly string[]): Promise<ArgR
   for (const p of parsed) {
     if (p.kind === "channel") continue;
     if (p.ref) refs.add(p.ref);
-    if (p.kind === "tag") handles.add(p.name);
+    if (p.kind === "mention") handles.add(p.name);
     else if (!RESERVED.includes(p.name)) handles.add(p.name);
   }
   const [byRef, byHandle] = await Promise.all([
@@ -66,11 +66,11 @@ export async function resolveArgs(tx: Tx, raws: readonly string[]): Promise<ArgR
     principalsByHandles(tx, [...handles]),
   ]);
   const warn = (written: string, p: Principal) =>
-    plainTagWarning({ written, ref: p.ref, handle: p.handle });
+    plainMentionWarning({ written, ref: p.ref, handle: p.handle });
   return parsed.map((p): ArgResolution => {
     if (p.kind === "channel") return { kind: "channel", name: p.name };
     const known = p.ref ? byRef.get(p.ref) : undefined;
-    if (p.kind === "tag") {
+    if (p.kind === "mention") {
       if (known) return { kind: "principal", p: known };
       const asHandle = byHandle.get(p.name);
       if (asHandle) return { kind: "principal", p: asHandle, warning: warn(p.written, asHandle) };

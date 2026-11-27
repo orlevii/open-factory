@@ -317,7 +317,7 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   expect(three).not.toHaveTextContent("more");
 });
 
-test("a task title with a tag shows the tag's current handle in the row and its name, as plain text", async () => {
+test("a task title with a mention shows the mention's current handle in the row and its name, as plain text", async () => {
   mockApi({
     "GET /api/agents?": agents,
     "GET /api/principals": () =>

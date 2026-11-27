@@ -126,7 +126,7 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
   const regs = orgTools({
     loadAgent: async () => revoked,
     principalRef: async () => undefined,
-    facing: async () => ({ tag: (h) => `@${h}`, render: (x) => x }),
+    facing: async () => ({ mention: (h) => `@${h}`, render: (x) => x }),
     agents: t.app.agents,
     config: t.app.configs,
     templates: t.app.templates,
@@ -174,9 +174,11 @@ test.each([
   expect(r.json).toMatchObject({
     handle,
     status: "created",
-    tag: expect.stringMatching(new RegExp(`^<@[0-9a-z]{8}\\|${handle}>$`)),
+    mention: expect.stringMatching(new RegExp(`^<@[0-9a-z]{8}\\|${handle}>$`)),
   });
-  expect(r.json.note).toBe(`${r.json.tag} is created and starts when it gets its first message.`);
+  expect(r.json.note).toBe(
+    `${r.json.mention} is created and starts when it gets its first message.`,
+  );
   const created = await row(handle);
   expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : "u-or");
   expect(created.manageOrg).toBe(false);
@@ -563,28 +565,28 @@ test("create_agent refuses an unknown ref as the manager with the fix-it sentenc
   );
   expect(r.err).toBe(true);
   expect(r.text).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
   expect(
     await t.sql`select 1 from agents where id = (select id from principals where handle = 'ghosted')`,
   ).toHaveLength(0);
 });
 
-test("create_agent and get_agent warn on a plain handle and stay quiet for a tag", async () => {
+test("create_agent and get_agent warn on a plain handle and stay quiet for a mention", async () => {
   const [boss] = await t.sql`select ref from principals where handle = 'hr-bot'`;
-  const warning = `Plain tag detected: @hr-bot was resolved to <@${boss?.ref}|hr-bot>. Tag as <@ref|handle>.`;
+  const warning = `Plain mention detected: @hr-bot was resolved to <@${boss?.ref}|hr-bot>. Mention as <@ref|handle>.`;
   const plain = await call(
     "hr-bot",
     "create_agent",
     createArgs("warned", { reports_to: "hr-bot" }),
   );
   expect(plain.json.warnings).toEqual([warning]);
-  const tagged = await call(
+  const mentioned = await call(
     "hr-bot",
     "create_agent",
     createArgs("not-warned", { reports_to: `<@${boss?.ref}>` }),
   );
-  expect(tagged.json).not.toHaveProperty("warnings");
+  expect(mentioned.json).not.toHaveProperty("warnings");
   expect((await call("hr-bot", "get_agent", { target: "hr-bot" })).json.warnings).toEqual([
     warning,
   ]);

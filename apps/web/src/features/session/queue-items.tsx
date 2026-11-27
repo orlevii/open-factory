@@ -25,11 +25,11 @@ const messageReason = (q: QueueItem, fallback: string | undefined) =>
 
 /** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
  *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
-const cancellable = (q: QueueItem, selfTag: string | undefined) =>
+const cancellable = (q: QueueItem, selfMention: string | undefined) =>
   (q.kind === "message" || q.kind === "raw") &&
-  // A held item names its sender by tag.
-  selfTag !== undefined &&
-  q.from === selfTag &&
+  // A held item names its sender by mention.
+  selfMention !== undefined &&
+  q.from === selfMention &&
   q.taskKey === undefined &&
   q.scheduleKey === undefined;
 
@@ -45,7 +45,7 @@ export const QueueItems = memo(function QueueItems({
   items,
   agent,
   cancelled = NO_CANCELLED,
-  selfTag,
+  selfMention,
   onCancel,
   onUndo,
   sending = NO_SENDING,
@@ -55,8 +55,8 @@ export const QueueItems = memo(function QueueItems({
   sending?: readonly SendingBlock[];
   agent: AgentSummary;
   cancelled?: ReadonlyMap<string, CancelledEntry>;
-  /** The signed-in human's tag: held items name their sender that way, and your own offer Cancel. */
-  selfTag?: string;
+  /** The signed-in human's mention: held items name their sender that way, and your own offer Cancel. */
+  selfMention?: string;
   onCancel?: (item: QueueItem) => void;
   onUndo?: (id: string, entry: CancelledEntry) => void;
 }) {
@@ -131,7 +131,7 @@ export const QueueItems = memo(function QueueItems({
                   ) : undefined
                 }
                 action={
-                  onCancel && cancellable(q, selfTag) ? (
+                  onCancel && cancellable(q, selfMention) ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -169,7 +169,7 @@ export const QueueItems = memo(function QueueItems({
           // The queued item's shape (block, then the slot for its cancel error): nothing remounts.
           <>
             <MessageBlock
-              from={selfTag ?? "@you"}
+              from={selfMention ?? "@you"}
               fromKind="human"
               body={b.body}
               urgent={b.urgent}

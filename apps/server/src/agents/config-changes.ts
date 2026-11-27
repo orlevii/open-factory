@@ -2,7 +2,7 @@ import { type Db, schema } from "@open-factory/db";
 import {
   type Actor,
   type AgentOverlay,
-  actorTag,
+  actorMention,
   agentOverlaySchema,
   type ConfigDoc,
   type ConfigSnapshot,
@@ -47,7 +47,7 @@ function inheritedChanged(a: ConfigDoc, b: ConfigDoc): boolean {
  */
 const templateBy = (e: TemplateChange) =>
   e.actor?.kind === "agent"
-    ? `${actorTag(e.actor)} in template ${e.name}`
+    ? `${actorMention(e.actor)} in template ${e.name}`
     : e.by === FILE_CHANGE
       ? `a file change in template ${e.name}`
       : `template ${e.name}`;
@@ -207,7 +207,7 @@ export class ConfigChanges {
   ): Promise<{ changes: string[]; restartChecked: boolean }> {
     const { changes, restartChecked } = await this.apply(
       agent,
-      actorTag(actor),
+      actorMention(actor),
       await this.snapshot(before),
       await this.snapshot(after),
       actor,
@@ -311,7 +311,9 @@ export class ConfigChanges {
       agent.reportsTo &&
       agent.reportsTo !== actor.id
     )
-      work.push(runtimes.recordReportNotice(agent.reportsTo, agent.id, actorTag(actor), changes));
+      work.push(
+        runtimes.recordReportNotice(agent.reportsTo, agent.id, actorMention(actor), changes),
+      );
     if (agent.runtime === "docker") {
       const config = configOf(after.doc, agent.runtime);
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);

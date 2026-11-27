@@ -37,10 +37,10 @@ import {
   type UploadSummary,
 } from "./attachments";
 import { CaretMenu } from "./caret-menu";
+import { MentionHighlighter } from "./mention-highlighter";
 import { Recipients } from "./recipients";
 import { StopButton, type StopHandle } from "./stop-button";
-import { TagHighlighter } from "./tag-highlighter";
-import { useTagMenu } from "./use-tag-menu";
+import { useMentionMenu } from "./use-mention-menu";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
@@ -125,13 +125,13 @@ export type CompletionSource = {
     from: number,
     caret: number,
   ): { text: string; caret: number };
-  /** An `@` source that tags: picking a row records a tag range for this principal instead of calling
-   *  `accept`. Its presence turns the box into a tag field (atomic ranges, sent as `<@ref>`). */
-  acceptTag?(item: CompletionItem): { ref: string; handle: string };
-  /** For a tag field: a principal's handle by ref (undefined while pending), to hydrate stored tags. */
-  tagHandle?(ref: string): string | undefined;
-  /** For a tag field: calls back when `tagHandle` may answer differently. Returns the unsubscribe. */
-  watchTags?(onChange: () => void): () => void;
+  /** An `@` source that mentions: picking a row records a mention range for this principal instead of calling
+   *  `accept`. Its presence turns the box into a mention field (atomic ranges, sent as `<@ref>`). */
+  acceptMention?(item: CompletionItem): { ref: string; handle: string };
+  /** For a mention field: a principal's handle by ref (undefined while pending), to hydrate stored mentions. */
+  mentionHandle?(ref: string): string | undefined;
+  /** For a mention field: calls back when `mentionHandle` may answer differently. Returns the unsubscribe. */
+  watchMentions?(onChange: () => void): () => void;
   /** A line in the open menu, given how many rows it has: with none, the menu still opens for it (an
    *  empty state); undefined closes a menu with no rows. */
   menuNote?(rows: number): string | undefined;
@@ -396,11 +396,11 @@ export const Composer = memo(function Composer({
     [slash, at],
   );
   // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
-  /** `at: "end"` is the end of what the box shows: a stored text's length isn't the shown text's (tags are hydrated). */
+  /** `at: "end"` is the end of what the box shows: a stored text's length isn't the shown text's (mentions are hydrated). */
   const pendingCaret = useRef<{ at: number | "end"; look: boolean } | undefined>(undefined);
-  // The caret menus and the tag field, one hook (use-tag-menu.tsx): a tagging `@` source makes the box a tag field.
+  // The caret menus and the mention field, one hook (use-mention-menu.tsx): a mentioning `@` source makes the box a mention field.
   const {
-    tag,
+    mention,
     menu,
     menuOpen,
     items,
@@ -416,11 +416,11 @@ export const Composer = memo(function Composer({
     paste,
     keyDown,
     attach: setBox,
-  } = useTagMenu({
+  } = useMentionMenu({
     value: text,
     setValue: setText,
     sources,
-    tagSource: at?.acceptTag ? at : undefined,
+    mentionSource: at?.acceptMention ? at : undefined,
     box: boxRef,
     acceptPlain: (source, item, el, from, caret) => {
       const r = source.accept(item, el.value, from, caret);
@@ -428,7 +428,7 @@ export const Composer = memo(function Composer({
       pendingCaret.current = { at: r.caret, look: false };
     },
   });
-  const shown = tag.tagged.text;
+  const shown = mention.mentioned.text;
 
   /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
   const insertTrigger = (trigger: string) => {
@@ -438,7 +438,7 @@ export const Composer = memo(function Composer({
     const caret = box?.selectionStart ?? cur.length;
     const before = cur.slice(0, caret);
     const insert = before === "" || /\s$/.test(before) ? trigger : ` ${trigger}`;
-    tag.edit(before + insert + cur.slice(caret), caret + insert.length);
+    mention.edit(before + insert + cur.slice(caret), caret + insert.length);
     pendingCaret.current = { at: caret + insert.length, look: true };
     if (box) box.focus();
   };
@@ -668,7 +668,7 @@ export const Composer = memo(function Composer({
     const fileOnly =
       e.clipboardData.files.length > 0 && e.clipboardData.getData("text/plain") === "";
     if (!fileOnly) {
-      // Tags in the paste go in as tags, with no change event; anything else is the browser's paste.
+      // Mentions in the paste go in as mentions, with no change event; anything else is the browser's paste.
       paste(e);
       return;
     }
@@ -802,12 +802,12 @@ export const Composer = memo(function Composer({
           {attachments && <AttachmentChips store={attachments} />}
           {view === "write" ? (
             <div className="relative isolate flex min-w-0 items-start">
-              {tag.highlighter ? <TagHighlighter {...tag.highlighter} /> : null}
+              {mention.highlighter ? <MentionHighlighter {...mention.highlighter} /> : null}
               <Textarea
                 ref={setBox}
                 id={boxId}
                 value={shown}
-                {...tag.bind}
+                {...mention.bind}
                 onChange={(e) => {
                   change(e);
                   setError(undefined);
@@ -819,7 +819,7 @@ export const Composer = memo(function Composer({
                   setSentRefusal(undefined);
                 }}
                 onSelect={
-                  sources.length || tag.enabled
+                  sources.length || mention.enabled
                     ? (e) => {
                         select(e.currentTarget);
                       }

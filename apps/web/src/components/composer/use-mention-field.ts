@@ -11,31 +11,31 @@ import {
   useState,
 } from "react";
 import {
-  deleteTagAt,
+  deleteMentionAt,
   fromClipboard,
   hydrate,
-  insertTag,
-  insertTagged,
+  insertMention,
+  insertMentioned,
+  type Mentioned,
+  type MentionRange,
   rebase,
   serialise,
   snapCaret,
   snapSelection,
-  type Tagged,
-  type TagRange,
   toClipboard,
-} from "./tag-ranges";
-import { type Snapshot, UndoStack } from "./tag-undo";
+} from "./mention-ranges";
+import { type Snapshot, UndoStack } from "./mention-undo";
 
-/** What a tag shows while its principal is still unknown to the cache. */
+/** What a mention shows while its principal is still unknown to the cache. */
 const PENDING = "…";
 const PENDING_LABEL = `@${PENDING}`;
 const HANDLE_TAIL = /^[A-Za-z0-9-]*/;
-const NO_RANGES: readonly TagRange[] = [];
+const NO_RANGES: readonly MentionRange[] = [];
 type Box = HTMLTextAreaElement | HTMLInputElement;
 type Sel = readonly [number, number];
 
-export type TagFieldOptions = {
-  /** The stored text: tags as `<@ref>`. */
+export type MentionFieldOptions = {
+  /** The stored text: mentions as `<@ref>`. */
   value: string;
   setValue(next: string): void;
   /** Off, the field is plain: no ranges, nothing intercepted. */
@@ -50,13 +50,13 @@ export type TagFieldOptions = {
 
 /** Replaces each still-pending label with its handle once known; `map` carries a position through. */
 function relabel(
-  t: Tagged,
+  t: Mentioned,
   handleOf: (ref: string) => string | undefined,
-): { tagged: Tagged; map(pos: number): number } | undefined {
+): { mentioned: Mentioned; map(pos: number): number } | undefined {
   const cuts: [at: number, delta: number][] = [];
   let text = "";
   let last = 0;
-  const ranges: TagRange[] = [];
+  const ranges: MentionRange[] = [];
   for (const r of t.ranges) {
     text += t.text.slice(last, r.start);
     const old = t.text.slice(r.start, r.end);
@@ -69,29 +69,29 @@ function relabel(
   }
   if (!cuts.length) return undefined;
   const map = (pos: number) => cuts.reduce((p, [at, d]) => (at <= pos ? p + d : p), pos);
-  return { tagged: { text: text + t.text.slice(last), ranges }, map };
+  return { mentioned: { text: text + t.text.slice(last), ranges }, map };
 }
 
 /**
- * The one owner of tag-field behaviour for a textarea or input: atomic `@handle` ranges over plain text.
- * It keeps the ranges (`tagged`) beside the stored `value`, snaps the caret and selections around tags, deletes a
- * whole tag, copies and pastes tags, inserts a picked one, and owns undo (`UndoStack`; never the browser's).
+ * The one owner of mention-field behaviour for a textarea or input: atomic `@handle` ranges over plain text.
+ * It keeps the ranges (`mentioned`) beside the stored `value`, snaps the caret and selections around mentions, deletes a
+ * whole mention, copies and pastes mentions, inserts a picked one, and owns undo (`UndoStack`; never the browser's).
  * The caller wires `bind` and the `change` / `select` / `keyDown` / `paste` handlers to its field and renders
  * `highlighter` behind it.
  */
-export function useTagField({
+export function useMentionField({
   value,
   setValue,
   enabled,
   handleOf,
   subscribe,
   onRestore,
-}: TagFieldOptions) {
+}: MentionFieldOptions) {
   const live = useRef({ handleOf, setValue, onRestore });
   live.current = { handleOf, setValue, onRestore };
   const known = useCallback((ref: string) => live.current.handleOf?.(ref), []);
   const pendingOr = useCallback((ref: string) => known(ref) ?? PENDING, [known]);
-  const [tagged, setTagged] = useState<Tagged>(() =>
+  const [mentioned, setMentioned] = useState<Mentioned>(() =>
     enabled ? hydrate(value, pendingOr) : { text: value, ranges: NO_RANGES },
   );
   const undo = useRef(new UndoStack());
@@ -106,12 +106,12 @@ export function useTagField({
   // `synced` is the last value this hook produced or hydrated: a stored `<@ref|label>` or uppercase ref doesn't
   // round-trip through `serialise`, so comparing against that would hydrate on every render.
   const synced = useRef(value);
-  let cur = tagged;
+  let cur = mentioned;
   if (!enabled) cur = { text: value, ranges: NO_RANGES };
   else if (value !== synced.current) {
     synced.current = value;
     cur = hydrate(value, pendingOr);
-    setTagged(cur);
+    setMentioned(cur);
     undo.current.clear();
   }
   const latest = useRef(cur);
@@ -122,18 +122,18 @@ export function useTagField({
     ranges: latest.current.ranges,
     selection: sel,
   });
-  const commit = useCallback((next: Tagged, sel: Sel) => {
+  const commit = useCallback((next: Mentioned, sel: Sel) => {
     goTo.current = sel;
     selection.current = sel;
     latest.current = next;
-    setTagged(next);
+    setMentioned(next);
     synced.current = serialise(next);
     live.current.setValue(synced.current);
   }, []);
   const restore = (s: Snapshot | undefined) => {
     if (!s) return;
     const fresh = relabel({ text: s.text, ranges: s.ranges }, known);
-    commit(fresh?.tagged ?? { text: s.text, ranges: s.ranges }, s.selection);
+    commit(fresh?.mentioned ?? { text: s.text, ranges: s.ranges }, s.selection);
     live.current.onRestore?.(s.text, s.selection[0]);
   };
   const doUndo = () => restore(undo.current.undo(snapshot()));
@@ -149,7 +149,7 @@ export function useTagField({
       el.setSelectionRange(sel[0], sel[1]);
   });
 
-  // A tag whose principal was pending takes its handle when the cache learns it. This stays an effect: it reads the
+  // A mention whose principal was pending takes its handle when the cache learns it. This stays an effect: it reads the
   // field's live selection (DOM) to carry the caret across the longer label, and the cache is external state that
   // only `version` signals, so there is nothing to derive in render or in a change handler.
   useEffect(() => (enabled ? subscribe?.(bump) : undefined), [enabled, subscribe]);
@@ -163,13 +163,13 @@ export function useTagField({
       const [a, b] = [fresh.map(el.selectionStart ?? 0), fresh.map(el.selectionEnd ?? 0)];
       goTo.current = [a, b];
     }
-    setTagged(fresh.tagged);
-  }, [enabled, version, known, tagged]);
+    setMentioned(fresh.mentioned);
+  }, [enabled, version, known, mentioned]);
 
   const bindBox = useCallback((el: Box | null) => {
     box.current = el;
     if (!el) return;
-    // The browser's own undo is never used: its stack knows nothing of tags.
+    // The browser's own undo is never used: its stack knows nothing of mentions.
     const onBeforeInput = (e: Event) => {
       const type = (e as InputEvent).inputType;
       if (type !== "historyUndo" && type !== "historyRedo") return;
@@ -213,7 +213,7 @@ export function useTagField({
     commit(rebase(latest.current, el.value, caret), [caret, caret]);
   };
 
-  /** The selection or caret moved: it snaps around tags, after the browser's move. */
+  /** The selection or caret moved: it snaps around mentions, after the browser's move. */
   const select = (el: Box) => {
     if (!enabled || composing.current || el.value !== latest.current.text) return;
     const { ranges } = latest.current;
@@ -230,7 +230,7 @@ export function useTagField({
     selection.current = next;
   };
 
-  /** Undo, redo and whole-tag deletes; true when it took the key. */
+  /** Undo, redo and whole-mention deletes; true when it took the key. */
   const keyDown = (e: KeyboardEvent<Box>): boolean => {
     if (!enabled) return false;
     const key = e.key.toLowerCase();
@@ -252,11 +252,11 @@ export function useTagField({
     if ((e.key === "Backspace" || e.key === "Delete") && !mod && !e.shiftKey && !e.altKey) {
       const el = e.currentTarget;
       if (el.selectionStart !== el.selectionEnd) return false;
-      const r = deleteTagAt(latest.current, el.selectionStart ?? 0, e.key);
+      const r = deleteMentionAt(latest.current, el.selectionStart ?? 0, e.key);
       if (!r) return false;
       e.preventDefault();
       undo.current.step(snapshot([el.selectionStart ?? 0, el.selectionStart ?? 0]));
-      commit(r.tagged, [r.caret, r.caret]);
+      commit(r.mentioned, [r.caret, r.caret]);
       return true;
     }
     return false;
@@ -273,11 +273,11 @@ export function useTagField({
     e.preventDefault();
     if (!cut) return;
     undo.current.step(snapshot([a, b]));
-    const r = insertTagged(latest.current, a, b, { text: "", ranges: NO_RANGES });
-    commit(r.tagged, [r.caret, r.caret]);
+    const r = insertMentioned(latest.current, a, b, { text: "", ranges: NO_RANGES });
+    commit(r.mentioned, [r.caret, r.caret]);
   };
 
-  /** A paste holding tags goes in as tags: the text it left. Undefined for anything else (the browser's paste). */
+  /** A paste holding mentions goes in as mentions: the text it left. Undefined for anything else (the browser's paste). */
   const paste = (e: ClipboardEvent<Box>): string | undefined => {
     if (!enabled) return undefined;
     const el = e.currentTarget;
@@ -290,22 +290,22 @@ export function useTagField({
     e.preventDefault();
     const [a, b] = selOf(el);
     undo.current.step(snapshot([a, b]));
-    const r = insertTagged(latest.current, a, b, fragment);
-    commit(r.tagged, [r.caret, r.caret]);
-    return r.tagged.text;
+    const r = insertMentioned(latest.current, a, b, fragment);
+    commit(r.mentioned, [r.caret, r.caret]);
+    return r.mentioned.text;
   };
 
-  /** A picked tag replaces the typed `@query` (through the end of the handle, and a space after it). */
-  const pickTag = (from: number, caret: number, ref: string, handle: string) => {
+  /** A picked mention replaces the typed `@query` (through the end of the handle, and a space after it). */
+  const pickMention = (from: number, caret: number, ref: string, handle: string) => {
     const t = latest.current;
     let to = caret + (HANDLE_TAIL.exec(t.text.slice(caret))?.[0].length ?? 0);
     if (t.text[to] === " ") to++;
     undo.current.step(snapshot([caret, caret]));
-    const r = insertTag(t, from, to, ref, handle);
-    commit(r.tagged, [r.caret, r.caret]);
+    const r = insertMention(t, from, to, ref, handle);
+    commit(r.mentioned, [r.caret, r.caret]);
   };
 
-  /** A programmatic edit to the shown text (the toolbar's `@`): its own undo step, tags kept. */
+  /** A programmatic edit to the shown text (the toolbar's `@`): its own undo step, mentions kept. */
   const edit = (nextText: string, caret: number) => {
     if (!enabled) {
       live.current.setValue(nextText);
@@ -323,7 +323,7 @@ export function useTagField({
     onCompositionStart: (e: CompositionEvent<Box>) => {
       composing.current = true;
       if (!enabled) return;
-      // A composition that begins inside a tag turns it back into plain text.
+      // A composition that begins inside a mention turns it back into plain text.
       const at = e.currentTarget.selectionStart ?? 0;
       const { text, ranges } = latest.current;
       if (ranges.some((r) => r.start < at && at < r.end)) {
@@ -337,8 +337,8 @@ export function useTagField({
     onCut: (e: ClipboardEvent<Box>) => copy(e, true),
   };
 
-  /** Whether a menu for the token `[from, caret]` would sit on a tag (a caret in or at the end of one). */
-  const onTag = (from: number, caret: number) =>
+  /** Whether a menu for the token `[from, caret]` would sit on a mention (a caret in or at the end of one). */
+  const onMention = (from: number, caret: number) =>
     latest.current.ranges.some((r) => from === r.start || (caret > r.start && caret <= r.end));
 
   return {
@@ -348,16 +348,16 @@ export function useTagField({
     /** Handlers to spread on the field. */
     bind,
     /** The text and ranges the field shows. */
-    tagged: cur,
+    mentioned: cur,
     serialised: value,
     change,
     select,
     keyDown,
     paste,
-    pickTag,
+    pickMention,
     edit,
-    onTag,
-    /** Props for `TagHighlighter`, behind the field; none while there is no tag to paint. */
+    onMention,
+    /** Props for `MentionHighlighter`, behind the field; none while there is no mention to paint. */
     highlighter: cur.ranges.length ? { text: cur.text, ranges: cur.ranges, box } : undefined,
   };
 }

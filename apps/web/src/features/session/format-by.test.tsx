@@ -8,8 +8,8 @@ import { json, mockApi } from "@/test/mock-api";
 import { formatBy } from "./format-by";
 import { quietText } from "./timeline-row";
 
-test("a tag names its principal by ref, whatever handle it was written with", () => {
-  expect(formatBy("<@k7x2m9qd>")).toEqual({ kind: "tag", ref: "k7x2m9qd" });
+test("a mention names its principal by ref, whatever handle it was written with", () => {
+  expect(formatBy("<@k7x2m9qd>")).toEqual({ kind: "mention", ref: "k7x2m9qd" });
 });
 
 test("@factory is the inactivity TTL, never shown as a handle", () => {

@@ -1,5 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
-import { scanTags } from "@open-factory/shared/tags";
+import { scanMentions } from "@open-factory/shared/mentions";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import {
@@ -14,8 +14,8 @@ import {
 } from "react";
 import { AgentChip, type ChipAgent } from "@/components/agent-chip";
 import { HumanAvatar } from "@/components/human-avatar";
+import { Mention } from "@/components/mention/mention";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Tag } from "@/components/tag/tag";
 import { useHandle } from "@/features/agents/use-agent-index";
 import { usePrincipal, useRefOfHandle } from "@/features/principals/use-principal";
 import { usersQueryOptions } from "@/features/settings/api";
@@ -38,7 +38,7 @@ export interface SpeakerIndex {
   sessionAgent: ChipAgent | undefined;
   /** The signed-in human's handle: their own messages say "You". */
   selfHandle: string | undefined;
-  /** The signed-in human's ref: a stored tag of it says "You" too. */
+  /** The signed-in human's ref: a stored mention of it says "You" too. */
   selfRef: string | undefined;
   /** The live agents list has loaded: before it, every handle is a stand-in. */
   ready: boolean;
@@ -256,26 +256,26 @@ const NAME_CLASS = "font-medium text-foreground";
 export type PartyKind = "agent" | "human";
 /** A sender can also be the factory itself. */
 export type SenderKind = PartyKind | "factory";
-/** A recipient: its handle as written (labels and the several-recipients summary), and its `<@ref>` tag when the ref is
+/** A recipient: its handle as written (labels and the several-recipients summary), and its `<@ref>` mention when the ref is
  *  known, so the line shows the principal live. */
-export type Party = { handle: string; tag?: string; kind?: PartyKind | undefined };
+export type Party = { handle: string; mention?: string; kind?: PartyKind | undefined };
 
 const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
 
-/** One side of a speaker line. A stored tag shows its principal (a chip, or "You" for the signed-in human); a handle
+/** One side of a speaker line. A stored mention shows its principal (a chip, or "You" for the signed-in human); a handle
  *  resolves as it always did. */
 function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
   const s = useSpeakers();
-  const tagRef = scanTags(id).tokens[0]?.ref;
-  if (!tagRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
-  if (tagRef === s.selfRef) return <SelfTag tagRef={tagRef} />;
-  return <Tag tagRef={tagRef} />;
+  const mentionRef = scanMentions(id).tokens[0]?.ref;
+  if (!mentionRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
+  if (mentionRef === s.selfRef) return <SelfMention mentionRef={mentionRef} />;
+  return <Mention mentionRef={mentionRef} />;
 }
 
-/** The signed-in human's tag: "You", with their avatar, once the principal is known. */
-function SelfTag({ tagRef }: { tagRef: string }) {
-  const found = usePrincipal(tagRef);
-  if (found.status !== "found") return <Tag tagRef={tagRef} />;
+/** The signed-in human's mention: "You", with their avatar, once the principal is known. */
+function SelfMention({ mentionRef }: { mentionRef: string }) {
+  const found = usePrincipal(mentionRef);
+  if (found.status !== "found") return <Mention mentionRef={mentionRef} />;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <HumanAvatar name={found.principal.name} />
@@ -429,7 +429,7 @@ export const SpeakerLine = memo(function SpeakerLine({
                   {recipientSummary(to.map((r) => `@${bareHandle(r.handle)}`))}
                 </span>
               ) : (
-                <Speaker id={to[0].tag ?? to[0].handle} kind={to[0].kind} self={false} />
+                <Speaker id={to[0].mention ?? to[0].handle} kind={to[0].kind} self={false} />
               )}
             </>
           )}

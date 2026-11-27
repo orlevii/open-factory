@@ -17,7 +17,7 @@ import {
   type TaskNotice,
   taskKey,
 } from "@open-factory/shared";
-import { agentTagOf, tagOf } from "@open-factory/shared/tags";
+import { agentMentionOf, mentionOf } from "@open-factory/shared/mentions";
 import {
   and,
   asc,
@@ -41,13 +41,13 @@ import { resolveAgentArg } from "../principals/principal-args.ts";
 import {
   type AgentRecord,
   agentRecordColumns,
+  mentionOfPrincipal,
   principalById,
   principalsByIds,
   principalsByRefs,
-  tagOfPrincipal,
-  terminatorTag,
+  terminatorMention,
 } from "../principals/principal-store.ts";
-import { type AgentFacing, agentFacing, tagLookupFor } from "../principals/principal-text.ts";
+import { type AgentFacing, agentFacing, mentionLookupFor } from "../principals/principal-text.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -88,8 +88,8 @@ export type PendingRow = MessageRow & {
   fromHandle: string | null;
   fromRef: string | null;
   fromKind: "human" | "agent" | null;
-  /** `kind='message'` rows: the full recipient list as `<@ref>` tags (what the envelope's `to` shows, rendered at delivery). */
-  recipientTags: string[] | null;
+  /** `kind='message'` rows: the full recipient list as `<@ref>` mentions (what the envelope's `to` shows, rendered at delivery). */
+  recipientMentions: string[] | null;
   subjectHandle: string | null;
   /** The subject agent's ref (the envelope's `about`, rendered at delivery). */
   subjectRef: string | null;
@@ -97,10 +97,10 @@ export type PendingRow = MessageRow & {
   /** S8: the task a task message is about (`T-<number>`, its current title). */
   taskNumber: number | null;
   taskTitle: string | null;
-  /** S9: a `scheduled` row's schedule (`S-<number>`), its zone, and its author (a `<@ref>` tag). */
+  /** S9: a `scheduled` row's schedule (`S-<number>`), its zone, and its author (a `<@ref>` mention). */
   scheduleKey: string | null;
   scheduleZone: string | null;
-  authorTag: string | null;
+  authorMention: string | null;
   authorKind: "human" | "agent" | null;
 };
 export interface MessageLookup {
@@ -169,21 +169,21 @@ export interface TurnClose {
 export class EventStore {
   constructor(private readonly db: Db) {}
 
-  /** For a tool result: tags for these handles and a renderer for stored text (spec §4.4). */
+  /** For a tool result: mentions for these handles and a renderer for stored text (spec §4.4). */
   facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing> {
     return agentFacing(this.db, want);
   }
 
   /** `<@ref|handle>` of the principal `id`, as an agent reads it. */
-  async agentTag(id: string): Promise<string> {
+  async agentMention(id: string): Promise<string> {
     const p = await principalById(this.db, id);
     if (!p) throw new Error(`No principal ${id}`);
-    return agentTagOf(p);
+    return agentMentionOf(p);
   }
 
   /** For rendering a delivery: one query for every ref in `texts` (spec §4.4). */
-  tagLookup(texts: readonly string[]) {
-    return tagLookupFor(this.db, texts);
+  mentionLookup(texts: readonly string[]) {
+    return mentionLookupFor(this.db, texts);
   }
 
   private lastStamp = 0;
@@ -212,7 +212,7 @@ export class EventStore {
     const p = (await principalsByRefs(this.db, [ref])).get(ref);
     return p?.kind === "agent" ? this.agentById(p.id) : undefined;
   }
-  /** The agent a tool argument names (a tag, a ref or a handle), or why it names none. */
+  /** The agent a tool argument names (a mention, a ref or a handle), or why it names none. */
   async agentByArg(raw: string) {
     return resolveAgentArg(this.db, raw);
   }
@@ -568,17 +568,17 @@ export class EventStore {
     return Promise.all(
       rows.map(async ({ terminatedBy, ...a }) => ({
         ...a,
-        by: await terminatorTag(this.db, terminatedBy),
+        by: await terminatorMention(this.db, terminatedBy),
       })),
     );
   }
-  /** The `terminated` event's `by` for who ended `agentId`: its tag, or `@factory` when the TTL did. */
-  async terminatorTagOf(terminatedBy: string | null): Promise<string> {
-    return terminatorTag(this.db, terminatedBy);
+  /** The `terminated` event's `by` for who ended `agentId`: its mention, or `@factory` when the TTL did. */
+  async terminatorMentionOf(terminatedBy: string | null): Promise<string> {
+    return terminatorMention(this.db, terminatedBy);
   }
-  /** A principal's tag (`<@ref>`), read from `principals`; the agent's own id is its principal id. */
-  async principalTag(id: string): Promise<string> {
-    return tagOfPrincipal(this.db, id);
+  /** A principal's mention (`<@ref>`), read from `principals`; the agent's own id is its principal id. */
+  async principalMention(id: string): Promise<string> {
+    return mentionOfPrincipal(this.db, id);
   }
   /** A principal's ref, read from `principals`; undefined when the id has no principal. */
   async principalRef(id: string): Promise<string | undefined> {
@@ -1232,14 +1232,14 @@ export class EventStore {
         return rows.map(({ m, scheduleNumber, authorRef, ...rest }) => ({
           ...m,
           ...rest,
-          recipientTags:
+          recipientMentions:
             m.recipientIds?.map((id) => {
               const p = recipients.get(id);
               if (!p) throw new Error(`message ${m.id} names no principal ${id}`);
-              return tagOf(p.ref);
+              return mentionOf(p.ref);
             }) ?? null,
           scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
-          authorTag: authorRef ? tagOf(authorRef) : null,
+          authorMention: authorRef ? mentionOf(authorRef) : null,
         }));
       },
     };

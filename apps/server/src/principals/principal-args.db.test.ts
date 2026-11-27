@@ -1,4 +1,4 @@
-import { plainTagWarning } from "@open-factory/shared/tags";
+import { plainMentionWarning } from "@open-factory/shared/mentions";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
 import { seedTestPrincipal } from "../test/principals.ts";
@@ -12,21 +12,26 @@ beforeAll(async () => {
 });
 afterAll(async () => t.close());
 
-const warning = (written: string) => plainTagWarning({ written, ref: dev.ref, handle: dev.handle });
+const warning = (written: string) =>
+  plainMentionWarning({ written, ref: dev.ref, handle: dev.handle });
 
 test.each<[string, (ref: string) => string, (ref: string) => ArgResolution]>([
-  ["a full tag with a stale handle", (r) => `<@${r}|old>`, () => ({ kind: "principal", p: dev })],
-  ["a tag without a handle", (r) => ` <@${r}> `, () => ({ kind: "principal", p: dev })],
+  [
+    "a full mention with a stale handle",
+    (r) => `<@${r}|old>`,
+    () => ({ kind: "principal", p: dev }),
+  ],
+  ["a mention without a handle", (r) => ` <@${r}> `, () => ({ kind: "principal", p: dev })],
   ["a bare ref in capitals", (r) => r.toUpperCase(), () => ({ kind: "principal", p: dev })],
   ["@handle", () => "@dev", () => ({ kind: "principal", p: dev, warning: warning("@dev") })],
   ["a handle", () => "dev", () => ({ kind: "principal", p: dev, warning: warning("@dev") })],
   [
-    "a handle written in a tag's place",
+    "a handle written in a mention's place",
     () => "<@dev>",
     () => ({ kind: "principal", p: dev, warning: warning("<@dev>") }),
   ],
   [
-    "a tag with an unknown ref",
+    "a mention with an unknown ref",
     () => "<@zzzzzzzz>",
     () => ({ kind: "unknown_ref", ref: "zzzzzzzz" }),
   ],

@@ -116,12 +116,12 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
   });
 });
 
-test("an agent author is its tag in by", async () => {
+test("an agent author is its mention in by", async () => {
   await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
   await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
               select 'auth1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
   const row = await scheduled({ authorId: "auth1" });
-  expect(row.authorTag).toBe(`<@${testRef("auth1")}>`);
+  expect(row.authorMention).toBe(`<@${testRef("auth1")}>`);
   expect(row.authorKind).toBe("agent");
 });
 

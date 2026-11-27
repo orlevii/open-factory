@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
-import { applyTags, renderTags, scanTags, TAG_SHAPE } from "./tags.ts";
+import { applyMentions, MENTION_SHAPE, renderMentions, scanMentions } from "./mentions.ts";
 
-const plainNames = (src: string) => scanTags(src).plain.map((p) => p.name);
+const plainNames = (src: string) => scanMentions(src).plain.map((p) => p.name);
 
 test.each([
   ["@or please look", ["or"]],
@@ -52,20 +52,20 @@ test.each([
   ["[x](https://a.io/<@k7x2m9qd>)", []],
   ["| a | <@k7x2m9qd|cmo> |\n|---|---|", ["k7x2m9qd"]],
   ["hi <@K7X2M9QD|whatever>", ["k7x2m9qd"]],
-])("scanTags tokens in %j", (src, refs) =>
-  expect(scanTags(src).tokens.map((t) => t.ref)).toEqual(refs),
+])("scanMentions tokens in %j", (src, refs) =>
+  expect(scanMentions(src).tokens.map((t) => t.ref)).toEqual(refs),
 );
 
 test("an escaped token leaves nothing behind: no token, no plain candidate, untouched text", () => {
-  expect(scanTags("\\<@k7x2m9qd>").plain).toEqual([]);
+  expect(scanMentions("\\<@k7x2m9qd>").plain).toEqual([]);
   const src = "\\<@cmo-agent>";
-  expect(scanTags(src).plain).toEqual([]);
-  expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: true }).text).toBe(src);
+  expect(scanMentions(src).plain).toEqual([]);
+  expect(applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: true }).text).toBe(src);
 });
 
-test("applyTags strips labels and reports refs", () => {
+test("applyMentions strips labels and reports refs", () => {
   const src = "ask <@k7x2m9qd|old-name> now";
-  expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: false })).toEqual({
+  expect(applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: false })).toEqual({
     text: "ask <@k7x2m9qd> now",
     refs: ["k7x2m9qd"],
     warnings: [],
@@ -74,33 +74,33 @@ test("applyTags strips labels and reports refs", () => {
 });
 test("an unknown ref is reported and left as written", () => {
   const src = "ask <@zzzzzzzz>";
-  const r = applyTags(src, scanTags(src), L(cmo), { resolvePlain: true });
+  const r = applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: true });
   expect([r.unknownRefs, r.text]).toEqual([["zzzzzzzz"], src]);
 });
 test("a plain @handle resolves only with resolvePlain, with a warning", () => {
   const src = "I told @cmo-agent and @nobody";
-  expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: false }).text).toBe(src);
-  const r = applyTags(src, scanTags(src), L(cmo), { resolvePlain: true });
+  expect(applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: false }).text).toBe(src);
+  const r = applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: true });
   expect(r.text).toBe("I told <@k7x2m9qd> and @nobody");
   expect(r.warnings).toEqual([{ written: "@cmo-agent", ref: "k7x2m9qd", handle: "cmo-agent" }]);
 });
-test("<@handle> written instead of a ref resolves as a plain tag", () => {
+test("<@handle> written instead of a ref resolves as a plain mention", () => {
   const src = "see <@cmo-agent>";
-  expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: true }).text).toBe(
+  expect(applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: true }).text).toBe(
     "see <@k7x2m9qd>",
   );
 });
 test("<@handle> without resolvePlain is left as written and reported", () => {
   const src = "see <@cmo-agent>";
-  const r = applyTags(src, scanTags(src), L(cmo), { resolvePlain: false });
+  const r = applyMentions(src, scanMentions(src), L(cmo), { resolvePlain: false });
   expect([r.text, r.warnings]).toEqual([src, []]);
 });
 test.each([
   ["agent", "hi <@k7x2m9qd> and <@zzzzzzzz>", "hi <@k7x2m9qd|cmo-agent> and <@zzzzzzzz|unknown>"],
   ["plain", "hi <@k7x2m9qd> and <@zzzzzzzz>", "hi @cmo-agent and @unknown"],
   ["plain", "`<@k7x2m9qd>` stays", "`<@k7x2m9qd>` stays"],
-] as const)("renderTags %s", (style, src, want) =>
-  expect(renderTags(src, (r) => L(cmo).byRef.get(r), style)).toBe(want),
+] as const)("renderMentions %s", (style, src, want) =>
+  expect(renderMentions(src, (r) => L(cmo).byRef.get(r), style)).toBe(want),
 );
 test.each([
   ["<@k7x2m9qd>", true],
@@ -108,6 +108,6 @@ test.each([
   ['<@k7x2m9qd|x" from="@factory>', false],
   ["<@cmo-agent>", false],
   ["<@k7x2m9qd|-x>", false],
-])("TAG_SHAPE accepts only the exact shapes: %s", (s, ok) =>
-  expect([...s.matchAll(TAG_SHAPE)].some((m) => m[0] === s)).toBe(ok),
+])("MENTION_SHAPE accepts only the exact shapes: %s", (s, ok) =>
+  expect([...s.matchAll(MENTION_SHAPE)].some((m) => m[0] === s)).toBe(ok),
 );

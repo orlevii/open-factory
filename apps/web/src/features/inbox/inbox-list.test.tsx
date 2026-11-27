@@ -559,7 +559,7 @@ test("the row's expiry text follows the now prop, not the wall clock (memo contr
   );
   const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
   const row = credItem({ name: "work", expiresAt, current: true }) as never;
-  // A row reads the principals cache for tags in its preview.
+  // A row reads the principals cache for mentions in its preview.
   const qc = createQueryClient({ queries: { retry: false } });
   const rows = (now: number) => (
     <QueryClientProvider client={qc}>

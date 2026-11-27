@@ -5,7 +5,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { agentRecords } from "../principals/principal-store.ts";
@@ -371,9 +371,9 @@ const heldBy = async (handle: string) =>
                 where a.id = (select id from principals where handle = ${handle}) and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
-/** An agent's tag, as the factory writes it in a body (its principal's ref). */
-const tagOfHandle = async (handle: string) =>
-  tagOf(
+/** An agent's mention, as the factory writes it in a body (its principal's ref). */
+const mentionOfHandle = async (handle: string) =>
+  mentionOf(
     testRef(
       String(
         (
@@ -389,29 +389,29 @@ test("an agent actor's create, move and archive name it in the peer events; the 
   await svc.create({ ...body("pe-boss"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
-  const [pmo, hrTag] = [await tagOfHandle("pe-pmo"), await tagOfHandle("hr-bot")];
+  const [pmo, hrMention] = [await mentionOfHandle("pe-pmo"), await mentionOfHandle("hr-bot")];
   expect(await heldBy("pe-dev")).toEqual([
     {
       kind: "peer_joined",
       notice: "peer",
-      body: `${pmo} (pe-pmo) joined as your peer, by ${hrTag}.`,
+      body: `${pmo} (pe-pmo) joined as your peer, by ${hrMention}.`,
     },
   ]);
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_joined",
       notice: "report",
-      body: `${pmo} (pe-pmo) joined as your report, by ${hrTag}.`,
+      body: `${pmo} (pe-pmo) joined as your report, by ${hrMention}.`,
     },
   ]);
   await clearPeerRows();
   await svc.update(await t.refOf("pe-dev"), { reportsTo: "pe-boss" }, hr);
-  const [dev, boss] = [await tagOfHandle("pe-dev"), await tagOfHandle("pe-boss")];
+  const [dev, boss] = [await mentionOfHandle("pe-dev"), await mentionOfHandle("pe-boss")];
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_left",
       notice: "report",
-      body: `${dev} (pe-dev) left: now reports to ${boss}, by ${hrTag}.`,
+      body: `${dev} (pe-dev) left: now reports to ${boss}, by ${hrMention}.`,
     },
   ]);
   await clearPeerRows();
@@ -431,7 +431,7 @@ test("a human's create names no actor in the peer events", async () => {
     {
       kind: "peer_joined",
       notice: "report",
-      body: `${await tagOfHandle("hm-dev")} (hm-dev) joined as your report.`,
+      body: `${await mentionOfHandle("hm-dev")} (hm-dev) joined as your report.`,
     },
   ]);
 });

@@ -107,7 +107,7 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
   });
 });
 
-test("a picked tag shows as @handle and is posted as <@ref>; a typed @name that wasn't picked is posted as text", async () => {
+test("a picked mention shows as @handle and is posted as <@ref>; a typed @name that wasn't picked is posted as text", async () => {
   const qc = new QueryClient();
   const principal = (handle: string, kind: "agent" | "human", name: string, state = "live") => ({
     id: handle,
@@ -151,7 +151,7 @@ test("a picked tag shows as @handle and is posted as <@ref>; a typed @name that 
   );
 });
 
-test("Reply to a human comment tags its author: the box shows @handle and the post carries <@ref>", async () => {
+test("Reply to a human comment mentions its author: the box shows @handle and the post carries <@ref>", async () => {
   const qc = new QueryClient();
   qc.setQueryData(["principals"], {
     byRef: new Map([

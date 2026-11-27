@@ -101,7 +101,7 @@ test("the human REST send refuses a person and an archived agent, each as its ow
 
 test.each([
   ["a handle", "dev"],
-  ["a tag", "<@zzzzzzzz|dev>"],
+  ["a mention", "<@zzzzzzzz|dev>"],
   ["a ref nobody holds", "zzzzzzzz"],
 ])("%s as a recipient is a 400 on `to` and nothing is sent", async (_name, to) => {
   const res = await post({ to: [s.seededRef("ops"), to], body: "bad recipient" });
@@ -240,7 +240,7 @@ test("validation: an empty or over-64-KB body, no recipients and eleven recipien
   ).toBe(400);
 });
 
-test("a message with a tag reaches only its recipients", async () => {
+test("a message with a mention reaches only its recipients", async () => {
   const [ops] = await s.sql`select ref from principals where handle = 'ops'`;
   const res = await post({ to: [s.seededRef("dev")], body: `ask <@${ops?.ref}> later` });
   expect(res.statusCode).toBe(202);
@@ -253,8 +253,8 @@ test("a body with an unknown ref is 400 and writes nothing", async () => {
   const res = await post({ to: [s.seededRef("dev")], body: "ask <@zzzzzzzz> later" });
   expect(res.statusCode).toBe(400);
   expect(res.json().error).toMatchObject({
-    code: "unknown_tag",
-    fields: { body: "Tag isn't anyone here" },
+    code: "unknown_mention",
+    fields: { body: "Mention isn't anyone here" },
   });
   expect(await s.sql`select id from messages where body like '%zzzzzzzz%'`).toEqual([]);
 });

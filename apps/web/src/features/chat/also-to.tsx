@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Tag } from "@/components/tag/tag";
+import { Mention } from "@/components/mention/mention";
 import { useHandleText } from "@/features/principals/use-principal";
 
 const PLURAL = new Intl.PluralRules("en");
@@ -23,7 +23,7 @@ export const AlsoTo = memo(function AlsoTo({ others }: { others: readonly string
     >
       <span className="shrink-0">also to</span>
       <span dir="auto" className="min-w-0 truncate">
-        <Tag tagRef={first} />
+        <Mention mentionRef={first} />
       </span>
       {more > 0 && (
         <span className="shrink-0">

@@ -22,7 +22,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { TagTextarea } from "@/components/composer/tag-field";
+import { MentionTextarea } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import {
@@ -53,7 +53,7 @@ import {
   type TemplateOption,
   TemplateSummary,
 } from "@/features/agents/template-field";
-import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -121,7 +121,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   const templates: TemplateOption[] = useSuspenseQuery(templatesQueryOptions).data.templates;
   const qc = useQueryClient();
   const router = useRouter();
-  const at = useMentionSource({ note: FIELD_TAG_NOTE });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const taken = useTakenNames(true);
   // A list that failed can't hold the submit forever: it goes ahead without the suffix (the server still refuses).
   const takenFailed = useQueries({
@@ -479,7 +479,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
           <MoreOptions open={moreOpen} onOpenChange={setMoreOpen} reason={reason}>
             <FieldShell name="description" label="Description" error={errors.description}>
               {(a) => (
-                <TagTextarea
+                <MentionTextarea
                   id={a.id}
                   name="description"
                   rows={3}

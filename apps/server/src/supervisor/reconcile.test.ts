@@ -1,7 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import type { RuntimeJournal } from "@open-factory/db";
 import type { AnyEvent } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
 import { EventBus } from "../agents/event-bus.ts";
@@ -26,11 +26,11 @@ import { createTestDb } from "../test/helpers.ts";
 import { principalSql, seedTestUser, testRef } from "../test/principals.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
-/** An envelope sender is a tag; this test reads its handle. */
+/** An envelope sender is a mention; this test reads its handle. */
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 
-/** The tag of the terminator `seedTestUser(db, "boss")` makes, as the stored events name it. */
-const BOSS = tagOf(testRef("u-boss"));
+/** The mention of the terminator `seedTestUser(db, "boss")` makes, as the stored events name it. */
+const BOSS = mentionOf(testRef("u-boss"));
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -339,7 +339,7 @@ test("an agent whose attempt was cut short is errored and not woken", async () =
   // S6 §9.1: the cut-short automatic attempt starts an errored episode; the cut-short human retries were inside one.
   expect(boot.forwarded.filter((f) => f.fact === "errored").map((f) => f.agentId)).toEqual([fresh]);
   const body = boot.forwarded.find((f) => f.agentId === fresh)?.body;
-  expect(body).toContain(`is errored and needs a human. Reported by ${tagOf(testRef(fresh))}`);
+  expect(body).toContain(`is errored and needs a human. Reported by ${mentionOf(testRef(fresh))}`);
   expect(body).toContain(`\n> ${ATTEMPT_CUT_SHORT}`);
 });
 

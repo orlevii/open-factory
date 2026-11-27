@@ -50,7 +50,7 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 
 /**
  * A request a report had received in its current turn when it wrote a forwarded text: the message's id and its
- * envelope sender (the sender's `<@ref>` tag, or `@scheduler` / `@factory`). A `member_update`'s `re` lists them, so its manager can tell
+ * envelope sender (the sender's `<@ref>` mention, or `@scheduler` / `@factory`). A `member_update`'s `re` lists them, so its manager can tell
  * whose request the text answers.
  */
 export const requestRefSchema = z.object({ id: z.string(), from: z.string() });

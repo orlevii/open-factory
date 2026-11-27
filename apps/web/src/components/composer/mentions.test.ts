@@ -95,12 +95,15 @@ test("accepting replaces the typed token with `@handle `", () => {
 test("the source offers live principals from the cache with their ref, and a note when it has rows", () => {
   const qc = cached(...everyone);
   qc.setQueryData(["session"], { user: { handle: "or", ref: refFor("or") } });
-  const source = mentionSource(qc, { note: "A tag notifies them" });
+  const source = mentionSource(qc, { note: "A mention notifies them" });
   const rows = source.items("");
   expect(rows.map((r) => r.detail)).toEqual(["@alpha", "@bravo", "@dana", "@lead", "@zed"]);
   expect(rows[0]).toEqual(expect.objectContaining({ id: refFor("alpha"), label: "Alpha" }));
-  expect(source.acceptTag?.(rows[0] as never)).toEqual({ ref: refFor("alpha"), handle: "alpha" });
-  expect(source.menuNote?.(rows.length)).toBe("A tag notifies them");
+  expect(source.acceptMention?.(rows[0] as never)).toEqual({
+    ref: refFor("alpha"),
+    handle: "alpha",
+  });
+  expect(source.menuNote?.(rows.length)).toBe("A mention notifies them");
   expect(source.menuNote?.(0)).toBeUndefined();
 });
 

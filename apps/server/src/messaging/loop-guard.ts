@@ -1,5 +1,5 @@
 import { schema } from "@open-factory/db";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -149,7 +149,7 @@ export class LoopGuard {
     const b = pair.find((r) => r.id === to);
     if (!a || !b) throw new Error("loop guard: a pair member does not exist");
     const total = counts.ab + counts.ba;
-    const exchanged = `${tagOf(a.ref)} and ${tagOf(b.ref)} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
+    const exchanged = `${mentionOf(a.ref)} and ${mentionOf(b.ref)} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
 
     await this.d.store.createHumanMessage(
       {

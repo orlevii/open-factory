@@ -49,7 +49,7 @@ export const messagesRoutes: FastifyPluginAsyncZod = async (app) => {
       const { to, body, urgent, clientMessageId, attachments } = req.body;
       if (attachments?.length && to.length > 1)
         throw new ApiError(422, "invalid_attachment", MANY_WITH_FILES);
-      // Spec §4.4: the recipients are refs. A handle, a tag or an unknown ref is the request's error, not a refusal.
+      // Spec §4.4: the recipients are refs. A handle, a mention or an unknown ref is the request's error, not a refusal.
       const refs = to.map((t) => normaliseRef(t));
       const known = await principalsByRefs(
         app.db,

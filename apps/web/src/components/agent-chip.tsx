@@ -192,7 +192,7 @@ type ChipProps = {
   handleInTooltip?: boolean;
 };
 
-/** An agent no list holds (one named by a tag, or by a row from another page): the principals cache names it. */
+/** An agent no list holds (one named by a mention, or by a row from another page): the principals cache names it. */
 function UnlistedChip({
   agentRef,
   name,

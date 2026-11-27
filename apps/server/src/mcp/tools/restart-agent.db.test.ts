@@ -1,4 +1,4 @@
-import { agentTagOf, tagOf } from "@open-factory/shared/tags";
+import { agentMentionOf, mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
 import { makeTestApp, runtimeOf, signUp } from "../../test/helpers.ts";
@@ -52,7 +52,7 @@ const startsOf = (handle: string) => drv.starts.filter((p) => p.spec.agentId ===
 /** What a process was sent, as [from, body] pairs in order. */
 const delivered = (p: { sent: { from: string; body: string }[][] }) =>
   p.sent.flat().map((m) => [handleOf(m.from), m.body]);
-/** An envelope sender is a tag; the test reads its handle. */
+/** An envelope sender is a mention; the test reads its handle. */
 const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 /** A report of lead that is running with a turn open (a cut restart interrupts it). */
 async function runningMidTurn(handle: string) {
@@ -144,16 +144,16 @@ test("a cut restart delivers the note from the caller after the restart notice",
     [
       "@factory",
       expect.stringContaining(
-        `Restarted by ${agentTagOf({ ref: testRef(ids.lead as string), handle: "lead" })}`,
+        `Restarted by ${agentMentionOf({ ref: testRef(ids.lead as string), handle: "lead" })}`,
       ),
     ],
     ["@lead", "Rerun the tests."],
   ]);
 });
 
-test("restart_agent with a note names its target by tag and returns no warnings", async () => {
+test("restart_agent with a note names its target by mention and returns no warnings", async () => {
   await runningMidTurn("dev");
-  const dev = agentTagOf({ ref: testRef(ids.dev as string), handle: "dev" });
+  const dev = agentMentionOf({ ref: testRef(ids.dev as string), handle: "dev" });
   const r = await call("lead", { target: dev, note: "Rerun the tests." });
   expect(r.err).toBe(false);
   expect(r.json.warnings).toBeUndefined();
@@ -187,7 +187,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   expect(delivered(next)).toEqual([
     [
       "@factory",
-      `Restarted by ${agentTagOf({ ref: testRef(ids.lead as string), handle: "lead" })} after an error.`,
+      `Restarted by ${agentMentionOf({ ref: testRef(ids.lead as string), handle: "lead" })} after an error.`,
     ],
     ["@or", "again"],
     ["@lead", "Rerun the tests."],
@@ -252,7 +252,7 @@ test("a resolver failure (a broken template) still restarts the report and recor
   expect(events).toContainEqual({
     type: "control",
     cmd: "restart",
-    by: tagOf(testRef(ids.lead as string)),
+    by: mentionOf(testRef(ids.lead as string)),
   });
 });
 
@@ -356,21 +356,21 @@ test("restart_pending: the note goes to the running process; the restart follows
   ).toContain("@lead");
 });
 
-test("restart_agent by plain handle warns; by its tag it does not", async () => {
+test("restart_agent by plain handle warns; by its mention it does not", async () => {
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
-  const tagged = await call("lead", { target: `<@${dev?.ref}|stale>` });
-  expect(tagged.json).toMatchObject({
+  const mentioned = await call("lead", { target: `<@${dev?.ref}|stale>` });
+  expect(mentioned.json).toMatchObject({
     target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "not_running",
   });
-  expect(tagged.json).not.toHaveProperty("warnings");
+  expect(mentioned.json).not.toHaveProperty("warnings");
   const plain = await call("lead", { target: "dev" });
   expect(plain.json.warnings).toEqual([
-    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @dev was resolved to <@${dev?.ref}|dev>. Mention as <@ref|handle>.`,
   ]);
 });
 
-test("a person named by their full tag reads as their handle in the refusal", async () => {
+test("a person named by their full mention reads as their handle in the refusal", async () => {
   const [or] = await h.sql`select ref from principals where handle = 'or'`;
   const r = await call("lead", { target: `<@${or?.ref}|or>` });
   expect(r).toMatchObject({ err: true, text: "@or isn't one of your direct reports." });

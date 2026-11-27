@@ -95,11 +95,11 @@ test("send_message to a plain handle delivers and warns", async () => {
     { to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/), status: "queued" },
   ]);
   expect(out.warnings).toEqual([
-    `Plain tag detected: @bob was resolved to <@${bob[0]?.ref}|bob>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @bob was resolved to <@${bob[0]?.ref}|bob>. Mention as <@ref|handle>.`,
   ]);
 });
 
-test("send_message to a tag delivers with no warning, even when its handle label is stale", async () => {
+test("send_message to a mention delivers with no warning, even when its handle label is stale", async () => {
   const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
   const r = await callTool(url, tok, "send_message", { to: [`<@${bob?.ref}|old>`], body: "hi" });
   expect(r.isError).toBeFalsy();
@@ -114,26 +114,26 @@ test("send_message to an unknown ref is refused with the fix-it error", async ()
   const r = await callTool(url, tok, "send_message", { to: ["<@zzzzzzzz>"], body: "hi" });
   expect(r.isError).toBe(true);
   expect(text(r)).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
   expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
 });
 
-test("send_message with an unknown tag is refused and nothing is sent", async () => {
+test("send_message with an unknown mention is refused and nothing is sent", async () => {
   const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask <@zzzzzzzz> too" });
   expect(r.isError).toBe(true);
   expect(text(r)).toBe(
-    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
   );
   expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
 });
 
-test("send_message stores a plain @handle in the body as a tag and warns", async () => {
+test("send_message stores a plain @handle in the body as a mention and warns", async () => {
   const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
   const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask @bob later" });
   expect(r.isError).toBeFalsy();
   expect(JSON.parse(text(r)).warnings).toEqual([
-    `Plain tag detected: @bob was resolved to <@${bob?.ref}|bob>. Tag as <@ref|handle>.`,
+    `Plain mention detected: @bob was resolved to <@${bob?.ref}|bob>. Mention as <@ref|handle>.`,
   ]);
   const [row] = await h.sql`select body from messages where kind = 'message'`;
   expect(row?.body).toBe(`ask <@${bob?.ref}> later`);

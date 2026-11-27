@@ -18,7 +18,7 @@ export type FactDetail = {
 };
 
 /**
- * The body of a factory fact (spec §9.1). `subject` is the subject's tag, `<@ref>`. What the report controls (an error
+ * The body of a factory fact (spec §9.1). `subject` is the subject's mention, `<@ref>`. What the report controls (an error
  * message, a denial reason, `last_error`, task descriptions) is quoted by `quoteReported`, which neutralises envelope tags.
  */
 export function factFor(kind: FactCode, subject: string, detail: FactDetail = {}): string {

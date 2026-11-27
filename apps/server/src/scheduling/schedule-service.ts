@@ -12,7 +12,7 @@ import {
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import { and, eq, or } from "drizzle-orm";
 import type { EventStore, Exec } from "../agents/event-store.ts";
 import { resolveArg } from "../principals/principal-args.ts";
@@ -105,7 +105,7 @@ export class ScheduleService {
 
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction(async (tx) => {
-        // Spec §4.3: the body's tags are stored as `<@ref>`; the limit counts the stored text.
+        // Spec §4.3: the body's mentions are stored as `<@ref>`; the limit counts the stored text.
         const { text: body } = await resolveField(tx, input.body, actor.kind, "body", warnings);
         if (bytes(body) > SCHEDULE_BODY_MAX)
           throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");

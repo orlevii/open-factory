@@ -1,7 +1,7 @@
 import { normaliseRef } from "@open-factory/shared";
 
-/** A tag-looking token in text: `<@ref>` or `<@ref|label>` (the label is ignored). Whether the ref is real is `normaliseRef`'s call. */
-const TAG = /<@([0-9A-Za-z]{8})(?:\|[^<>\n]*)?>/g;
+/** A mention-looking token in text: `<@ref>` or `<@ref|label>` (the label is ignored). Whether the ref is real is `normaliseRef`'s call. */
+const MENTION = /<@([0-9A-Za-z]{8})(?:\|[^<>\n]*)?>/g;
 
 type MdNode = { type: string; value?: string; children?: MdNode[]; data?: unknown };
 
@@ -9,12 +9,12 @@ function split(node: MdNode): MdNode[] | undefined {
   const value = node.value ?? "";
   const out: MdNode[] = [];
   let at = 0;
-  for (const m of value.matchAll(TAG)) {
-    const tagRef = normaliseRef(m[1] ?? "");
-    if (!tagRef) continue;
+  for (const m of value.matchAll(MENTION)) {
+    const mentionRef = normaliseRef(m[1] ?? "");
+    if (!mentionRef) continue;
     const start = m.index ?? 0;
     if (start > at) out.push({ type: "text", value: value.slice(at, start) });
-    out.push({ type: "tag", data: { hName: "of-tag", hProperties: { tagRef } } });
+    out.push({ type: "mention", data: { hName: "of-mention", hProperties: { mentionRef } } });
     at = start + m[0].length;
   }
   if (out.length === 0) return undefined;
@@ -38,7 +38,7 @@ function walk(node: MdNode): void {
   }
 }
 
-/** Turns `<@ref>` text into `of-tag` elements that `Markdown` renders as chips. Never inside code. */
-export function remarkTags() {
+/** Turns `<@ref>` text into `of-mention` elements that `Markdown` renders as chips. Never inside code. */
+export function remarkMentions() {
   return (tree: MdNode) => walk(tree);
 }

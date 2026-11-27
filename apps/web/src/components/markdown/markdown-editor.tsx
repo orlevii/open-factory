@@ -1,6 +1,6 @@
 import type { FocusEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 import type { CompletionSource } from "@/components/composer/composer";
-import { TagTextarea } from "@/components/composer/tag-field";
+import { MentionTextarea } from "@/components/composer/mention-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Markdown } from "./markdown";
 
@@ -35,8 +35,8 @@ export function MarkdownEditor(props: {
   /** Geist instead of mono in the textarea, for prose a person writes (a message, not code). */
   proportional?: boolean;
   invalid?: boolean;
-  /** The `@` source for a field that tags: the Write tab tags, and Preview shows the stored tags as chips. */
-  tagSource?: CompletionSource;
+  /** The `@` source for a field that mentions: the Write tab mentions, and Preview shows the stored mentions as chips. */
+  mentionSource?: CompletionSource;
 }) {
   const { value, onChange, id, placeholder, view, onViewChange } = props;
   const minH = props.compact ? "min-h-24" : "min-h-40";
@@ -63,7 +63,7 @@ export function MarkdownEditor(props: {
         {props.writeSurface ? (
           props.writeSurface({ value, onChange, describedBy: props["aria-describedby"] })
         ) : (
-          <TagTextarea
+          <MentionTextarea
             id={id}
             ref={props.textareaRef}
             onBlur={props.onBlur}
@@ -75,7 +75,7 @@ export function MarkdownEditor(props: {
             aria-invalid={props.invalid || undefined}
             value={value}
             onValueChange={onChange}
-            source={props.tagSource}
+            source={props.mentionSource}
             className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 ${props.proportional ? "" : "font-mono "}text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
           />
         )}

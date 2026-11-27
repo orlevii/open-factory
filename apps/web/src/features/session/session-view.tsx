@@ -1,5 +1,5 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
@@ -135,8 +135,8 @@ export function SessionView({
     },
     [setRaceNotice, refreshAgent],
   );
-  // Stored text names you by your tag (a command's sender, the operator input you typed).
-  const selfTag = me ? tagOf(me.user.ref) : undefined;
+  // Stored text names you by your mention (a command's sender, the operator input you typed).
+  const selfMention = me ? mentionOf(me.user.ref) : undefined;
   const selfRef = me?.user.ref;
   const { queue, sending, cancelled, stopEpoch, landed } = s.state;
   const queueItems = useMemo(
@@ -147,16 +147,16 @@ export function SessionView({
           sending={sending}
           agent={agent}
           cancelled={cancelled}
-          selfTag={selfTag}
+          selfMention={selfMention}
           onCancel={onCancel}
           onUndo={onUndo}
         />
       ) : null,
-    [queue, sending, agent, cancelled, selfTag, onCancel, onUndo],
+    [queue, sending, agent, cancelled, selfMention, onCancel, onUndo],
   );
   const pendingRows = useMemo(
-    () => rawTailRows(queue, sending, cancelled, selfTag, onCancel),
-    [queue, sending, cancelled, selfTag, onCancel],
+    () => rawTailRows(queue, sending, cancelled, selfMention, onCancel),
+    [queue, sending, cancelled, selfMention, onCancel],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
   // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
@@ -174,7 +174,7 @@ export function SessionView({
     lookedThrough.current = { agentRef, seq: ordered.at(-1)?.seq ?? from };
     if (used.length) uploadsFor(userId, agentRef).forgetUploads(used);
   }, [s.state.ordered, agentRef, selfRef, userId]);
-  const recall = useCallback(() => recallText(orderedRef.current, selfTag), [selfTag]);
+  const recall = useCallback(() => recallText(orderedRef.current, selfMention), [selfMention]);
   const composer = useMemo(
     () =>
       agent ? (

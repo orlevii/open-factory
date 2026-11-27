@@ -5,7 +5,7 @@ import {
   scheduleMessageToolSchema,
 } from "@open-factory/shared";
 import type { AgentRecord } from "../../principals/principal-store.ts";
-import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
+import { type AgentFacing, UnknownMentionsError } from "../../principals/principal-text.ts";
 import { ScheduleError } from "../../scheduling/errors.ts";
 import type { ScheduleService } from "../../scheduling/schedule-service.ts";
 import {
@@ -23,7 +23,7 @@ type ScheduleTools = {
   factoryZone: string;
   /** The calling agent, from the token (never from an argument). */
   loadAgent(id: string): Promise<AgentRecord | undefined>;
-  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
   facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
@@ -42,7 +42,8 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof ScheduleError || e instanceof UnknownTagsError) return toolError(e.message);
+      if (e instanceof ScheduleError || e instanceof UnknownMentionsError)
+        return toolError(e.message);
       throw e;
     }
   };
@@ -83,7 +84,7 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
               const facing = await d.facing({ handles: [i.target.handle] });
               return {
                 id: i.key,
-                to: facing.tag(i.target.handle),
+                to: facing.mention(i.target.handle),
                 ...(i.cron ? { cron: i.cron } : {}),
                 ...(i.at ? { at: formatOffsetIso(new Date(i.at), i.timezone) } : {}),
                 timezone: i.timezone,
@@ -108,9 +109,9 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
               });
               return views.map((v) => ({
                 ...v,
-                to: facing.tag(v.to),
-                created_by: facing.tag(v.created_by),
-                by: facing.tag(v.by),
+                to: facing.mention(v.to),
+                created_by: facing.mention(v.created_by),
+                by: facing.mention(v.by),
                 body: facing.render(v.body),
               }));
             }),

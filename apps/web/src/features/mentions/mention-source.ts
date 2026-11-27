@@ -66,17 +66,17 @@ const toItem = (p: PrincipalItem): CompletionItem => ({
 export type MentionNote = { note?: string };
 
 /**
- * The `@` source over the query cache: it tags. `items(query)` ranks the live principals already cached
+ * The `@` source over the query cache: it mentions. `items(query)` ranks the live principals already cached
  * when the menu asks (only while it is open), so nothing is fetched per keystroke and no list frame
- * renders the composer while the menu is closed. A picked row is a tag range (`acceptTag`, `id` is the
- * ref), stored and sent as `<@ref>`; `tagHandle` hydrates stored tags back to `@handle`.
+ * renders the composer while the menu is closed. A picked row is a mention range (`acceptMention`, `id` is the
+ * ref), stored and sent as `<@ref>`; `mentionHandle` hydrates stored mentions back to `@handle`.
  */
 export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): CompletionSource {
   const cache = () => qc.getQueryData<PrincipalsCache>(principalsQueryOptions.queryKey);
   const principalsHash = hashKey(principalsQueryOptions.queryKey);
   return {
     trigger: "@",
-    label: "Tag someone",
+    label: "Mention someone",
     opensAt: mentionOpensAt,
     items: (query) => {
       const me = qc.getQueryData(sessionQueryOptions.queryKey)?.user.ref;
@@ -92,10 +92,10 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
       }).map(toItem);
     },
     // The row's detail is `@handle`.
-    acceptTag: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+    acceptMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
     accept: (item, text, from, caret) =>
       acceptMention(text, (item.detail ?? "").slice(1), from, caret),
-    tagHandle(ref) {
+    mentionHandle(ref) {
       const found = cache()?.byRef.get(ref);
       if (found) return found.handle;
       // Not loaded yet: ask (everyone when there is no cache at all, else this ref in a batch).
@@ -103,7 +103,7 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
       else void qc.prefetchQuery(principalsQueryOptions);
       return undefined;
     },
-    watchTags: (onChange) =>
+    watchMentions: (onChange) =>
       qc.getQueryCache().subscribe((e) => {
         if (
           e.type === "updated" &&
@@ -129,8 +129,8 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
   };
 }
 
-/** The menu note for the fields that take a tag but aren't a message (a task title or body, a description, a schedule body). */
-export const FIELD_TAG_NOTE = "Esc keeps it as text";
+/** The menu note for the fields that take a mention but aren't a message (a task title or body, a description, a schedule body). */
+export const FIELD_MENTION_NOTE = "Esc keeps it as text";
 
 /** One `@` source per query client and note: identity-stable, so it never breaks the composer's `memo`. */
 export function useMentionSource(opts: MentionNote = {}): CompletionSource {

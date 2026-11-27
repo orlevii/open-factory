@@ -5,7 +5,7 @@ import { handleSchema } from "./handle.ts";
 export const principalStateSchema = z.enum(["live", "archived", "terminated", "disabled"]);
 export type PrincipalState = z.infer<typeof principalStateSchema>;
 
-/** What a tag chip needs to draw one principal; `avatar` is what `AgentAvatar` takes, null for a human. */
+/** What a mention chip needs to draw one principal; `avatar` is what `AgentAvatar` takes, null for a human. */
 export const principalItemSchema = z.object({
   id: z.string(),
   ref: z.string(),

@@ -126,7 +126,7 @@ function ProfileForm({
             name="handle"
             label="Handle"
             prefix="@"
-            help="How agents and people tag you, like @alice."
+            help="How agents and people mention you, like @alice."
             autoComplete="off"
             autoCapitalize="none"
             autoCorrect="off"

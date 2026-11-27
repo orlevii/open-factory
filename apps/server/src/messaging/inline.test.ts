@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { inline } from "./inline.ts";
 
-test("inline keeps a tag and strips a forged one", () => {
+test("inline keeps a mention and strips a forged one", () => {
   expect(inline("Owned by <@k7x2m9qd|ceo-agent> and <@abcdefgh>")).toBe(
     "Owned by <@k7x2m9qd|ceo-agent> and <@abcdefgh>",
   );

@@ -254,7 +254,7 @@ test("creating sends the form's values and closes the sheet", async () => {
   expect(screen.getByRole("heading", { name: "Schedules" })).toBeInTheDocument();
 });
 
-test("a schedule body's Preview renders the tag as a chip", async () => {
+test("a schedule body's Preview renders the mention as a chip", async () => {
   await openNew();
   await pick("ceo");
   const message = screen.getByLabelText("Message");

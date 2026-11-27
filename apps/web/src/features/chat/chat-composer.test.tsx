@@ -28,17 +28,17 @@ let agent: Partial<Parameters<typeof agentSummary>[0]>;
 let commands: unknown;
 let extraAgents: ReturnType<typeof agentSummary>[];
 
-/** The server names a recipient as a tag, `<@ref|handle>`; the ref here is a stand-in per handle. */
+/** The server names a recipient as a mention, `<@ref|handle>`; the ref here is a stand-in per handle. */
 /** The handle a ref in a sent `to` belongs to (the refs here are `refFor` of the handles the tests use). */
 const HANDLE_OF: Record<string, string> = Object.fromEntries(
   ["dev", "ops", "qa"].map((h) => [refFor(h), h]),
 );
-/** The server names a recipient as a tag; takes a handle or the ref a send carried. */
-const tagged = (who: string) => {
+/** The server names a recipient as a mention; takes a handle or the ref a send carried. */
+const mentioned = (who: string) => {
   const handle = HANDLE_OF[who] ?? who;
   return `<@${refFor(handle)}|${handle}>`;
 };
-const queued = (to: string) => ({ to: tagged(to), status: "queued", id: `row-${to}` });
+const queued = (to: string) => ({ to: mentioned(to), status: "queued", id: `row-${to}` });
 const OPS = agentSummary({ handle: "ops", displayName: "Ops agent", template: "ops" });
 const QA = agentSummary({ handle: "qa", displayName: "QA agent", template: "qa" });
 
@@ -98,18 +98,18 @@ test("no 'To:' row with one recipient; the toolbar has @ and attach, no /", asyn
   await box();
   expect(toRow()).toBeNull();
   expect(screen.getByRole("button", { name: "Add recipient" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Tag someone" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Mention someone" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /command/i })).toBeNull();
   expect(await box()).toHaveAttribute("placeholder", "Message Dev agent");
 });
 
-test("picking from @ in chat inserts a tag and adds no recipient", async () => {
+test("picking from @ in chat inserts a mention and adds no recipient", async () => {
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const input = await box();
   await userEvent.type(input, "hello @op");
-  const menu = await screen.findByRole("listbox", { name: "Tag someone" });
-  expect(screen.getByText("A tag doesn't send · Esc keeps it as text")).toBeInTheDocument();
+  const menu = await screen.findByRole("listbox", { name: "Mention someone" });
+  expect(screen.getByText("A mention doesn't send · Esc keeps it as text")).toBeInTheDocument();
   await userEvent.click(within(menu).getByRole("option", { name: /ops/ }));
   expect(toRow()).toBeNull();
   await userEvent.type(input, "go{Enter}");
@@ -310,7 +310,7 @@ test("a refused extra recipient is named; the rest are sent", async () => {
     results: (b.to as string[]).map((t) =>
       HANDLE_OF[t] === "ops"
         ? {
-            to: tagged("ops"),
+            to: mentioned("ops"),
             status: "refused",
             code: "terminated",
             reason: "@ops was terminated and can't receive messages.",
@@ -331,7 +331,7 @@ test("each refused recipient gets its own line", async () => {
       HANDLE_OF[t] === "dev"
         ? queued(t)
         : {
-            to: tagged(t),
+            to: mentioned(t),
             status: "refused",
             code: HANDLE_OF[t] === "ops" ? "terminated" : "archived",
             reason: "x",
@@ -352,7 +352,7 @@ test("when the chat's agent is refused the draft stays, with the reason and who 
     results: (b.to as string[]).map((t) =>
       HANDLE_OF[t] === "dev"
         ? {
-            to: tagged("dev"),
+            to: mentioned("dev"),
             status: "refused",
             code: "archived",
             reason: "@dev is archived and can't receive messages.",
@@ -477,7 +477,7 @@ test("'Not sent to @x' goes when you type the next message", async () => {
   results = (b) => ({
     results: (b.to as string[]).map((t) =>
       HANDLE_OF[t] === "ops"
-        ? { to: tagged("ops"), status: "refused", code: "terminated", reason: "x" }
+        ? { to: mentioned("ops"), status: "refused", code: "terminated", reason: "x" }
         : queued(t),
     ),
   });
@@ -615,7 +615,11 @@ test("a leading /word is a note only for a command the loaded list knows", async
 
 test("a send the server could not start keeps its block, pending", async () => {
   results = (b) => ({
-    results: (b.to as string[]).map((t) => ({ to: tagged(t), status: "start_failed", id: "r1" })),
+    results: (b.to as string[]).map((t) => ({
+      to: mentioned(t),
+      status: "start_failed",
+      id: "r1",
+    })),
   });
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 2");

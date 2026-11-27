@@ -36,7 +36,7 @@ import {
   taskKey,
   type WaitingOn,
 } from "@open-factory/shared";
-import { renderTags, type TagPrincipal, tagOf } from "@open-factory/shared/tags";
+import { type MentionPrincipal, mentionOf, renderMentions } from "@open-factory/shared/mentions";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
@@ -199,7 +199,7 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@factory`, `@scheduler`, else the sender's tag); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@factory`, `@scheduler`, else the sender's mention); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
@@ -207,12 +207,12 @@ type MessageEntry = {
   row: MessageRow;
   from: string;
   fromKind: "human" | "agent" | "factory";
-  /** The sender's `<@ref>` tag, what a member update's `re` stores (absent for the factory and the scheduler). */
-  fromTag?: string;
-  /** A `message` row's recipients as `<@ref>` tags (the envelope's `to`, rendered when it is written). */
-  recipientTags?: string[];
+  /** The sender's `<@ref>` mention, what a member update's `re` stores (absent for the factory and the scheduler). */
+  fromMention?: string;
+  /** A `message` row's recipients as `<@ref>` mentions (the envelope's `to`, rendered when it is written). */
+  recipientMentions?: string[];
   groupKey?: string;
-  /** The subject agent's `<@ref>` tag (the envelope's `about`). */
+  /** The subject agent's `<@ref>` mention (the envelope's `about`). */
   about?: string;
   subject?: Subject;
 };
@@ -322,7 +322,7 @@ function entryOf(r: PendingRow): MessageEntry {
     fromHandle,
     fromRef,
     fromKind: senderKind,
-    recipientTags,
+    recipientMentions,
     subjectHandle,
     subjectRef,
     subjectDisplayName,
@@ -344,10 +344,10 @@ function entryOf(r: PendingRow): MessageEntry {
     row,
     from,
     fromKind,
-    ...(fromRef && senderKind ? { fromTag: tagOf(fromRef) } : {}),
-    ...(recipientTags ? { recipientTags } : {}),
+    ...(fromRef && senderKind ? { fromMention: mentionOf(fromRef) } : {}),
+    ...(recipientMentions ? { recipientMentions } : {}),
     ...(groupKey ? { groupKey } : {}),
-    ...(subjectRef ? { about: tagOf(subjectRef) } : {}),
+    ...(subjectRef ? { about: mentionOf(subjectRef) } : {}),
   };
   if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectHandle) {
     const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
@@ -374,14 +374,14 @@ const scheduleFieldsOf = (
   row: MessageRow & {
     scheduleKey?: string | null;
     scheduleZone?: string | null;
-    authorTag?: string | null;
+    authorMention?: string | null;
     authorKind?: "human" | "agent" | null;
   },
 ) =>
   row.kind === "scheduled" && row.scheduleKey
     ? {
         scheduleKey: row.scheduleKey,
-        ...(row.authorTag ? { by: row.authorTag } : {}),
+        ...(row.authorMention ? { by: row.authorMention } : {}),
         ...(row.authorKind ? { byKind: row.authorKind } : {}),
         ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
         ...(row.firings ? { firings: row.firings } : {}),
@@ -403,15 +403,15 @@ const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
 const requestsOf = (entries: MessageEntry[]): RequestRef[] =>
   entries
     .filter((e) => REQUEST_KINDS.has(kindOf(e.row)))
-    .map((e) => ({ id: e.row.id, from: e.fromTag ?? e.from }));
+    .map((e) => ({ id: e.row.id, from: e.fromMention ?? e.from }));
 
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
-  // A principal is its tag here (rendered when the batch is written); the factory and the scheduler stay words.
-  from: e.fromTag ?? e.from,
+  // A principal is its mention here (rendered when the batch is written); the factory and the scheduler stay words.
+  from: e.fromMention ?? e.from,
   fromKind: e.fromKind,
-  ...(e.recipientTags ? { to: e.recipientTags } : {}),
+  ...(e.recipientMentions ? { to: e.recipientMentions } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -473,12 +473,14 @@ type LiveCron = {
 };
 
 /**
- * Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. Principals are tags until now: one
+ * Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. Principals are mentions until now: one
  * query names every ref of the batch, and each attribute and body is rendered with its current handle (spec §4.4).
  */
 async function toEnvelopes(
   batch: MessageEntry[],
-  tagLookup: (texts: readonly string[]) => Promise<(ref: string) => TagPrincipal | undefined>,
+  mentionLookup: (
+    texts: readonly string[],
+  ) => Promise<(ref: string) => MentionPrincipal | undefined>,
 ): Promise<FactoryMessage[]> {
   const rows = batch.map(toBatchRow);
   const texts = rows.flatMap((r) => [
@@ -489,8 +491,8 @@ async function toEnvelopes(
     ...(r.by ? [r.by] : []),
     ...(r.re?.map((x) => x.from) ?? []),
   ]);
-  const lookup = await tagLookup(texts);
-  const show = (t: string) => renderTags(t, lookup, "agent");
+  const lookup = await mentionLookup(texts);
+  const show = (t: string) => renderMentions(t, lookup, "agent");
   return groupEnvelopes(
     rows.map((r) => ({
       ...r,
@@ -1048,7 +1050,7 @@ export class AgentRuntime {
         "report_config_changed",
         notices.reportConfigChanged({
           by,
-          report: await this.d.store.principalTag(reportId),
+          report: await this.d.store.principalMention(reportId),
           lines,
         }),
         reportId,
@@ -1102,7 +1104,7 @@ export class AgentRuntime {
   /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
   async compact(c: {
     focus?: string;
-    /** The requester's tag, `<@ref>`. */
+    /** The requester's mention, `<@ref>`. */
     by: string;
     userId?: string;
     clientMessageId?: string;
@@ -1412,7 +1414,7 @@ export class AgentRuntime {
    * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
    * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
    * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
-   * serial, so it would wait on itself. `by` is the requester's tag. `changes` are the caller's `describeChanges` lines, `null`
+   * serial, so it would wait on itself. `by` is the requester's mention. `changes` are the caller's `describeChanges` lines, `null`
    * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
   restartNow(r: {
@@ -1864,7 +1866,7 @@ export class AgentRuntime {
       const row = await this.d.store.agentById(this.agent.id);
       if (!row?.terminatedAt) return "none";
       if (!this.terminationCommitted) this.markTerminated({ committed: true });
-      const by = await this.d.store.terminatorTagOf(row.terminatedBy);
+      const by = await this.d.store.terminatorMentionOf(row.terminatedBy);
       await this.ensureTerminatedEvent(by);
       this.containerListed = Boolean(o.containerListed);
       const proc = this.proc;
@@ -2411,7 +2413,7 @@ export class AgentRuntime {
           kind: e.row.kind === "system" || isPeer(e) ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: e.fromTag ?? e.from,
+          from: e.fromMention ?? e.from,
           fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
@@ -2489,7 +2491,7 @@ export class AgentRuntime {
     await this.d.forward({
       agentId: this.agent.id,
       fact,
-      body: factFor(fact, await this.d.store.principalTag(this.agent.id), detail),
+      body: factFor(fact, await this.d.store.principalMention(this.agent.id), detail),
     });
   }
 
@@ -4381,7 +4383,7 @@ export class AgentRuntime {
     const ids = batch.map((m) => m.row.id);
     let envelopes: FactoryMessage[];
     try {
-      envelopes = await toEnvelopes(batch, (t) => this.d.store.tagLookup(t)); // inside the try: a throw here must not lose the batch
+      envelopes = await toEnvelopes(batch, (t) => this.d.store.mentionLookup(t)); // inside the try: a throw here must not lose the batch
       await proc.send(envelopes);
     } catch (err) {
       this.queue.unshift(...batch);

@@ -25,7 +25,7 @@ export function notReachedLine(list: TaskCommentResponse["notReached"]): string 
 }
 
 /** What the `@` menu says a pick does, in a comment. */
-const TAG_NOTE = "A tag notifies them · Esc keeps it as text";
+const MENTION_NOTE = "A mention notifies them · Esc keeps it as text";
 export const POST_FAILED = "Couldn't post the comment. Try again.";
 
 export type CommentComposerHandle = {
@@ -94,14 +94,14 @@ export function CommentComposer({
     },
     [qc, taskKey, onPosted],
   );
-  // `@` tags someone: the tag is sent as `<@ref>` and notifies them.
-  const at = useMentionSource({ note: TAG_NOTE });
+  // `@` mentions someone: the mention is sent as `<@ref>` and notifies them.
+  const at = useMentionSource({ note: MENTION_NOTE });
   const completions = useMemo(() => ({ at }), [at]);
   const coarse = isCoarsePointer();
   const note = useMemo(() => {
     const who = assignee
-      ? `Goes to @${assignee} and anyone you tag.`
-      : "No assignee: only the people and agents you tag are notified.";
+      ? `Goes to @${assignee} and anyone you mention.`
+      : "No assignee: only the people and agents you mention are notified.";
     return { kind: "hint" as const, text: coarse ? who : `${who} Enter to post.` };
   }, [assignee, coarse]);
   return (

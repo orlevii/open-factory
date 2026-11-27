@@ -1,5 +1,5 @@
 import type { Envelope, MessageKind } from "@open-factory/shared";
-import { TAG_SHAPE } from "@open-factory/shared/tags";
+import { MENTION_SHAPE } from "@open-factory/shared/mentions";
 import type { FactoryMessage } from "./types.ts";
 
 const escapeAttr = (s: string) =>
@@ -10,13 +10,13 @@ const escapeAttr = (s: string) =>
     .replaceAll(">", "&gt;");
 
 /**
- * An attribute value: an exact `<@ref>` / `<@ref|handle>` tag (a validated ref and handle, so it holds no quote or
+ * An attribute value: an exact `<@ref>` / `<@ref|handle>` mention (a validated ref and handle, so it holds no quote or
  * angle bracket beyond its own) is written as is; everything else is escaped.
  */
 const attr = (s: string) => {
   let out = "";
   let at = 0;
-  for (const m of s.matchAll(TAG_SHAPE)) {
+  for (const m of s.matchAll(MENTION_SHAPE)) {
     out += escapeAttr(s.slice(at, m.index)) + m[0];
     at = m.index + m[0].length;
   }
@@ -74,7 +74,7 @@ export type BatchRow = {
   kind: MessageKind;
   from: string;
   fromKind: FactoryMessage["fromKind"];
-  /** The recipients of a `kind: "message"` row, as tags. */
+  /** The recipients of a `kind: "message"` row, as mentions. */
   to?: string[];
   urgent: boolean;
   body: string;
@@ -82,7 +82,7 @@ export type BatchRow = {
   about?: string;
   /** A report's `member_update`: the requests of its turn when it wrote the text. */
   re?: Envelope["re"];
-  /** The report's tag for member updates. */
+  /** The report's mention for member updates. */
   groupKey?: string;
   fact?: string;
   subject?: NonNullable<Envelope["subject"]>;
@@ -90,7 +90,7 @@ export type BatchRow = {
   taskKey?: string;
   taskTitle?: string;
   commentId?: string;
-  /** S9: a `scheduled` row. `by` is its author's tag, `due` is ISO 8601 with the schedule zone's offset. */
+  /** S9: a `scheduled` row. `by` is its author's mention, `due` is ISO 8601 with the schedule zone's offset. */
   scheduleKey?: string;
   by?: string;
   /** UI-only: what `by` is; `one()` never renders it. */

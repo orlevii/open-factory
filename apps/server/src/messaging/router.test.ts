@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
@@ -59,14 +59,14 @@ async function startIdle(handle: string) {
   await settle(handle);
   return p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
 }
-/** Results name principals by tag; most tests read them by `@handle` (one test below asserts the tag shape). */
-const TAG_TEXT = /<@[0-9a-z]{8}\|([a-z0-9-]+)>/g;
-const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(TAG_TEXT, "@$1"));
+/** Results name principals by mention; most tests read them by `@handle` (one test below asserts the mention shape). */
+const MENTION_TEXT = /<@[0-9a-z]{8}\|([a-z0-9-]+)>/g;
+const plain = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(MENTION_TEXT, "@$1"));
 const sendPlain = async (...a: Parameters<typeof h.app.router.send>) =>
   plain(await h.app.router.send(...a));
 const rawText = (r: { content: { text: string }[] }) => r.content[0]?.text ?? "";
 const text = (r: { content: { text: string }[] }) =>
-  (r.content[0]?.text ?? "").replace(TAG_TEXT, "@$1");
+  (r.content[0]?.text ?? "").replace(MENTION_TEXT, "@$1");
 const pendingOf = (handle: string) =>
   h.sql`select m.id, m.state from messages m join agents a on a.id = m.to_id where a.id = (select id from principals where handle = ${handle}) and m.kind = 'message' order by m.created_at`;
 
@@ -313,7 +313,7 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   ]);
   expect(near.peers).toContainEqual({
     handle: "@or",
-    tag: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
+    mention: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     kind: "human",
     name: "Or",
   });
@@ -479,7 +479,7 @@ test("a report's top-level text is persisted for its manager and handed over to 
   expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
 });
 
-test("a member update's re stores the sender's tag: a report's text to a human manager keeps the request it answers on the inbox row", async () => {
+test("a member update's re stores the sender's mention: a report's text to a human manager keeps the request it answers on the inbox row", async () => {
   const { user: manager } = await signUp(h.app, { handle: "boss" });
   const ada = await agentRowOf(h.app, "ada");
   await h.sql`update agents set reports_to = ${manager.id} where id = ${ada?.id ?? ""}`;
@@ -556,7 +556,7 @@ test("reconcile forwards factory_restarted lost work to the manager", async () =
     {
       notice: "work_lost",
       subject_agent_id: a.id,
-      body: `Background work of ${tagOf(testRef(a.id))} was stopped. Reported by ${tagOf(testRef(a.id))}:\n> pnpm test`,
+      body: `Background work of ${mentionOf(testRef(a.id))} was stopped. Reported by ${mentionOf(testRef(a.id))}:\n> pnpm test`,
     },
   ]);
 });
@@ -673,11 +673,11 @@ const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id ?? 
 test("persistPeerEvents runs in the caller's transaction: it sees a child inserted there, and its rows roll back with it", async () => {
   const rollback = new Error("rollback");
   let seen: { to: string | null; kind: string; notice: string | null; body: string }[] = [];
-  let kidTag = "";
+  let kidMention = "";
   await expect(
     h.db.transaction(async (tx) => {
       const kid = await insertKid(tx, "kid-ab12");
-      kidTag = tagOf(testRef(kid.id));
+      kidMention = mentionOf(testRef(kid.id));
       const rows = await h.app.router.persistPeerEvents(
         tx,
         kid.id,
@@ -690,13 +690,23 @@ test("persistPeerEvents runs in the caller's transaction: it sees a child insert
   ).rejects.toBe(rollback);
   const [ada, bob, lead] = [await idOf("ada"), await idOf("bob"), await idOf("lead")];
   expect(seen).toEqual([
-    { to: ada, kind: "peer_joined", notice: "peer", body: `${kidTag} (Kid) joined as your peer.` },
-    { to: bob, kind: "peer_joined", notice: "peer", body: `${kidTag} (Kid) joined as your peer.` },
+    {
+      to: ada,
+      kind: "peer_joined",
+      notice: "peer",
+      body: `${kidMention} (Kid) joined as your peer.`,
+    },
+    {
+      to: bob,
+      kind: "peer_joined",
+      notice: "peer",
+      body: `${kidMention} (Kid) joined as your peer.`,
+    },
     {
       to: lead,
       kind: "peer_joined",
       notice: "report",
-      body: `${kidTag} (Kid) joined as your report.`,
+      body: `${kidMention} (Kid) joined as your report.`,
     },
   ]);
   expect(await heldRows()).toEqual([]);
@@ -721,7 +731,7 @@ test("persistPeerEvents: excludeManager skips the spawner; the rows commit with 
   await vi.waitFor(() => expect(handOver).toHaveBeenCalledTimes(2));
 });
 
-const OR_TAG = "<@or000000>";
+const OR_MENTION = "<@or000000>";
 
 test("persistPeerEvents: archived and terminated recipients get nothing; the terminated body names who", async () => {
   await h.db.transaction((tx) => insertKid(tx, "gone-ab12", { terminated: true }));
@@ -736,7 +746,7 @@ test("persistPeerEvents: archived and terminated recipients get nothing; the ter
     h.app.router.persistPeerEvents(
       tx,
       ada,
-      { kind: "left", reason: "terminated", by: OR_TAG },
+      { kind: "left", reason: "terminated", by: OR_MENTION },
       { managerId: lead, peerIds: [bob, gone] },
     ),
   );
@@ -745,7 +755,7 @@ test("persistPeerEvents: archived and terminated recipients get nothing; the ter
       to: "lead",
       kind: "peer_left",
       notice: "report",
-      body: `${tagOf(testRef(ada))} (Test agent) left: terminated by ${OR_TAG}.`,
+      body: `${mentionOf(testRef(ada))} (Test agent) left: terminated by ${OR_MENTION}.`,
     },
   ]);
 });
@@ -1087,13 +1097,13 @@ describe("loop guard on list sends", () => {
   });
 });
 
-test("send_message names each recipient by tag and an unknown name as written", async () => {
+test("send_message names each recipient by mention and an unknown name as written", async () => {
   const tokA = await startIdle("ada");
   const bob = await agentRowOf(h.app, "bob");
   const out = JSON.parse(
     rawText(await callTool(url, tokA, "send_message", { to: ["bob", "ghost"], body: "hi" })),
   ).results;
-  expect(out[0].to).toBe(await h.app.store.agentTag(bob?.id ?? ""));
+  expect(out[0].to).toBe(await h.app.store.agentMention(bob?.id ?? ""));
   // A name nobody holds stays the word it was written as.
   expect(out[1]).toMatchObject({ to: "@ghost", status: "refused" });
 });

@@ -42,7 +42,7 @@ import { AddRecipient, FULL_NOTE } from "./add-recipient";
 import { handleOfResult, isResultFor, refusedBecause, sendMessages } from "./send";
 import { addSending, dropSending, lastSentText, refreshChat } from "./use-chat";
 
-const TAG_NOTE = "A tag doesn't send · Esc keeps it as text";
+const MENTION_NOTE = "A mention doesn't send · Esc keeps it as text";
 export const FILES_ONE_AGENT = "Files go to one agent at a time";
 /** A leading `/token`, the whole text up to its first whitespace. */
 const LEADING_COMMAND = /^\s*\/(\S+)/;
@@ -96,7 +96,7 @@ export const ChatComposer = memo(function ChatComposer({
 }: Props) {
   const qc = useQueryClient();
   const handle = useHandle(agentRef);
-  const mentionSource = useMentionSource({ note: TAG_NOTE });
+  const mentionSource = useMentionSource({ note: MENTION_NOTE });
   const draftKey = chatDraftKey(agentRef);
   const inner = useRef<ComposerHandle>(null);
   useEffect(() => registerComposerFocus(agentRef, () => inner.current?.focus()), [agentRef]);

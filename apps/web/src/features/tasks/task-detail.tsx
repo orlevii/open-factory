@@ -5,7 +5,7 @@ import {
   taskBodySchema,
   taskTitleSchema,
 } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { PrincipalChip } from "@/components/agent-chip";
-import { TagInput } from "@/components/composer/tag-field";
+import { MentionInput } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
 import {
   FormOutcome,
@@ -30,13 +30,13 @@ import {
 import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
+import { InlineMentions } from "@/components/mention/inline-mentions";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { PageHeader } from "@/components/page-header";
-import { InlineTags } from "@/components/tag/inline-tags";
-import { usePlainTags } from "@/components/tag/plain-tags";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgent } from "@/features/agents/use-agent-index";
-import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { usePrincipalLookup } from "@/features/principals/use-principal";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
@@ -285,7 +285,7 @@ export function TaskDetailView({
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
     if (c?.type !== "comment") return setMissing(true);
     setHighlight(commentId);
-    if (c.author.kind === "agent") composer.current?.prefill(tagOf(c.author.ref));
+    if (c.author.kind === "agent") composer.current?.prefill(mentionOf(c.author.ref));
     requestAnimationFrame(() => {
       const el = document.getElementById(`comment-${commentId}`);
       el?.scrollIntoView?.({ block: "center" });
@@ -406,7 +406,7 @@ function TitleBlock({
       ) : (
         <div className="flex min-w-0 items-start gap-2">
           <h2 className="min-w-0 font-heading text-xl leading-7 font-[650] tracking-[-0.015em] [overflow-wrap:anywhere]">
-            <InlineTags text={task.title} />
+            <InlineMentions text={task.title} />
           </h2>
           <Button
             ref={edit}
@@ -437,7 +437,7 @@ function TitleEditor({
   onClose(): void;
 }) {
   const [text, setText] = useState(title);
-  const at = useMentionSource({ note: FIELD_TAG_NOTE });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const [pending, setPending] = useState(false);
   const o = useOutcome();
   const form = useRef<HTMLDivElement>(null);
@@ -468,7 +468,7 @@ function TitleEditor({
       {/* The heading's place already names it: the label is for assistive tech. */}
       <FieldShell name="task-title" label="Title" hideLabel error={f.errors.title}>
         {(a) => (
-          <TagInput
+          <MentionInput
             ref={input}
             id={a.id}
             value={text}
@@ -562,7 +562,7 @@ function BodyEditor({
   save: Save;
   onClose(): void;
 }) {
-  const at = useMentionSource({ note: FIELD_TAG_NOTE });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const [text, setText] = useState(body);
   const [pending, setPending] = useState(false);
   const [view, setView] = useState<"write" | "preview">("write");
@@ -604,7 +604,7 @@ function BodyEditor({
           <MarkdownEditor
             id={a.id}
             value={text}
-            tagSource={at}
+            mentionSource={at}
             invalid={a.invalid}
             view={view}
             onViewChange={setView}
@@ -1043,7 +1043,7 @@ export function TaskDetailHeader({
   taskKey: string;
   title?: string | undefined;
 }) {
-  const plain = usePlainTags(title ?? "");
+  const plain = usePlainMentions(title ?? "");
   return (
     <PageHeader
       title={taskKey}

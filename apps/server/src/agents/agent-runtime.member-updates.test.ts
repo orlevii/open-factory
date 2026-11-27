@@ -1,5 +1,5 @@
 import type { Envelope } from "@open-factory/shared";
-import { tagOf } from "@open-factory/shared/tags";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { peerBody } from "../messaging/peer-body.ts";
 import type { CredentialPause } from "../supervisor/slots.ts";
@@ -319,7 +319,7 @@ test("a rate-limited manager keeps due updates queued and gets them at the reset
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({
       kind: "message",
-      from: tagOf(testRef(REPORT)),
+      from: mentionOf(testRef(REPORT)),
       body: "held by the pause",
     }),
   ]);
@@ -359,7 +359,9 @@ test("a manager whose recovery needs Start a new session keeps the update queued
   await update("due while errored");
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
-  expect(h.rt.queueItems()).toEqual([expect.objectContaining({ from: tagOf(testRef(REPORT)) })]);
+  expect(h.rt.queueItems()).toEqual([
+    expect.objectContaining({ from: mentionOf(testRef(REPORT)) }),
+  ]);
   await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(1);
@@ -409,7 +411,7 @@ test("loading an errored manager with pending updates starts nothing; they ride 
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({
       kind: "message",
-      from: tagOf(testRef(REPORT)),
+      from: mentionOf(testRef(REPORT)),
       body: "stuck report text",
     }),
   ]);
@@ -424,7 +426,7 @@ test("loading an errored manager with pending updates starts nothing; they ride 
 test("a peer event is a queued notice that never wakes or is written alone; it rides along with the next batch", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
-  await peer(`${tagOf(testRef(REPORT))} (Dev agent) joined as your peer.`);
+  await peer(`${mentionOf(testRef(REPORT))} (Dev agent) joined as your peer.`);
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({ kind: "notice", from: "@factory" }),
   ]);
@@ -438,11 +440,11 @@ test("a peer event is a queued notice that never wakes or is written alone; it r
 test("a peer_left envelope carries its subject, with the move target read back from the body", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
-  const LEAD_TAG = tagOf(testRef("leadx"));
+  const LEAD_MENTION = mentionOf(testRef("leadx"));
   const body = peerBody(
     { ref: testRef(REPORT), displayName: "Dev agent" },
     "report",
-    { kind: "peer_left", left: { reason: "moved", to: LEAD_TAG } },
+    { kind: "peer_left", left: { reason: "moved", to: LEAD_MENTION } },
     testRef("leadx"),
   );
   await h.receive(
@@ -463,7 +465,7 @@ test("a peer_left envelope carries its subject, with the move target read back f
       handle: "devrep",
       displayName: "Dev agent",
       relation: "report",
-      left: { reason: "moved", to: LEAD_TAG },
+      left: { reason: "moved", to: LEAD_MENTION },
     },
   });
 });

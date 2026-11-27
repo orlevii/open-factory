@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { TagTextarea } from "@/components/composer/tag-field";
+import { MentionTextarea } from "@/components/composer/mention-field";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
@@ -46,7 +46,7 @@ import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { NO_AGENT_LINE } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
-import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { undoRename } from "@/features/profile/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { credentialsQueryOptions, projectsQueryOptions } from "@/features/settings/api";
@@ -181,7 +181,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const draftKey = `edit-agent:${agentRef}` as const;
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({ mode: "edit", agent, draftKey, form });
-  const at = useMentionSource({ note: FIELD_TAG_NOTE });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const { shown, errors, set, blur, claim, pending, changes } = s;
   const { noCredentials, credentials, staleNotes } = s;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
@@ -456,7 +456,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           </FieldShell>
           <FieldShell name="description" label="Description" error={errors.description}>
             {(a) => (
-              <TagTextarea
+              <MentionTextarea
                 id={a.id}
                 name="description"
                 rows={3}

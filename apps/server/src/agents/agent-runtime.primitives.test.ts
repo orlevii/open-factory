@@ -152,7 +152,7 @@ test("stop() taking over a hibernate: its exit never wakes and the timeout job b
 });
 
 test("process_started records the wake reason", async () => {
-  await h.rt.compact({ byHandle: "or" });
+  await h.rt.compact({ by: "<@or>" });
   const started = (await h.store.after(h.agentId, 0, 100)).find(
     (e) => e.event.type === "process_started",
   );

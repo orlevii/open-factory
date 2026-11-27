@@ -9,13 +9,13 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  for (const [id, slug] of [
+  for (const [id, handle] of [
     ["m1", "lead"],
     ["r1", "dev"],
     ["r2", "qa"],
     ["x1", "hr"],
   ] as const)
-    await insertAgent(t.sql, { id, slug });
+    await insertAgent(t.sql, { id, handle });
 });
 afterAll(() => t.close());
 
@@ -24,7 +24,7 @@ const report = (
   subjectAgentId: string,
   by: string,
   lines: string[],
-  r = "dev",
+  r = "<@dev00000>",
 ) =>
   store.createNotice({
     toAgentId,
@@ -35,28 +35,28 @@ const report = (
 const pendingReports = (toAgentId: string) =>
   t.sql<{ id: string; body: string; subject_agent_id: string | null }[]>`
     select id, body, subject_agent_id from messages
-    where to_agent_id = ${toAgentId} and notice = 'report_config_changed' and state = 'pending'
+    where to_id = ${toAgentId} and notice = 'report_config_changed' and state = 'pending'
     order by created_at`;
 
 test("two notices for the same manager and report make one row with the sorted union of lines", async () => {
-  const a = await report("m1", "r1", "@hr", ["b change", "a change"]);
-  const b = await report("m1", "r1", "@qa", ["c change", "a change"]);
+  const a = await report("m1", "r1", "<@hr000000>", ["b change", "a change"]);
+  const b = await report("m1", "r1", "<@qa000000>", ["c change", "a change"]);
   expect(b.id).toBe(a.id);
   const rows = await pendingReports("m1");
   expect(rows).toHaveLength(1);
   expect(rows[0]?.subject_agent_id).toBe("r1");
   // The newest header names the latest actor.
   expect(rows[0]?.body).toBe(
-    "@qa changed @dev's configuration:\n- a change\n- b change\n- c change",
+    "<@qa000000> changed <@dev00000>'s configuration:\n- a change\n- b change\n- c change",
   );
 });
 
 test("a different report of the same manager gets its own row", async () => {
-  await report("m1", "r2", "@hr", ["q change"], "qa");
+  await report("m1", "r2", "<@hr000000>", ["q change"], "<@qa000000>");
   const rows = await pendingReports("m1");
   expect(rows.map((r) => r.subject_agent_id).sort()).toEqual(["r1", "r2"]);
   const qa = rows.find((r) => r.subject_agent_id === "r2");
-  expect(qa?.body).toBe("@hr changed @qa's configuration:\n- q change");
+  expect(qa?.body).toBe("<@hr000000> changed <@qa000000>'s configuration:\n- q change");
 });
 
 test("concurrent merges lose no line and make no second row", async () => {

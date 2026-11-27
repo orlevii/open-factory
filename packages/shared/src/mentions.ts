@@ -1,62 +1,220 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
+import { HANDLE_PATTERN } from "./handle.ts";
+import { normaliseRef } from "./ref.ts";
 
-/** Before `@`: start, or not a letter/digit/_ and not / . @ ; after the name: not a letter/digit/_. */
-const MENTION = /(?<![\p{L}\p{N}_/.@])@([a-z0-9][a-z0-9-]*)(?![\p{L}\p{N}_-])/gu;
+/** The only two mention shapes that may pass a sanitiser: <@ref> and <@ref|handle>. Global; use matchAll / replace. */
+export const MENTION_SHAPE = /<@[0-9a-hjkmnp-tv-z]{8}(?:\|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?>/g;
+
+/** Before `@`: start, or not a letter/digit/_ and not / . @ ; after the name: not a letter/digit/_ or hyphen. */
+const PLAIN_AT = /(?<![\p{L}\p{N}_/.@])@([a-z0-9][a-z0-9-]*)(?![\p{L}\p{N}_-])/gu;
+/** A mention-looking token: its name may be a ref (any case, with look-alikes) or a handle written in its place. */
+const TOKEN = /<@([0-9A-Za-z][0-9A-Za-z-]*)(?:\|[^<>\n]*)?>/g;
+const TRAILING_HYPHENS = /-+$/;
+
+export type MentionToken = { ref: string; start: number; end: number; name: string };
+export type PlainCandidate = { name: string; start: number; end: number };
+export type MentionScan = { tokens: MentionToken[]; plain: PlainCandidate[] };
+export type MentionPrincipal = { ref: string; handle: string };
+export type MentionLookup = {
+  byRef: ReadonlyMap<string, MentionPrincipal>;
+  byHandle: ReadonlyMap<string, MentionPrincipal>;
+};
+export type MentionWarning = { written: string; ref: string; handle: string };
+export type AppliedMentions = {
+  text: string;
+  refs: string[];
+  warnings: MentionWarning[];
+  unknownRefs: string[];
+};
 
 type Node = {
   type: string;
   value?: string;
   url?: string;
   children?: Node[];
-  position?: { start: { offset?: number }; end?: { offset?: number } };
+  position?: { start: { offset?: number }; end: { offset?: number } };
 };
+type Range = [start: number, end: number];
 
-/**
- * Each text node is matched on its own source slice (`position.start/end.offset`), so entities (`&amp;`) and escapes
- * never shift an offset, and there is no search fallback: an escaped `\\@or` is skipped by looking at the source.
- *
- * Spec §8: the names mentioned outside code, through the same micromark+GFM parser react-markdown uses. */
-export function extractMentions(markdown: string): { names: string[]; skipped: string[] } {
-  const tree = fromMarkdown(markdown, {
+function span(n: Node): Range | undefined {
+  const start = n.position?.start.offset;
+  const end = n.position?.end.offset;
+  return start === undefined || end === undefined ? undefined : [start, end];
+}
+
+/** Source ranges where no mention is parsed (neither a token nor a plain `@name`): code, URLs, and a link's target (its text still counts). */
+function excludedRanges(text: string): Range[] {
+  const tree = fromMarkdown(text, {
     extensions: [gfm()],
     mdastExtensions: [gfmFromMarkdown()],
   }) as Node;
-  const out: string[] = [];
-  // Kept in the result shape for callers; with source slices nothing is ever skipped.
-  const skipped: string[] = [];
+  const out: Range[] = [];
   const visit = (n: Node) => {
-    if (n.type === "code" || n.type === "inlineCode") return;
-    // An autolink or bare URL: a link whose only text is its own URL.
-    if (
-      n.type === "link" &&
-      n.children?.length === 1 &&
-      n.children[0]?.type === "text" &&
-      (n.children[0].value === n.url || `mailto:${n.children[0].value}` === n.url)
-    )
+    const own = span(n);
+    if (n.type === "code" || n.type === "inlineCode") {
+      if (own) out.push(own);
       return;
-    if (
-      n.type === "text" &&
-      n.position?.start.offset !== undefined &&
-      n.position.end?.offset !== undefined
-    ) {
-      // Matched on the node's own source slice, so decoded entities and dropped escapes never shift an offset.
-      const start = n.position.start.offset;
-      const src = markdown.slice(start, n.position.end.offset);
-      for (const hit of src.matchAll(MENTION)) {
-        const i = hit.index ?? 0;
-        // A boundary at the slice's start: look at the source character before it.
-        if (i === 0 && start > 0 && /[\p{L}\p{N}_/.@]/u.test(markdown[start - 1] ?? "")) continue;
-        // `\@or`: an escaped `@` is not a mention.
-        if (src[i - 1] === "\\") continue;
-        const name = (hit[1] ?? "").replace(/-+$/, "");
-        if (name && !out.includes(name)) out.push(name);
+    }
+    if (n.type === "link" && own) {
+      const kids = n.children ?? [];
+      const only = kids[0];
+      // An autolink or bare URL: a link whose only text is its own URL.
+      if (
+        kids.length === 1 &&
+        only?.type === "text" &&
+        (only.value === n.url || `mailto:${only.value}` === n.url)
+      ) {
+        out.push(own);
+        return;
       }
-      return;
+      let at = own[0];
+      for (const c of kids) {
+        const r = span(c);
+        if (!r) continue;
+        if (r[0] > at) out.push([at, r[0]]);
+        at = r[1];
+      }
+      if (own[1] > at) out.push([at, own[1]]);
     }
     for (const c of n.children ?? []) visit(c);
   };
   visit(tree);
-  return { names: out, skipped };
+  out.sort((a, b) => a[0] - b[0]);
+  return out;
 }
+
+/** Binary search over ranges sorted by start (they never overlap: children sit inside one parent only once). */
+function inside(ranges: Range[], i: number): boolean {
+  let lo = 0;
+  let hi = ranges.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const r = ranges[mid] as Range;
+    if (i < r[0]) hi = mid - 1;
+    else if (i >= r[1]) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
+
+/**
+ * Spec §4.3: the tokens (`<@ref…>`) and plain `@name` candidates outside code and URLs, over the whole source
+ * (a `|` in a table row splits cells, so per-text-node scanning would cut a label). Pure.
+ */
+export function scanMentions(text: string): MentionScan {
+  const ranges = excludedRanges(text);
+  const tokens: MentionToken[] = [];
+  const plain: PlainCandidate[] = [];
+  /** An escaped token is text, and its `@name` is not a mention either. */
+  const escaped: Range[] = [];
+  for (const m of text.matchAll(TOKEN)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (text[start - 1] === "\\") {
+      if (!inside(ranges, start)) escaped.push([start, end]);
+      continue;
+    }
+    if (inside(ranges, start)) continue;
+    const name = (m[1] ?? "").toLowerCase();
+    const ref = normaliseRef(name);
+    if (ref) tokens.push({ ref, start, end, name });
+    else if (HANDLE_PATTERN.test(name)) plain.push({ name, start, end });
+  }
+  const taken: Range[] = [...tokens, ...plain].map((t): Range => [t.start, t.end]);
+  taken.push(...escaped);
+  taken.sort((a, b) => a[0] - b[0]);
+  for (const m of text.matchAll(PLAIN_AT)) {
+    const start = m.index ?? 0;
+    if (text[start - 1] === "\\" || inside(ranges, start) || inside(taken, start)) continue;
+    const name = (m[1] ?? "").replace(TRAILING_HYPHENS, "");
+    if (name) plain.push({ name, start, end: start + 1 + name.length });
+  }
+  plain.sort((a, b) => a.start - b.start);
+  return { tokens, plain };
+}
+
+export const mentionOf = (ref: string): string => `<@${ref}>`;
+export const agentMentionOf = (p: MentionPrincipal): string => `<@${p.ref}|${p.handle}>`;
+
+type Edit = {
+  start: number;
+  end: number;
+  hit?: MentionPrincipal;
+  unknown?: string;
+  written?: string;
+};
+
+/**
+ * Rewrites every known token to `<@ref>`. An unknown ref is left as written and reported. A plain `@name` (or a
+ * `<@handle>` written in a ref's place) resolves on an exact handle match, only with `resolvePlain`, and warns.
+ */
+export function applyMentions(
+  text: string,
+  scan: MentionScan,
+  lookup: MentionLookup,
+  opts: { resolvePlain: boolean },
+): AppliedMentions {
+  const edits: Edit[] = [];
+  for (const t of scan.tokens) {
+    const known = lookup.byRef.get(t.ref);
+    // A handle in a ref's place is plain: it resolves only when plain mentions are allowed.
+    const asHandle = known ? undefined : lookup.byHandle.get(t.name);
+    if (known) edits.push({ start: t.start, end: t.end, hit: known });
+    else if (asHandle && opts.resolvePlain)
+      edits.push({
+        start: t.start,
+        end: t.end,
+        hit: asHandle,
+        written: text.slice(t.start, t.end),
+      });
+    else edits.push({ start: t.start, end: t.end, unknown: t.ref });
+  }
+  if (opts.resolvePlain) {
+    for (const p of scan.plain) {
+      const hit = lookup.byHandle.get(p.name);
+      if (hit) edits.push({ start: p.start, end: p.end, hit, written: text.slice(p.start, p.end) });
+    }
+  }
+  edits.sort((a, b) => a.start - b.start);
+  const refs: string[] = [];
+  const unknownRefs: string[] = [];
+  const warnings: MentionWarning[] = [];
+  let out = "";
+  let at = 0;
+  for (const e of edits) {
+    if (!e.hit) {
+      const u = e.unknown as string;
+      if (!unknownRefs.includes(u)) unknownRefs.push(u);
+      continue;
+    }
+    out += text.slice(at, e.start) + mentionOf(e.hit.ref);
+    at = e.end;
+    if (!refs.includes(e.hit.ref)) refs.push(e.hit.ref);
+    if (e.written) warnings.push({ written: e.written, ref: e.hit.ref, handle: e.hit.handle });
+  }
+  return { text: out + text.slice(at), refs, warnings, unknownRefs };
+}
+
+/** Replaces tokens only: `"agent"` → `<@ref|handle>`, `"plain"` → `@handle`; an unknown ref → `unknown`. */
+export function renderMentions(
+  text: string,
+  lookup: (ref: string) => MentionPrincipal | undefined,
+  style: "agent" | "plain",
+): string {
+  let out = "";
+  let at = 0;
+  for (const t of scanMentions(text).tokens) {
+    const p = lookup(t.ref) ?? { ref: t.ref, handle: "unknown" };
+    out += text.slice(at, t.start) + (style === "agent" ? agentMentionOf(p) : `@${p.handle}`);
+    at = t.end;
+  }
+  return out + text.slice(at);
+}
+
+export const plainMentionWarning = (w: MentionWarning): string =>
+  `Plain mention detected: @${w.written.replace(/^<?@/, "").replace(/(?:\|[^>]*)?>$/, "")} was resolved to <@${w.ref}|${w.handle}>. Mention as <@ref|handle>.`;
+
+export const unknownRefError = (ref: string): string =>
+  `<@${ref}> isn't anyone in this factory; list_peers shows each agent and human with their mention.`;

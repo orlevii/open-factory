@@ -55,9 +55,9 @@ export const useInbox = () => useInfiniteQuery(inboxQueryOptions);
 
 /** A chat row's id in the list, the selection and `?item=`: the item ids are uuids, so they never collide. */
 export const CHAT_ID_PREFIX = "chat:";
-export const chatRowId = (slug: string) => `${CHAT_ID_PREFIX}${slug}`;
-/** The agent slug of a `chat:<slug>` id, else undefined. */
-export const chatSlugOf = (id: string | undefined): string | undefined =>
+export const chatRowId = (agentRef: string) => `${CHAT_ID_PREFIX}${agentRef}`;
+/** The agent ref of a `chat:<ref>` id, else undefined. */
+export const chatRefOf = (id: string | undefined): string | undefined =>
   id?.startsWith(CHAT_ID_PREFIX) && id.length > CHAT_ID_PREFIX.length
     ? id.slice(CHAT_ID_PREFIX.length)
     : undefined;
@@ -77,7 +77,7 @@ const updatesOf = (d: { pages: { updates?: ChatRow[] | undefined }[] }): ChatRow
 export const useInboxUpdates = () =>
   useInfiniteQuery({ ...inboxQueryOptions, select: updatesOf }).data ?? NO_CHATS;
 /** An update row's id in the list's rows (never a selection: it opens the report's session). */
-export const updateRowId = (slug: string) => `update:${slug}`;
+export const updateRowId = (ref: string) => `update:${ref}`;
 
 /** One item, for a `?item=` outside the loaded pages (the list's pages don't change). */
 export const inboxItemOptions = (id: string) =>
@@ -107,9 +107,9 @@ export function prefetchPane(qc: QueryClient, item: InboxItem) {
 }
 
 /** Warms a chat row's pane: the chat's newest page. */
-export function prefetchChat(qc: QueryClient, slug: string) {
-  if (qc.getQueryData(chatQueryOptions(slug).queryKey) === undefined)
-    void qc.prefetchInfiniteQuery(chatQueryOptions(slug));
+export function prefetchChat(qc: QueryClient, ref: string) {
+  if (qc.getQueryData(chatQueryOptions(ref).queryKey) === undefined)
+    void qc.prefetchInfiniteQuery(chatQueryOptions(ref));
 }
 
 export type Unread = { count: number; byAgent: Record<string, number> };
@@ -123,10 +123,10 @@ export const unreadCountQueryOptions = queryOptions({
 export const useUnreadCount = () => useQuery(unreadCountQueryOptions);
 
 /** One agent's unread messages to the viewer; shares the cached count query, never mounts a fetch of its own. */
-export const useUnreadByAgent = (slug: string): number =>
+export const useUnreadByAgent = (ref: string): number =>
   useQuery({
     ...unreadCountQueryOptions,
-    select: useCallback((d: Unread) => d.byAgent[slug] ?? 0, [slug]),
+    select: useCallback((d: Unread) => d.byAgent[ref] ?? 0, [ref]),
     refetchOnMount: false,
   }).data ?? 0;
 
@@ -143,8 +143,8 @@ export const postReadAll = (upTo: string) =>
     body: { upTo },
     schema: readAllResponseSchema,
   });
-export const postReadFrom = (slug: string, upTo: string, kind?: "member_update") =>
-  apiFetch(`/api/inbox/read-from/${encodeURIComponent(slug)}`, {
+export const postReadFrom = (ref: string, upTo: string, kind?: "member_update") =>
+  apiFetch(`/api/inbox/read-from/${encodeURIComponent(ref)}`, {
     method: "POST",
     body: kind ? { upTo, kind } : { upTo },
     schema: readFromResponseSchema,
@@ -156,8 +156,12 @@ export const postUndoReadAll = (readAt: string) =>
     schema: undoReadAllResponseSchema,
   });
 
+/** The sender's handle as the row copy writes it; `factory` for the factory's own items. */
+export const senderHandle = (from: InboxItem["from"]): string =>
+  from.kind === "factory" ? "factory" : from.handle;
+
 const fromAgent = (i: InboxItem) =>
-  i.kind === "notice" && i.from.kind === "agent" ? i.from.name : null;
+  i.kind === "notice" && i.from.kind === "agent" ? i.from.ref : null;
 
 /** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. With `items`,
  *  each agent-sender's count moves too; without them `byAgent` is left for the refetch. */
@@ -204,10 +208,10 @@ export function useInboxCache() {
                 ...p,
                 ...(p.chats && {
                   chats: p.chats.map((c) =>
-                    counts.has(c.agent.slug)
+                    counts.has(c.agent.ref)
                       ? {
                           ...c,
-                          unread: read ? 0 : Math.max(c.unread, counts.get(c.agent.slug) ?? 0),
+                          unread: read ? 0 : Math.max(c.unread, counts.get(c.agent.ref) ?? 0),
                         }
                       : c,
                   ),
@@ -218,14 +222,14 @@ export function useInboxCache() {
         qc.setQueryData<Unread>(unreadQueryKey, (c) => {
           if (!c) return c;
           const byAgent = { ...c.byAgent };
-          for (const [slug, n] of counts)
-            byAgent[slug] = read ? 0 : Math.max(0, (byAgent[slug] ?? 0) + n);
+          for (const [ref, n] of counts)
+            byAgent[ref] = read ? 0 : Math.max(0, (byAgent[ref] ?? 0) + n);
           return { ...c, count: Math.max(0, c.count + (read ? -sum : sum)), byAgent };
         });
       },
       /** "Mark read" for one agent: its cached rows turn read and its count goes to zero. */
-      readFrom(slug: string) {
-        flipRows((i) => fromAgent(i) === slug, true);
+      readFrom(ref: string) {
+        flipRows((i) => fromAgent(i) === ref, true);
         // The chat's row stays in the cache with no count; the list drops it when it can (a held list waits).
         qc.setQueryData<InfiniteData<Page>>(
           inboxQueryKey,
@@ -233,10 +237,10 @@ export function useInboxCache() {
             d && {
               ...d,
               pages: d.pages.map((p) =>
-                p.chats?.some((c) => c.agent.slug === slug)
+                p.chats?.some((c) => c.agent.ref === ref)
                   ? {
                       ...p,
-                      chats: p.chats.map((c) => (c.agent.slug === slug ? { ...c, unread: 0 } : c)),
+                      chats: p.chats.map((c) => (c.agent.ref === ref ? { ...c, unread: 0 } : c)),
                     }
                   : p,
               ),
@@ -247,20 +251,20 @@ export function useInboxCache() {
           (c) =>
             c && {
               ...c,
-              count: Math.max(0, c.count - (c.byAgent[slug] ?? 0)),
-              byAgent: { ...c.byAgent, [slug]: 0 },
+              count: Math.max(0, c.count - (c.byAgent[ref] ?? 0)),
+              byAgent: { ...c.byAgent, [ref]: 0 },
             },
         );
       },
       /** Opening an update row: the report's row leaves the list and the count drops by its updates. */
-      readUpdates(slug: string, n: number) {
+      readUpdates(ref: string, n: number) {
         qc.setQueryData<InfiniteData<Page>>(
           inboxQueryKey,
           (d) =>
             d && {
               ...d,
               pages: d.pages.map((p) =>
-                p.updates ? { ...p, updates: p.updates.filter((u) => u.agent.slug !== slug) } : p,
+                p.updates ? { ...p, updates: p.updates.filter((u) => u.agent.ref !== ref) } : p,
               ),
             },
         );
@@ -299,8 +303,8 @@ export function useOpenUpdate() {
   const cache = useInboxCache();
   return useCallback(
     (row: ChatRow) => {
-      cache.readUpdates(row.agent.slug, row.unread);
-      postReadFrom(row.agent.slug, row.latest.createdAt, "member_update").catch(() =>
+      cache.readUpdates(row.agent.ref, row.unread);
+      postReadFrom(row.agent.ref, row.latest.createdAt, "member_update").catch(() =>
         cache.refetch(),
       );
     },

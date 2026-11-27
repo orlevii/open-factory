@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FILES_NOTE } from "@/components/composer/composer";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
+import { refFor } from "@/test/refs";
 import { CommentComposer, type CommentComposerHandle } from "./comment-composer";
 
 const json = (data: unknown, status = 200) =>
@@ -23,7 +24,7 @@ beforeEach(() => {
           comment: {
             type: "comment",
             id: "c1",
-            author: { kind: "user", handle: "alice" },
+            author: { kind: "human", ref: refFor("alice"), handle: "alice" },
             body: body.body,
             at: "2026-11-22T00:00:00.000Z",
           },
@@ -106,33 +107,74 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
   });
 });
 
-test("`@` completes a handle as `@slug ` from the cached agents and users lists", async () => {
+test("a picked mention shows as @handle and is posted as <@ref>; a typed @name that wasn't picked is posted as text", async () => {
   const qc = new QueryClient();
+  const principal = (handle: string, kind: "agent" | "human", name: string, state = "live") => ({
+    id: handle,
+    ref: refFor(handle),
+    kind,
+    handle,
+    name,
+    state,
+    avatar: kind === "agent" ? { template: "t", avatarVersion: null, color: null } : null,
+  });
+  const list = [
+    principal("dev", "agent", "Dev"),
+    principal("dana", "human", "Dana"),
+    principal("or", "human", "Or"),
+    principal("dax", "human", "Dax", "disabled"),
+  ];
+  qc.setQueryData(["principals"], {
+    byRef: new Map(list.map((p) => [p.ref, p])),
+    unknown: new Set(),
+  });
+  // Dev reports to the viewer, so it ranks first once @dana is used.
+  qc.setQueryData(["session"], { user: { handle: "or", ref: refFor("or") } });
   qc.setQueryData(
     ["agents", "exclude"],
-    [
-      {
-        slug: "dev",
-        displayName: "Dev",
-        reportsTo: { kind: "user", handle: "or" },
-        template: "t",
-        avatarVersion: null,
-        archivedAt: null,
-      },
-    ],
+    [{ ref: refFor("dev"), handle: "dev", reportsTo: { ref: refFor("or"), handle: "or" } }],
   );
-  // Dev reports to the viewer, so it ranks first once @dana is used.
-  qc.setQueryData(["session"], { user: { handle: "or" } });
-  qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
   const { box } = setup(qc);
   await userEvent.type(box(), "cc @da");
   expect(screen.getByRole("option", { name: /Dana/ })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Dax/ })).toBeNull();
   await userEvent.keyboard("{Tab}");
   expect(box()).toHaveValue("cc @dana ");
   await userEvent.type(box(), "and @");
   await userEvent.keyboard("{Enter}");
   expect(box()).toHaveValue("cc @dana and @dev ");
   expect(posts).toEqual([]);
+  await userEvent.type(box(), "and @ghost");
+  await userEvent.keyboard("{Escape}{Enter}");
+  await waitFor(() =>
+    expect(posts).toEqual([{ body: `cc <@${refFor("dana")}> and <@${refFor("dev")}> and @ghost` }]),
+  );
+});
+
+test("Reply to a human comment mentions its author: the box shows @handle and the post carries <@ref>", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["principals"], {
+    byRef: new Map([
+      [
+        refFor("dana"),
+        {
+          id: "d",
+          ref: refFor("dana"),
+          kind: "human",
+          handle: "dana",
+          name: "Dana",
+          state: "live",
+          avatar: null,
+        },
+      ],
+    ]),
+    unknown: new Set(),
+  });
+  const { ref, box } = setup(qc);
+  act(() => ref.current?.reply(`<@${refFor("dana")}>`));
+  expect(box()).toHaveValue("@dana ");
+  await userEvent.type(box(), "thanks{Enter}");
+  await waitFor(() => expect(posts).toEqual([{ body: `<@${refFor("dana")}> thanks` }]));
 });
 
 test("while a comment posts a muted Posting… status shows; Send keeps its label", async () => {
@@ -147,7 +189,7 @@ test("while a comment posts a muted Posting… status shows; Send keeps its labe
                 comment: {
                   type: "comment",
                   id: "c2",
-                  author: { kind: "user", handle: "alice" },
+                  author: { kind: "human", ref: refFor("alice"), handle: "alice" },
                   body: "x",
                   at: "2026-11-22T00:00:00.000Z",
                 },

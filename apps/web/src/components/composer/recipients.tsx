@@ -1,17 +1,45 @@
 import { X } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
+import { useHandle } from "@/features/agents/use-agent-index";
+import { usePrincipalLookup } from "@/features/principals/use-principal";
 
 /** What the live region says when the list changes (I1 §6.6). */
-function announcement(prev: readonly string[], next: readonly string[]): string | undefined {
+function announcement(
+  prev: readonly string[],
+  next: readonly string[],
+  handleOf: (ref: string) => string,
+): string | undefined {
   const added = next.find((s) => !prev.includes(s));
-  if (added !== undefined) return `Also sending to @${added}`;
+  if (added !== undefined) return `Also sending to @${handleOf(added)}`;
   const removed = prev.find((s) => !next.includes(s));
-  return removed === undefined ? undefined : `Removed @${removed}`;
+  return removed === undefined ? undefined : `Removed @${handleOf(removed)}`;
 }
 
 /** Two chip rows, in rem so the clamp follows text size (a 24px chip and a 4px gap each). */
+function RemoveRecipient({
+  agentRef,
+  onRemove,
+}: {
+  agentRef: string;
+  onRemove(agentRef: string): void;
+}) {
+  const handle = useHandle(agentRef);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={`Remove @${handle}`}
+      className="size-6 shrink-0 text-muted-foreground"
+      onClick={() => onRemove(agentRef)}
+    >
+      <X aria-hidden="true" />
+    </Button>
+  );
+}
+
 const TWO_ROWS = "max-h-[3.25rem] max-md:max-h-6";
 
 /**
@@ -24,26 +52,31 @@ export const Recipients = memo(function Recipients({
   recipients,
   selected,
   onRemove,
+  add,
 }: {
   primaryName: string;
-  /** Slugs of the agents you added, in order. */
+  /** Refs of the agents you added, in order. */
   recipients: readonly string[];
   /** The last chip is selected: the next Backspace removes it. */
   selected: boolean;
-  onRemove(slug: string): void;
+  onRemove(agentRef: string): void;
+  /** The "Add" control that ends the row. */
+  add?: ReactNode;
 }) {
   const [prev, setPrev] = useState(recipients);
   const [prevSelected, setPrevSelected] = useState(selected);
   const [said, setSaid] = useState("");
+  const lookup = usePrincipalLookup();
+  const handleOf = (ref: string) => lookup(ref)?.handle ?? "…";
   // Adjusted during render on the list's or the selection's edge (no effect, one commit).
   if (prev !== recipients) {
     setPrev(recipients);
     setPrevSelected(selected);
-    setSaid(announcement(prev, recipients) ?? "");
+    setSaid(announcement(prev, recipients, handleOf) ?? "");
   } else if (prevSelected !== selected) {
     setPrevSelected(selected);
     const last = recipients.at(-1);
-    setSaid(selected && last ? `@${last} selected. Backspace again to remove` : "");
+    setSaid(selected && last ? `@${handleOf(last)} selected. Backspace again to remove` : "");
   }
   const [expanded, setExpanded] = useState(false);
   const [hidden, setHidden] = useState(0);
@@ -86,24 +119,15 @@ export const Recipients = memo(function Recipients({
             aria-label="Also sending to"
             className={`flex min-w-0 flex-1 flex-wrap gap-1 overflow-hidden ${expanded ? "" : TWO_ROWS}`}
           >
-            {recipients.map((slug, i) => (
+            {recipients.map((agentRef, i) => (
               <li
-                key={slug}
-                data-recipient={slug}
+                key={agentRef}
+                data-recipient={agentRef}
                 {...(selected && i === last ? { "data-selected": "" } : {})}
                 className="inline-flex h-6 max-w-[min(12rem,100%)] min-w-0 items-center rounded-md border border-input pl-1.5 text-foreground data-selected:bg-muted"
               >
-                <AgentChip slug={slug} size={16} />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Remove @${slug}`}
-                  className="size-6 shrink-0 text-muted-foreground"
-                  onClick={() => onRemove(slug)}
-                >
-                  <X aria-hidden="true" />
-                </Button>
+                <AgentChip agentRef={agentRef} size={16} />
+                <RemoveRecipient agentRef={agentRef} onRemove={onRemove} />
               </li>
             ))}
           </ul>
@@ -118,6 +142,7 @@ export const Recipients = memo(function Recipients({
               +{hidden}
             </Button>
           )}
+          {add}
         </div>
       )}
     </>

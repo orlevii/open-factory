@@ -4,8 +4,9 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle, seedTestUser } from "../test/handles.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal, seedTestUser } from "../test/principals.ts";
 import { PolicyInputs } from "./policy-inputs.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -20,7 +21,7 @@ const writeTemplate = (name: string, yaml: string) => {
 
 beforeAll(async () => {
   t = await makeTestApp();
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   policy = new PolicyInputs({ db: t.db });
   writeTemplate("dockertpl", "name: dockertpl\ndisplay_name: D\nruntime: docker\n");
   writeTemplate("defaulted", "name: defaulted\ndisplay_name: D\n");
@@ -39,7 +40,7 @@ test("templateRuntimes: each name's runtime, docker by default, local for a name
 });
 
 test("templateHasLocalAgents: true for an archived local agent, and for a spawned one until it is terminated", async () => {
-  const human = { kind: "human", handle: "or" } as const;
+  const human = { kind: "human", ref: "k7x2m9qd", handle: "or" } as const;
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,
@@ -47,35 +48,41 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
     kind: "oauth_token",
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
-  const create = (slug: string, template: string) =>
+  const create = (handle: string, template: string) =>
     t.app.agents.create(
-      { template, slug, displayName: slug, description: "", reportsTo: "or", credential: "work" },
+      {
+        template,
+        handle,
+        displayName: handle,
+        description: "",
+        reportsTo: "or",
+        credential: "work",
+      },
       human,
     );
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(false);
   await create("loc", "localtpl");
-  await t.app.agents.archive("loc", human);
+  await t.app.agents.archive(await t.refOf("loc"), human);
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(true);
   expect(await policy.templateHasLocalAgents("dockertpl")).toBe(false);
 
   await create("boss", "dockertpl");
-  const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
+  const [boss] = await agentRecords(t.db).where(eq(schema.principals.handle, "boss"));
   const kid = randomUUID();
-  await claimTestHandle(t.db, "kid", "agent");
+  await seedTestPrincipal(t.db, "agent", "kid", kid);
   await t.db.insert(schema.agents).values({
     id: kid,
-    slug: "kid",
     displayName: "Kid",
     kind: "ephemeral",
     template: "spawned-local",
     runtime: "local",
-    reportsTo: boss?.id,
+    reportsTo: boss?.id as string,
     credentialId: boss?.credentialId,
   });
   expect(await policy.templateHasLocalAgents("spawned-local")).toBe(true);
   await t.db
     .update(schema.agents)
-    .set({ terminatedAt: new Date(), terminatedBy: "@or" })
+    .set({ terminatedAt: new Date() })
     .where(eq(schema.agents.id, kid));
   expect(await policy.templateHasLocalAgents("spawned-local")).toBe(false);
 });

@@ -246,7 +246,7 @@ test("Docker: the stored file is under the workdir mount the container sees and 
   });
   const spec = buildRuntimeSpec({
     agentId: "a1",
-    slug: "dev",
+    ref: "dev",
     workdir: wd,
     env: {},
     claudeBin: "/usr/local/bin/claude",

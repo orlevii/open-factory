@@ -1,40 +1,44 @@
 import type { AgentStatus } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import {
   ancestorsOf,
   buildTree,
   indentOf,
   isExpanded,
   pruneStored,
-  railSlugs,
+  railRefs,
   type TreeNode,
   visibleNodes,
   workingCounts,
 } from "./tree-model";
 
-const rows = [
-  { slug: "a", displayName: "A", reportsTo: { kind: "user" as const, handle: "or" } },
-  { slug: "b", displayName: "B", reportsTo: { kind: "agent" as const, handle: "a" } },
-  { slug: "c", displayName: "C", reportsTo: { kind: "agent" as const, handle: "b" } },
-  { slug: "s", displayName: "S · ab12", reportsTo: { kind: "agent" as const, handle: "b" } },
-];
+const row = (ref: string, displayName: string, parent?: string) => ({
+  ref,
+  handle: ref,
+  displayName,
+  reportsTo: parent
+    ? { kind: "agent" as const, ref: parent, handle: parent }
+    : { kind: "human" as const, ref: refFor("or"), handle: "or" },
+});
+const rows = [row("a", "A"), row("b", "B", "a"), row("c", "C", "b"), row("s", "S · ab12", "b")];
 
 test("roots open, the rest closed; stored toggles override; revealed forces open", () => {
   const n = buildTree(rows);
-  expect(visibleNodes(n, {}, new Set()).map((x) => x.slug)).toEqual(["a", "b"]);
-  expect(visibleNodes(n, { b: true }, new Set()).map((x) => x.slug)).toEqual(["a", "b", "c", "s"]);
-  expect(visibleNodes(n, { a: false }, new Set(["a"])).map((x) => x.slug)).toEqual(["a", "b"]);
+  expect(visibleNodes(n, {}, new Set()).map((x) => x.ref)).toEqual(["a", "b"]);
+  expect(visibleNodes(n, { b: true }, new Set()).map((x) => x.ref)).toEqual(["a", "b", "c", "s"]);
+  expect(visibleNodes(n, { a: false }, new Set(["a"])).map((x) => x.ref)).toEqual(["a", "b"]);
 });
 
 test("buildTree records level, parent and hasChildren", () => {
   const n = buildTree(rows);
-  expect(n.find((x) => x.slug === "c")).toEqual({
-    slug: "c",
+  expect(n.find((x) => x.ref === "c")).toEqual({
+    ref: "c",
     level: 2,
     parent: "b",
     hasChildren: false,
   });
-  expect(n.find((x) => x.slug === "a")?.hasChildren).toBe(true);
+  expect(n.find((x) => x.ref === "a")?.hasChildren).toBe(true);
   expect(isExpanded(n[0] as never, {}, new Set())).toBe(true);
 });
 
@@ -42,7 +46,7 @@ test("working count on collapsed managers counts all working descendants", () =>
   const n = buildTree(rows);
   const status = (s: string) => (s === "c" || s === "s" ? "working" : "idle") as AgentStatus;
   const m = workingCounts(n, status, (s) =>
-    isExpanded(n.find((x) => x.slug === s) as TreeNode, {}, new Set()),
+    isExpanded(n.find((x) => x.ref === s) as TreeNode, {}, new Set()),
   );
   expect(m.b).toBe(2);
   expect("a" in m).toBe(false);
@@ -62,13 +66,13 @@ test("rail keeps active, unread and badge-worthy agents in tree order", () => {
   const status = (s: string) =>
     (s === "s" ? "errored" : s === "b" ? "idle" : undefined) as AgentStatus | undefined;
   expect(
-    railSlugs(n, { active: "c", unread: (s) => (s === "b" ? 2 : 0), statusOf: status }),
+    railRefs(n, { active: "c", unread: (s) => (s === "b" ? 2 : 0), statusOf: status }),
   ).toEqual(["b", "c", "s"]);
-  expect(railSlugs(n, { active: null, unread: () => 0, statusOf: () => "idle" })).toEqual([]);
+  expect(railRefs(n, { active: null, unread: () => 0, statusOf: () => "idle" })).toEqual([]);
 });
 
 test("ancestorsOf", () => expect(ancestorsOf(buildTree(rows), "c")).toEqual(["a", "b"]));
 
-test("pruneStored drops slugs that no longer exist", () => {
+test("pruneStored drops refs that no longer exist", () => {
   expect(pruneStored({ a: true, gone: false }, new Set(["a"]))).toEqual({ a: true });
 });

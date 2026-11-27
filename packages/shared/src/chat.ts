@@ -7,12 +7,11 @@ export const chatEntrySchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("message"),
     id: z.string(),
-    /** `@handle` of the sender. */
-    from: z.string(),
-    fromKind: z.enum(["human", "agent"]),
+    /** The sender principal; its handle comes from the principals cache. */
+    from: z.object({ kind: z.enum(["human", "agent"]), ref: z.string() }),
     body: z.string(),
-    /** The full recipient list as `@handle`s. */
-    recipients: z.array(z.string()),
+    /** The full recipient list, by principal ref. */
+    recipients: z.array(z.object({ ref: z.string() })),
     urgent: z.boolean(),
     createdAt: z.string(),
     state: z.enum(["pending", "delivered", "rejected"]),

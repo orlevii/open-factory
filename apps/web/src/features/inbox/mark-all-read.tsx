@@ -49,7 +49,7 @@ export function useMarkAllRead(buttonRef: RefObject<HTMLButtonElement | null>) {
       .reduce<string | undefined>((a, t) => (a === undefined || t > a ? t : a), undefined);
     if (newest === undefined || pending) return;
     const ids = new Set(loaded.filter((i) => !i.read).map((i) => i.id));
-    const counts = new Map(unreadChats.map((c) => [c.agent.slug, c.unread]));
+    const counts = new Map(unreadChats.map((c) => [c.agent.ref, c.unread]));
     const messages = unreadChats.reduce((n, c) => n + c.unread, 0);
     cache.setRead(ids, true, -ids.size);
     cache.setChatsRead(counts, true);

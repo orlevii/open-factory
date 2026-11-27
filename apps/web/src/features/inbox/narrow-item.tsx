@@ -3,7 +3,7 @@ import { Link, Navigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { setupQueryOptions } from "@/features/setup/api";
-import { chatSlugOf, type InboxItem, isFullWidthNotice, useLoadedItem, usePaneItem } from "./api";
+import { chatRefOf, type InboxItem, isFullWidthNotice, useLoadedItem, usePaneItem } from "./api";
 import { InboxPane } from "./inbox-pane";
 
 const BACK = (
@@ -33,11 +33,11 @@ function TargetNavigate({ link }: { link: InboxItem["link"] }) {
       );
     case "session":
       return link.seq === undefined ? (
-        <Navigate to="/agents/$slug/chat" params={{ slug: link.agentSlug }} replace />
+        <Navigate to="/agents/$ref/chat" params={{ ref: link.agentRef }} replace />
       ) : (
         <Navigate
-          to="/agents/$slug/session"
-          params={{ slug: link.agentSlug }}
+          to="/agents/$ref/session"
+          params={{ ref: link.agentRef }}
           search={{ event: link.seq }}
           replace
         />
@@ -87,7 +87,7 @@ function Resolved({ id }: { id: string }) {
  * Inbox opens its pane full-width, and any other kind replaces the URL with its own target.
  */
 export function NarrowItem({ id }: { id: string }) {
-  const chat = chatSlugOf(id);
-  if (chat) return <Navigate to="/agents/$slug/chat" params={{ slug: chat }} replace />;
+  const chat = chatRefOf(id);
+  if (chat) return <Navigate to="/agents/$ref/chat" params={{ ref: chat }} replace />;
   return <Resolved key={id} id={id} />;
 }

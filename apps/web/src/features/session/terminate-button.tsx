@@ -32,7 +32,7 @@ export function TerminateButton({
   returnFocusTo?: RefObject<HTMLElement | null>;
 }) {
   const controlled = controlledOpen !== undefined;
-  const slug = agent.slug;
+  const agentRef = agent.ref;
   const terminated = agent.status === "terminated";
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -59,7 +59,7 @@ export function TerminateButton({
     onStart();
     try {
       // Idempotent on the server: an agent someone else terminated meanwhile is a success too.
-      const a = await postTerminate(slug);
+      const a = await postTerminate(agentRef);
       done.current = true;
       onTerminated(a, true);
     } catch (e) {
@@ -81,7 +81,11 @@ export function TerminateButton({
       {!terminated && !controlled && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" aria-label={`Terminate @${slug}`} onClick={() => setOpen(true)}>
+            <Button
+              variant="ghost"
+              aria-label={`Terminate @${agent.handle}`}
+              onClick={() => setOpen(true)}
+            >
               <CircleX aria-hidden="true" className="text-destructive" />
               <span className="max-md:sr-only">Terminate</span>
             </Button>
@@ -90,7 +94,7 @@ export function TerminateButton({
         </Tooltip>
       )}
       <TerminateDialog
-        slug={slug}
+        handle={agent.handle}
         open={open}
         onOpenChange={setOpen}
         onConfirm={confirm}

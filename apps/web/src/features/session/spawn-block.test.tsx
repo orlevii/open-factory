@@ -3,6 +3,7 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
@@ -24,28 +25,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The spawned agent's ref: the events name it by its mention, `<@ref>`, and the principals cache resolves that mention. */
+const TECH_LEAD_REF = refFor("tech-lead-ab12");
 /** Opens /agents/lead with these events; `@tech-lead-ab12` is a live spawned agent. */
 async function open(events: AnyEvent[], firstText: string | RegExp) {
   const api = mockApi({
-    "GET /api/agents/lead": () => json(detail({ slug: "lead", displayName: "Lead" })),
-    "GET /api/agents/lead/events?": () =>
+    [`GET /api/agents/${refFor("lead")}`]: () =>
+      json(detail({ handle: "lead", displayName: "Lead" })),
+    [`GET /api/agents/${refFor("lead")}/events?`]: () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: [
-          agentSummary({ slug: "lead", displayName: "Lead" }),
+          agentSummary({ handle: "lead", displayName: "Lead" }),
           agentSummary({
-            slug: "tech-lead-ab12",
+            handle: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             kind: "ephemeral",
-            reportsTo: { kind: "agent", handle: "lead" },
+            reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
           }),
         ],
         running: { count: 1 },
       }),
     "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p-tech-lead",
+            ref: TECH_LEAD_REF,
+            kind: "agent",
+            handle: "tech-lead-ab12",
+            name: "Tech Lead · ab12",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
   });
-  renderApp("/agents/lead/session", alice);
+  renderApp(`/agents/${refFor("lead")}/session`, alice);
   await screen.findByText(firstText);
   return api;
 }
@@ -57,11 +75,11 @@ const spawn = (over: Record<string, unknown> = {}, toolUseId = "toolu_s"): AnyEv
   name: "mcp__factory__spawn_agent",
   input: { template: "tech-lead", description: "Writes the S8 spec", prompt: BRIEF, ...over },
 });
-const terminate = (slug: string, toolUseId = "toolu_t"): AnyEvent => ({
+const terminate = (handle: string, toolUseId = "toolu_t"): AnyEvent => ({
   type: "tool_call",
   toolUseId,
   name: "mcp__factory__terminate_agent",
-  input: { slug },
+  input: { target: handle },
 });
 const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEvent => ({
   type: "tool_result",
@@ -70,7 +88,13 @@ const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEve
   isError,
 });
 const ok = (o: Record<string, unknown> = {}) =>
-  JSON.stringify({ slug: "tech-lead-ab12", agent_id: "0f9e-secret-id", status: "idle", ...o });
+  JSON.stringify({
+    handle: "tech-lead-ab12",
+    mention: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+    agent_id: "0f9e-secret-id",
+    status: "idle",
+    ...o,
+  });
 const textOf = (el: Element) => el.textContent?.replace(/\s+/g, " ").trim();
 /** The sender line's sentence, without its time. */
 function senderOf(block: HTMLElement) {
@@ -91,7 +115,7 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   expect(within(sender).getByText("@lead")).toBeInTheDocument();
   expect(within(block).getByRole("link", { name: "Open @tech-lead-ab12's chat" })).toHaveAttribute(
     "href",
-    "/agents/tech-lead-ab12/chat",
+    `/agents/${TECH_LEAD_REF}/chat`,
   );
   // The description is plain text, the brief goes through Markdown.
   const description = within(block).getByText("Writes the S8 spec");
@@ -242,7 +266,15 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
     [
       { type: "turn_started" },
       terminate("tech-lead-ab12", "t1"),
-      result(JSON.stringify({ slug: "tech-lead-ab12", status: "terminated" }), false, "t1"),
+      result(
+        JSON.stringify({
+          handle: "tech-lead-ab12",
+          mention: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+          status: "terminated",
+        }),
+        false,
+        "t1",
+      ),
       terminate("nobody", "t2"),
       result("No spawned agent named @nobody. Call list_peers to see your reports.", true, "t2"),
       // A later turn ends t3 unanswered; t4 is in the open one (the fixture's events share a turn id).
@@ -283,8 +315,8 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
 test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer left", async () => {
   await open(
     [
-      { type: "spawned", by: "tech-lead-ab12", template: "tech-lead" },
-      { type: "terminated", by: "tech-lead-ab12" },
+      { type: "spawned", by: `<@${TECH_LEAD_REF}>`, template: "tech-lead" },
+      { type: "terminated", by: `<@${TECH_LEAD_REF}>` },
       {
         type: "message_in",
         messages: [
@@ -297,10 +329,10 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
             about: "dev-cd34",
             body: "IGNORED",
             subject: {
-              slug: "dev-cd34",
+              handle: "dev-cd34",
               displayName: "Dev · cd34",
               relation: "peer",
-              left: { reason: "terminated", by: "tech-lead-ab12" },
+              left: { reason: "terminated", by: `<@${TECH_LEAD_REF}>` },
             },
           }),
         ],
@@ -308,28 +340,38 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
     ],
     /from template/,
   );
+  const chat = { name: "@tech-lead-ab12, Tech Lead · ab12" };
   const spawned = screen.getByText(
     (_, el) =>
-      el?.tagName === "P" && textOf(el) === "Spawned by @tech-lead-ab12 from template tech-lead",
+      el?.tagName === "P" && /^Spawned by .*from template tech-lead$/.test(textOf(el) ?? ""),
   );
   expect(spawned.querySelector("svg.lucide-git-fork")).not.toBeNull();
-  expect(
-    within(spawned).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
-  ).toBeInTheDocument();
+  expect(await within(spawned).findByRole("link", chat)).toHaveAttribute(
+    "href",
+    `/agents/${TECH_LEAD_REF}/chat`,
+  );
   expect(within(spawned).getByText("tech-lead")).toBeInTheDocument();
   const terminated = screen.getByText(
-    (_, el) => el?.tagName === "P" && textOf(el) === "Terminated by @tech-lead-ab12",
+    (_, el) => el?.tagName === "P" && /^Terminated by /.test(textOf(el) ?? ""),
   );
-  expect(within(terminated).getByRole("link")).toHaveAttribute(
+  expect(await within(terminated).findByRole("link", chat)).toHaveAttribute(
     "href",
-    "/agents/tech-lead-ab12/chat",
+    `/agents/${TECH_LEAD_REF}/chat`,
   );
   const left = screen.getByText(
     (_, el) =>
-      el?.tagName === "P" &&
-      textOf(el) === "@dev-cd34 · Dev · cd34 left: terminated by @tech-lead-ab12",
+      el?.tagName === "P" && /^@dev-cd34 · Dev · cd34 left: terminated by /.test(textOf(el) ?? ""),
   );
+  expect(await within(left).findByRole("link", chat)).toBeInTheDocument();
+});
+
+test("a terminate that names its target by a bare ref shows the agent's handle, never the ref", async () => {
+  await open([{ type: "turn_started" }, terminate(TECH_LEAD_REF, "t1")], /Terminating/);
+  const line = screen.getByText(
+    (_, el) => el?.tagName === "P" && /^Terminating/.test(textOf(el) ?? ""),
+  );
+  expect(textOf(line)).toBe("Terminating @tech-lead-ab12…");
   expect(
-    within(left).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
+    within(line).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
   ).toBeInTheDocument();
 });

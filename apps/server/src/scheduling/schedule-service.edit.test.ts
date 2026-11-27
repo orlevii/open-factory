@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertScheduledMessage } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -13,15 +13,15 @@ let clock: Date;
 let changed = 0;
 let statuses: Record<string, string> = {};
 const NOW = new Date("2026-11-20T10:00:00Z"); // Friday 11:00 Berlin
-const or: Actor & { userId: string } = { userId: "u1" };
-const agent = (id: string): Actor => ({ agentId: id });
+const or: Actor = { kind: "human", id: "u1" };
+const agent = (id: string): Actor => ({ kind: "agent", id });
 const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin", body: "Review" };
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await claimTestHandleSql(t.sql, "jo", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or'), ('u2', 'Jo', 'jo@x.io', 'jo')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql.unsafe(principalSql("u2", "human", "jo"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io'), ('u2', 'Jo', 'jo@x.io')`;
 });
 afterAll(() => t.close());
 beforeEach(async () => {
@@ -32,8 +32,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo", displayName: "CEO" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo", displayName: "CEO" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
@@ -59,19 +59,25 @@ const rejects = (
   m: Partial<{ code: string; status: number; message: string }>,
 ) => expect(p).rejects.toMatchObject(m);
 
-test("edit only the body: the editor becomes its author, creator and next run stay", async () => {
+test("editing a schedule body records the editor as its body author", async () => {
+  const s = await mk({}, agent("dev"));
+  const r = await svc.edit(or, s.key, { body: "New text" });
+  expect(r.bodyAuthor).toEqual({ kind: "human", ref: testRef("u1"), handle: "or" });
+  expect(await dbRow(s.key)).toMatchObject({ body_author_id: "u1", created_by_id: "dev" });
+});
+
+test("edit only the body: the creator and the next run stay", async () => {
   const s = await mk({}, agent("dev"));
   const r = await svc.edit(or, s.key, { body: "New text" });
   expect(r.body).toBe("New text");
-  expect(r.bodyAuthor).toEqual({ kind: "user", handle: "or" });
-  expect(r.createdBy).toMatchObject({ kind: "agent", slug: "dev" });
+  expect(r.createdBy).toMatchObject({ kind: "agent", handle: "dev" });
   expect(r.nextRunAt).toBe(s.nextRunAt);
 });
 
 test("edit only the target is re-checked live", async () => {
   const s = await mk();
-  expect((await svc.edit(or, s.key, { target: "dev" })).target.slug).toBe("dev");
-  await insertAgent(t.sql, { id: "old", slug: "old", archived: true });
+  expect((await svc.edit(or, s.key, { target: "dev" })).target.handle).toBe("dev");
+  await insertAgent(t.sql, { id: "old", handle: "old", archived: true });
   await rejects(svc.edit(or, s.key, { target: "old" }), { code: "target_ended" });
   await rejects(svc.edit(or, s.key, { target: "nobody" }), { code: "target_not_found" });
 });
@@ -112,13 +118,12 @@ test("edits leave a pending firing exactly as fired and clear the firing backoff
   });
   await t.sql`update schedules set fail_count = 3, retry_at = now() where id = ${row.id as string}`;
   await svc.edit(or, s.key, { body: "new", target: "dev" });
-  const [m] =
-    await t.sql`select body, to_agent_id, state, author_user_id from messages where id = 'pm'`;
+  const [m] = await t.sql`select body, to_id, state, author_id from messages where id = 'pm'`;
   expect(m).toEqual({
     body: "old body",
-    to_agent_id: "ceo",
+    to_id: "ceo",
     state: "pending",
-    author_user_id: "u1",
+    author_id: "u1",
   });
   const after = await dbRow(s.key);
   expect([after.fail_count, after.retry_at]).toEqual([0, null]);
@@ -211,11 +216,11 @@ test("a human-created schedule's restore isn't bound by an agent's limit", async
 });
 
 test("restore is refused when the target ended", async () => {
-  await insertAgent(t.sql, { id: "kid", slug: "kid" });
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'kid'`;
+  await insertAgent(t.sql, { id: "kid", handle: "kid" });
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
   const s = await mk({ target: "kid" });
   await svc.remove(or, s.key);
-  await t.sql`update agents set terminated_at = now(), terminated_by = '@or' where id = 'kid'`;
+  await t.sql`update agents set terminated_at = now(), terminated_by = null where id = 'kid'`;
   await rejects(svc.restore(or, s.key), {
     code: "target_ended",
     status: 409,
@@ -284,7 +289,7 @@ test("list states, order, target and done filters", async () => {
     [d2.key, "done", false],
     [d1.key, "done", true],
   ]);
-  expect((await svc.list({ target: "dev" })).items.map((i) => i.key)).toEqual([arch.key]);
+  expect((await svc.list({ target: testRef("dev") })).items.map((i) => i.key)).toEqual([arch.key]);
 });
 
 test("listForAgent: created by it or targeting it, not done, newest first; bodies capped at 2,000 characters", async () => {

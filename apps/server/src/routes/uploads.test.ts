@@ -15,14 +15,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { schema } from "@open-factory/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { agentRecords, principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { UNKNOWN_REF } from "../test/principals.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { heic, jpeg, png } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
-import { agentWorkdir } from "../workspace/paths.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let or: string;
@@ -31,43 +32,44 @@ const MiB = 1024 * 1024;
 
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: new FakeDriver() });
-  await t.seedAgent({ slug: "dev" });
-  await t.seedAgent({ slug: "ops" });
-  await t.seedAgent({ slug: "gone" });
-  await t.seedAgent({ slug: "shelved" });
-  const dev = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
+  await t.seedAgent({ handle: "dev" });
+  await t.seedAgent({ handle: "ops" });
+  await t.seedAgent({ handle: "gone" });
+  await t.seedAgent({ handle: "shelved" });
+  const dev = await agentRecords(t.db).where(eq(schema.principals.handle, "dev"));
   await t.db
     .update(schema.agents)
     .set({
       kind: "ephemeral",
       reportsTo: dev[0]?.id,
-      reportsToUser: null,
       terminatedAt: new Date(),
     })
-    .where(eq(schema.agents.slug, "gone"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"gone"})`));
   await t.db
     .update(schema.agents)
     .set({ archivedAt: new Date() })
-    .where(eq(schema.agents.slug, "shelved"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"shelved"})`));
   or = (await t.signUpUser({ handle: "or" })).cookie;
   kim = (await t.signUpUser({ handle: "kim", email: "kim@example.com" })).cookie;
 });
 afterAll(() => t.close());
 
-const wd = (slug: string) => agentWorkdir(t.factoryHome, slug);
-const uploadsDir = (slug: string) => path.join(wd(slug), ".factory/uploads");
-const listUploads = (slug: string) =>
-  existsSync(uploadsDir(slug)) ? readdirSync(uploadsDir(slug)) : [];
+/** A seeded agent's ref; "nope" names nobody: a well-formed ref no agent has. */
+const ref = (handle: string) => (handle === "nope" ? UNKNOWN_REF : t.seededRef(handle));
+const wd = (handle: string) => t.seededWorkdir(handle);
+const uploadsDir = (handle: string) => path.join(wd(handle), ".factory/uploads");
+const listUploads = (handle: string) =>
+  existsSync(uploadsDir(handle)) ? readdirSync(uploadsDir(handle)) : [];
 
 const upload = (
-  slug: string,
+  handle: string,
   payload: Buffer | Readable,
   name = "shot.png",
   o: { cookie?: string; headers?: Record<string, string> } = {},
 ) =>
   t.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/uploads`,
+    url: `/api/agents/${ref(handle)}/uploads`,
     headers: {
       cookie: o.cookie ?? or,
       "content-type": "application/octet-stream",
@@ -76,10 +78,18 @@ const upload = (
     },
     payload,
   });
-const get = (slug: string, id: string, cookie = or) =>
-  t.app.inject({ method: "GET", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
-const del = (slug: string, id: string, cookie = or) =>
-  t.app.inject({ method: "DELETE", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
+const get = (handle: string, id: string, cookie = or) =>
+  t.app.inject({
+    method: "GET",
+    url: `/api/agents/${ref(handle)}/uploads/${id}`,
+    headers: { cookie },
+  });
+const del = (handle: string, id: string, cookie = or) =>
+  t.app.inject({
+    method: "DELETE",
+    url: `/api/agents/${ref(handle)}/uploads/${id}`,
+    headers: { cookie },
+  });
 
 test("POST stores a PNG under .factory/uploads with a safe name and answers its info", async () => {
   const data = png(640, 480);
@@ -122,7 +132,7 @@ test("a JPEG and UTF-8 text are accepted by content (sniff.test.ts owns every ty
 test("auth, a missing agent and an ended agent: the messaging access check", async () => {
   const anon = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/uploads",
+    url: `/api/agents/${await t.refOf("dev")}/uploads`,
     headers: { "content-type": "application/octet-stream", "x-upload-name": "a.txt" },
     payload: Buffer.from("x"),
   });
@@ -141,7 +151,7 @@ test("auth, a missing agent and an ended agent: the messaging access check", asy
 test("the name header is required and must decode", async () => {
   const none = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/uploads",
+    url: `/api/agents/${await t.refOf("dev")}/uploads`,
     headers: { cookie: or, "content-type": "application/octet-stream" },
     payload: Buffer.from("x"),
   });
@@ -223,7 +233,7 @@ test("a 30000×30000 PNG header is 422 without decoding", async () => {
 });
 
 test("a symlinked .factory refuses the upload and nothing is written outside the workspace", async () => {
-  await t.seedAgent({ slug: "linked" });
+  await t.seedAgent({ handle: "linked" });
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), "outside-")));
   symlinkSync(outside, path.join(wd("linked"), ".factory"));
   const res = await upload("linked", Buffer.from("hello"), "a.txt");
@@ -300,7 +310,7 @@ test("DELETE by the uploader while unsent removes row and file; a sent upload ca
     method: "POST",
     url: "/api/messages",
     headers: { cookie: or },
-    payload: { to: ["dev"], body: "see attached", attachments: [b.uploadId] },
+    payload: { to: [t.seededRef("dev")], body: "see attached", attachments: [b.uploadId] },
   });
   expect(sent.statusCode).toBe(202);
   const [claimed] = await t.db
@@ -324,7 +334,7 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
     method: "POST",
     url: "/api/messages",
     headers: { cookie: or },
-    payload: { to: ["ops"], body: "x" },
+    payload: { to: [t.seededRef("ops")], body: "x" },
   });
   await t.db
     .update(schema.uploads)
@@ -347,7 +357,7 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
 });
 
 test("an upload adds .factory/ to the repository's info/exclude (git-exclude.test.ts owns the detail)", async () => {
-  await t.seedAgent({ slug: "repo" });
+  await t.seedAgent({ handle: "repo" });
   execFileSync("git", ["init", "-q"], { cwd: wd("repo") });
   mkdirSync(path.join(wd("repo"), ".git/info"), { recursive: true });
   expect((await upload("repo", Buffer.from("a\n"), "a.txt")).statusCode).toBe(201);
@@ -366,7 +376,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
         host: "127.0.0.1",
         port,
         method: "POST",
-        path: "/api/agents/ops/uploads",
+        path: `/api/agents/${ref("ops")}/uploads`,
         headers: {
           cookie: or,
           "content-type": "application/octet-stream",
@@ -403,7 +413,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
 
 describe("security review fixes", () => {
   test("I2: a control character in X-Upload-Name is 400 and nothing is kept", async () => {
-    await t.seedAgent({ slug: "ctl" });
+    await t.seedAgent({ handle: "ctl" });
     const res = await upload("ctl", Buffer.from("x\n"), "a.txt", {
       headers: { "x-upload-name": "a%00.txt" },
     });
@@ -414,8 +424,8 @@ describe("security review fixes", () => {
   });
 
   test("I2: a failure after the file is written (the insert) removes the file", async () => {
-    const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "ctl"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    const [agent] = await agentRecords(t.db).where(eq(schema.principals.handle, "ctl"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     async function* one() {
       yield Buffer.from("x\n");
@@ -426,7 +436,7 @@ describe("security review fixes", () => {
   });
 
   test("I1: a .factory swapped for a link between the walk and the open is 409 and nothing appears outside", async () => {
-    await t.seedAgent({ slug: "race" });
+    await t.seedAgent({ handle: "race" });
     expect((await upload("race", Buffer.from("first\n"), "first.txt")).statusCode).toBe(201);
     const outside = realpathSync(mkdtempSync(path.join(tmpdir(), "outside-")));
     mkdirSync(path.join(outside, "uploads"));
@@ -451,7 +461,7 @@ describe("security review fixes", () => {
   });
 
   test("I3: a FACTORY_HOME reached through a symlink works, and info/exclude is written", async () => {
-    await t.seedAgent({ slug: "aliased" });
+    await t.seedAgent({ handle: "aliased" });
     execFileSync("git", ["init", "-q"], { cwd: wd("aliased") });
     const alias = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), "alias-"))), "home");
     symlinkSync(t.factoryHome, alias);
@@ -461,11 +471,8 @@ describe("security review fixes", () => {
       lock: t.app.workspaceLock,
       log: { debug() {}, info() {}, warn() {}, error() {} },
     });
-    const [agent] = await t.db
-      .select()
-      .from(schema.agents)
-      .where(eq(schema.agents.slug, "aliased"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    const [agent] = await agentRecords(t.db).where(eq(schema.principals.handle, "aliased"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     async function* one() {
       yield Buffer.from("hello\n");
@@ -479,9 +486,9 @@ describe("security review fixes", () => {
   });
 
   test("M1: at most 20 unsent uploads per agent and uploader; at most 3 streaming per agent", async () => {
-    await t.seedAgent({ slug: "quota" });
-    const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "quota"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    await t.seedAgent({ handle: "quota" });
+    const [agent] = await agentRecords(t.db).where(eq(schema.principals.handle, "quota"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     await t.db.insert(schema.uploads).values(
       Array.from({ length: 20 }, (_, i) => ({
@@ -524,7 +531,7 @@ describe("security review fixes", () => {
   });
 
   test("M2: the sweep also deletes an old upload file no row references", async () => {
-    await t.seedAgent({ slug: "orphans" });
+    await t.seedAgent({ handle: "orphans" });
     expect((await upload("orphans", Buffer.from("x\n"), "a.txt")).statusCode).toBe(201);
     const { utimesSync } = await import("node:fs");
     const stray = path.join(
@@ -548,7 +555,7 @@ describe("security review fixes", () => {
   });
 
   test("M5: GET for a deleted workspace is 410 workspace_gone", async () => {
-    await t.seedAgent({ slug: "wiped" });
+    await t.seedAgent({ handle: "wiped" });
     const r = (await upload("wiped", Buffer.from("x\n"), "a.txt")).json();
     rmSync(wd("wiped"), { recursive: true, force: true });
     const res = await get("wiped", r.uploadId);
@@ -559,7 +566,7 @@ describe("security review fixes", () => {
   test("M7: a body that isn't application/octet-stream is 415", async () => {
     const res = await t.app.inject({
       method: "POST",
-      url: "/api/agents/dev/uploads",
+      url: `/api/agents/${await t.refOf("dev")}/uploads`,
       headers: { cookie: or, "content-type": "text/plain", "x-upload-name": "a.txt" },
       payload: "hello",
     });
@@ -569,9 +576,9 @@ describe("security review fixes", () => {
 });
 
 test("review m3: a stalled body is abandoned and its temp file deleted", async () => {
-  await t.seedAgent({ slug: "stall" });
-  const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "stall"));
-  const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+  await t.seedAgent({ handle: "stall" });
+  const [agent] = await agentRecords(t.db).where(eq(schema.principals.handle, "stall"));
+  const me = (await principalsByHandles(t.db, ["or"])).get("or");
   if (!agent || !me) throw new Error("seed");
   async function* stalled() {
     yield Buffer.from("partial");

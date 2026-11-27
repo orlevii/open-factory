@@ -1,11 +1,12 @@
 import { schema } from "@open-factory/db";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule } from "../agents/testing/rows.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { type GuardResult, LoopGuard, pairOf } from "./loop-guard.ts";
 
 const N = 3;
@@ -22,9 +23,9 @@ let deps: ConstructorParameters<typeof LoopGuard>[0];
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
-  for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, slug: id });
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
+  for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, handle: id });
   const store = new EventStore(t.db);
   deps = {
     settings: {
@@ -72,18 +73,18 @@ async function row(r: Row) {
   if (kind === "task_comment") {
     taskId = "tc";
     commentId = `c${seq}`;
-    await t.sql`insert into tasks (id, title, created_by_user_id) values ('tc', 'T', 'u1') on conflict do nothing`;
-    await t.sql`insert into task_comments (id, task_id, author_agent_id, body) values (${commentId}, 'tc', ${r.from ?? "a1"}, 'x')`;
+    await t.sql`insert into tasks (id, title, created_by_id) values ('tc', 'T', 'u1') on conflict do nothing`;
+    await t.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, 'tc', ${r.from ?? "a1"}, 'x')`;
   }
   if (kind === "scheduled") {
     scheduleId = `s${seq}`;
     await insertSchedule(t.sql, { id: scheduleId, targetAgentId: r.to });
   }
-  await t.sql`insert into messages (id, kind, from_user_id, from_agent_id, to_agent_id, author_agent_id, author_user_id,
-                                   recipients, body, state, created_at, task_id, comment_id, schedule_id, due_at, firings, late)
-              values (${id}, ${kind}, ${r.fromUser ?? null}, ${r.from ?? null}, ${r.to},
-                      ${r.authorAgent ?? null}, ${r.authorUser ?? null},
-                      ${kind === "message" ? `{"@${r.to}"}` : null}::text[], 'x', ${r.state ?? "delivered"}, ${r.at.toISOString()},
+  await t.sql`insert into messages (id, kind, from_id, to_id, author_id,
+                                   recipient_ids, body, state, created_at, task_id, comment_id, schedule_id, due_at, firings, late)
+              values (${id}, ${kind}, ${r.fromUser ?? r.from ?? null}, ${r.to},
+                      ${r.authorAgent ?? r.authorUser ?? null},
+                      ${kind === "message" ? `{"${r.to}"}` : null}::text[], 'x', ${r.state ?? "delivered"}, ${r.at.toISOString()},
                       ${taskId}, ${commentId}, ${scheduleId},
                       ${scheduleId ? r.at.toISOString() : null}, ${scheduleId ? 1 : null}, ${scheduleId ? false : null})`;
 }
@@ -208,9 +209,9 @@ describe("resets", () => {
     async (assignee) => {
       expect(
         await verdict(async () => {
-          await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+          await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', ${assignee}, 'u1')`;
-          await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
+          await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
         }),
       ).toEqual(notHeld);
@@ -229,9 +230,9 @@ describe("resets", () => {
     [
       "a human status change on a task assigned to a third agent",
       async () => {
-        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', 'a3', 'u1')`;
-        await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
+        await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
       },
     ],
@@ -245,9 +246,9 @@ describe("resets", () => {
     [
       "an agent's status change",
       async () => {
-        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', 'a2', 'u1')`;
-        await t.sql`insert into task_events (id, task_id, actor_agent_id, type, at)
+        await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'a1', 'status', ${ago(1).toISOString()})`;
       },
     ],
@@ -314,31 +315,30 @@ describe("notices on open", () => {
     return r;
   };
   const notices = (toAgent: string) =>
-    t.sql`select * from messages where to_agent_id = ${toAgent} and notice = 'loop_held'`;
+    t.sql`select * from messages where to_id = ${toAgent} and notice = 'loop_held'`;
   const nextAgent = (() => {
     let n = 0;
     return async (
       over: Parameters<typeof insertAgent>[1] extends infer A ? Partial<A> : never = {},
     ) => {
       const id = `n${++n}`;
-      await insertAgent(t.sql, { id, slug: id, ...over } as never);
+      await insertAgent(t.sql, { id, handle: id, ...over } as never);
       return id;
     };
   })();
 
   test("one human notice with the hold, and one inbox item per user", async () => {
-    await claimTestHandleSql(t.sql, "ana", "user");
-    await t.sql`insert into users (id, name, email, handle) values ('u2', 'Ana', 'ana@x.io', 'ana')`;
+    await t.sql.unsafe(principalSql("u2", "human", "ana"));
+    await t.sql`insert into users (id, name, email) values ('u2', 'Ana', 'ana@x.io')`;
     try {
       const r = await trip("a1", "a2");
       const msgs = await t.sql`select * from messages where notice = 'loop_held' and to_all_humans`;
       expect(msgs).toHaveLength(1);
       expect(msgs[0]).toMatchObject({
         kind: "system",
-        from_agent_id: null,
+        from_id: null,
         subject_agent_id: "a1",
         loop_hold_id: r.holdId,
-        body: `@a1 and @a2 exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
       });
       const items = await t.sql`select user_id from inbox_items where message_id = ${msgs[0]?.id}`;
       expect(items.map((i) => i.user_id).sort()).toEqual(["u1", "u2"]);
@@ -347,6 +347,15 @@ describe("notices on open", () => {
       await t.sql`delete from messages`;
       await t.sql`delete from users where id = 'u2'`;
     }
+  });
+
+  test("the loop notice names both agents by mention", async () => {
+    await trip("a1", "a2");
+    const [msg] =
+      await t.sql`select body from messages where notice = 'loop_held' and to_all_humans`;
+    expect(msg?.body).toBe(
+      `${mentionOf(testRef("a1"))} and ${mentionOf(testRef("a2"))} exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
+    );
   });
 
   test("a manager gets a notice for the pair, with no hold link; a shared manager gets one", async () => {
@@ -363,9 +372,9 @@ describe("notices on open", () => {
       loop_hold_id: null,
     });
     expect(n?.body).toBe(
-      `@${x} and @${y} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
+      `${mentionOf(testRef(x))} and ${mentionOf(testRef(y))} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
     );
-    expect(r.managerRows.map((row) => [row.id, row.toAgentId])).toEqual([[n?.id, m]]);
+    expect(r.managerRows.map((row) => [row.id, row.toId])).toEqual([[n?.id, m]]);
   });
 
   test("a manager who is the other agent of the pair gets nothing", async () => {
@@ -414,7 +423,7 @@ describe("afterCommit", () => {
     holdId: "h",
     opened: true,
     counts: { ab: 4, ba: 4, minutes: 1 },
-    managerRows: [{ id: "n1", toAgentId: "a3" } as never],
+    managerRows: [{ id: "n1", toId: "a3" } as never],
   };
 
   test("an opened hold refreshes inboxes and hands the manager notices over", async () => {
@@ -465,8 +474,8 @@ describe("concurrency", () => {
     to: string,
     held: boolean,
   ) =>
-    tx.execute(sql`insert into messages (id, kind, from_agent_id, to_agent_id, recipients, body, state, created_at)
-                   values (${`m${++seq}`}, 'message', ${from}, ${to}, ${`{"@${to}"}`}::text[], 'x',
+    tx.execute(sql`insert into messages (id, kind, from_id, to_id, recipient_ids, body, state, created_at)
+                   values (${`m${++seq}`}, 'message', ${from}, ${to}, ${`{"${to}"}`}::text[], 'x',
                            ${held ? "loop_held" : "pending"}, ${new Date(NOW.getTime() - 1000).toISOString()})`);
 
   test("transactions locking overlapping pairs in opposite orders all commit without a deadlock", async () => {

@@ -1,8 +1,8 @@
 import type { ServerMessage, TemplateConfig } from "@open-factory/shared";
 import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
-import { claimTestHandle } from "../../test/handles.ts";
 import { createTestDb } from "../../test/helpers.ts";
+import { principalSql } from "../../test/principals.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import type { Effective } from "../config-resolver.ts";
 import { EventBus } from "../event-bus.ts";
@@ -21,7 +21,7 @@ export function humanRow(
   return store.createMessage({
     from: { userId: m.fromUserId },
     toAgentId: rt.agent.id,
-    recipients: [`@${rt.agent.slug}`],
+    recipientIds: [rt.agent.id],
     body: m.body,
     urgent: m.urgent,
   });
@@ -83,14 +83,14 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
 export const okSpec = (
   a: {
     id: string;
-    slug: string;
+    handle: string;
     credentialId?: string | null;
   },
   config: Partial<TemplateConfig> = {},
 ): PreparedSpec => ({
   credentialId: a.credentialId ?? `cred-${a.id}`,
   agentId: a.id,
-  slug: a.slug,
+  ref: a.id,
   cwd: "/w",
   env: { TOKEN_SEEN: "yes" },
   claudeBin: "claude",
@@ -139,9 +139,8 @@ export class RuntimeHarness {
   async setup() {
     this.t = await createTestDb();
     this.store = new EventStore(this.t.db);
-    await claimTestHandle(this.t.db, "or", "user");
-    await this.t
-      .sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+    await this.t.sql.unsafe(principalSql("u1", "human", "or"));
+    await this.t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
   }
 
   async close() {
@@ -167,7 +166,7 @@ export class RuntimeHarness {
       /** The Docker launcher; pair it with `spec` returning a Docker spec. */
       docker?: RuntimeDeps["docker"];
       /** What `prepareStart` returns (default: `okSpec`, a local spec). */
-      spec?: (a: { id: string; slug: string }) => PreparedSpec;
+      spec?: (a: { id: string; handle: string }) => PreparedSpec;
       /** Runs after the agent row exists and before `init()` (rows a boot would find pending). */
       seed?: (agentId: string) => Promise<void>;
       /** The interrupt hold's fallback (200ms by default). */
@@ -191,7 +190,7 @@ export class RuntimeHarness {
     this.minted = 0;
     await insertAgent(this.t.sql, {
       id: this.agentId,
-      slug: `dev${this.n}`,
+      handle: `dev${this.n}`,
       ...(opts.errorKind ? { errorKind: opts.errorKind } : {}),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.status ? { status: opts.status } : {}),
@@ -206,7 +205,7 @@ export class RuntimeHarness {
     this.bus.subscribeAll((m) => frames.push(m));
     const agent = await this.store.agentById(this.agentId);
     if (!agent) throw new Error("no agent");
-    this.bus.subscribe(agent.slug, (m) => frames.push(m));
+    this.bus.subscribe(agent.id, (m) => frames.push(m));
     this.rt = new AgentRuntime({
       agent,
       store: this.store,

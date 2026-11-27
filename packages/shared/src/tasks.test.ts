@@ -35,7 +35,7 @@ test("body: may be empty, ≤ 64 KB UTF-8; comment: non-empty", () => {
   expect(commentBodySchema.safeParse("   ").success).toBe(false);
 });
 
-test("links: url/pr http(s) ≤ 2000, agent slug, file one line ≤ 500", () => {
+test("links: url/pr http(s) ≤ 2000, agent handle, file one line ≤ 500", () => {
   expect(
     linkInputSchema.safeParse({ kind: "url", target: "javascript:alert(1)" }).error?.issues[0]
       ?.message,

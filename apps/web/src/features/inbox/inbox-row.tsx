@@ -3,12 +3,13 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { type ComponentProps, type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { ROW_GRID } from "@/components/row-grid";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
-import { type InboxItem, isFullWidthNotice } from "./api";
+import { type InboxItem, isFullWidthNotice, senderHandle } from "./api";
 import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
@@ -31,8 +32,8 @@ function Sender({ item }: { item: InboxItem }) {
         )}
       </>
     );
-  if (item.from.kind === "agent") return <AgentChip slug={item.from.name} size={16} />;
-  return <span className="truncate font-mono">@{item.from.name}</span>;
+  if (item.from.kind === "agent") return <AgentChip agentRef={item.from.ref} size={16} />;
+  return <span className="truncate font-mono">@{item.from.handle}</span>;
 }
 
 /** Line one, left of the time: the sender and the kind word (what happened). It never wraps. */
@@ -119,14 +120,14 @@ function labelOf(item: InboxItem, time: string, now: number): string {
   }
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
-    return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
+    return `${unread}@${senderHandle(item.from)} mentioned you on ${task}, ${time}`;
   }
   if (item.kind === "task_event")
     return `${unread}Factory, ${item.fact === "cancelled" ? "cancelled" : "done"}, ${task}, ${time}`;
   const who =
     item.from.kind === "factory"
       ? `Factory${item.about ? ` about @${item.about}` : ""}`
-      : `@${item.from.name}`;
+      : `@${item.from.handle}`;
   const hold = item.loopHold ? `, ${item.loopHold.resumedAt ? "resumed" : "held"}` : "";
   return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}${hold}, ${time}`;
 }
@@ -166,7 +167,8 @@ export const InboxRow = memo(function InboxRow({
   // A credential row renders from the live `expiresAt`; its stored body is for notifications only.
   const hasPreview = item.kind !== "credential";
   const previewId = `inbox-preview-${item.id}`;
-  const preview = useMemo(() => previewOf(item.preview), [item.preview]);
+  const text = usePlainMentions(item.preview);
+  const preview = useMemo(() => previewOf(text), [text]);
   const common: RowCommon = {
     "data-inbox-id": item.id,
     "data-row": "",
@@ -268,13 +270,13 @@ function RowLink({
       );
     case "session":
       return link.seq === undefined ? (
-        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
+        <Link to="/agents/$ref/chat" params={{ ref: link.agentRef }} {...common}>
           {children}
         </Link>
       ) : (
         <Link
-          to="/agents/$slug/session"
-          params={{ slug: link.agentSlug }}
+          to="/agents/$ref/session"
+          params={{ ref: link.agentRef }}
           search={{ event: link.seq }}
           {...common}
         >

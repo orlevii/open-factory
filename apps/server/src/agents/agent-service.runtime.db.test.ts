@@ -5,17 +5,18 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { seedTestUser } from "../test/handles.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import { OrgRefusedError } from "./errors.ts";
 
 /** Switching an agent between Docker and local (its Configure page): a human's explicit act, with the local rules. */
 
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 
 async function factory(env: Record<string, string> = {}) {
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,
@@ -29,20 +30,20 @@ async function factory(env: Record<string, string> = {}) {
     writeFileSync(path.join(d, "template.yaml"), `name: ${name}\ndisplay_name: ${name}\n${yaml}`);
     writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
   };
-  const create = (slug: string, tpl: string) =>
+  const create = (handle: string, tpl: string) =>
     t.app.agents.create(
       {
         template: tpl,
-        slug,
-        displayName: slug,
+        handle,
+        displayName: handle,
         description: "",
         reportsTo: "or",
         credential: "work",
       },
       human,
     );
-  const runtimeOf = async (slug: string) =>
-    (await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug)))[0]?.runtime;
+  const runtimeOf = async (handle: string) =>
+    (await agentRecords(t.db).where(eq(schema.principals.handle, handle)))[0]?.runtime;
   return { t, template, create, runtimeOf };
 }
 
@@ -60,13 +61,15 @@ describe("on a factory that allows local agents", () => {
     await f.create("mover", "dock");
     const spy = vi.spyOn(f.t.app.runtimes, "requestRestart").mockResolvedValue(undefined);
     try {
-      expect(await f.t.app.agents.update("mover", { runtime: "local" }, human)).toMatchObject({
+      expect(
+        await f.t.app.agents.update(await f.t.refOf("mover"), { runtime: "local" }, human),
+      ).toMatchObject({
         runtime: "local",
       });
       expect(await f.runtimeOf("mover")).toBe("local");
       expect(spy).toHaveBeenCalledOnce();
       spy.mockClear();
-      await f.t.app.agents.update("mover", { runtime: "local" }, human);
+      await f.t.app.agents.update(await f.t.refOf("mover"), { runtime: "local" }, human);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
@@ -77,30 +80,27 @@ describe("on a factory that allows local agents", () => {
     ["into local", "dock", "local"],
     ["out of local", "loc", "docker"],
   ] as const)("an agent can't switch another agent %s", async (_n, tpl, to) => {
-    const slug = `target-${to}`;
-    await f.create(slug, tpl);
+    const handle = `target-${to}`;
+    await f.create(handle, tpl);
     await f.create(`asker-${to}`, "dock");
-    const [asker] = await f.t.db
-      .select()
-      .from(schema.agents)
-      .where(eq(schema.agents.slug, `asker-${to}`));
+    const [asker] = await agentRecords(f.t.db).where(eq(schema.principals.handle, `asker-${to}`));
     if (!asker) throw new Error("no asker");
-    const before = await f.runtimeOf(slug);
+    const before = await f.runtimeOf(handle);
     await expect(
       f.t.app.agents.update(
-        slug,
+        await f.t.refOf(handle),
         { runtime: to },
-        { kind: "agent", id: asker.id, slug: asker.slug },
+        { kind: "agent", id: asker.id, ref: testRef(asker.id), handle: asker.handle },
       ),
     ).rejects.toBeInstanceOf(OrgRefusedError);
-    expect(await f.runtimeOf(slug)).toBe(before);
+    expect(await f.runtimeOf(handle)).toBe(before);
   });
 
   test("a template in Bypass mode keeps its agents in Docker: 400 on runtime", async () => {
     await f.create("byp", "bypass");
     const res = await f.t.app.inject({
       method: "PATCH",
-      url: "/api/agents/byp",
+      url: `/api/agents/${await f.t.refOf("byp")}`,
       headers: { cookie: (await f.t.signUpUser({ handle: "or-bp" })).cookie },
       payload: { runtime: "local" },
     });
@@ -111,8 +111,8 @@ describe("on a factory that allows local agents", () => {
 
   test("Combined shows the agent's runtime, not its template's", async () => {
     await f.create("stayer", "loc");
-    await f.t.app.agents.update("stayer", { runtime: "docker" }, human);
-    const view = await f.t.app.configs.getConfig("stayer");
+    await f.t.app.agents.update(await f.t.refOf("stayer"), { runtime: "docker" }, human);
+    const view = await f.t.app.configs.getConfig(await f.t.refOf("stayer"));
     expect(view.template.doc?.template.runtime).toBe("local");
     expect(view.merged?.template.runtime).toBe("docker");
   });
@@ -125,7 +125,7 @@ test("a factory that doesn't allow local agents refuses the switch: 400 on runti
     await f.create("held", "dock");
     const res = await f.t.app.inject({
       method: "PATCH",
-      url: "/api/agents/held",
+      url: `/api/agents/${await f.t.refOf("held")}`,
       headers: { cookie: (await f.t.signUpUser({ handle: "or-off" })).cookie },
       payload: { runtime: "local" },
     });

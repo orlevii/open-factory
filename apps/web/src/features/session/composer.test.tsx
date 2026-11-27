@@ -1,4 +1,5 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
@@ -14,6 +15,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { readDraft, sessionDraftKey } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { refFor } from "@/test/refs";
 import { agentSummary, envelope } from "@/test/session-fixtures";
 import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
@@ -34,11 +36,11 @@ vi.mock("@tanstack/react-router", async (orig) => ({
     className,
   }: {
     to: string;
-    params: { slug: string };
+    params: { ref: string };
     children: ReactNode;
     className?: string;
   }) => (
-    <a href={to.replace("$slug", params.slug)} className={className}>
+    <a href={to.replace("$ref", params.ref)} className={className}>
       {children}
     </a>
   ),
@@ -71,7 +73,7 @@ beforeEach(() => {
                 item: {
                   id: "q",
                   kind: "message",
-                  from: "@alice",
+                  from: mentionOf(refFor("alice")),
                   fromKind: "human",
                   createdAt: "x",
                 },
@@ -101,7 +103,7 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
+      <Composer agentRef={refFor("dev")} agent={agent} stopEpoch={epoch} />
     </>
   );
   const r = render(ui(initial, 1));
@@ -130,7 +132,7 @@ test("Esc in the composer stops an open turn once; does nothing with no turn", a
   fireEvent.keyDown(box, { key: "Escape" });
   fireEvent.keyDown(box, { key: "Escape" }); // Stop is pending: no second interrupt
   await tick();
-  expect(interrupts()).toEqual([{ url: "/api/agents/dev/interrupt", body: {} }]);
+  expect(interrupts()).toEqual([{ url: `/api/agents/${refFor("dev")}/interrupt`, body: {} }]);
   update(agentSummary(), 2);
   fireEvent.keyDown(box, { key: "Escape" });
   await tick();
@@ -215,8 +217,10 @@ test("⌥Enter during IME composition does not send", async () => {
   fireEvent.keyDown(box, { key: "Enter", altKey: true, isComposing: true });
   fireEvent.keyDown(box, { key: "Enter", altKey: true, keyCode: 229 });
   await tick();
-  // Only the commands list's prefetch (a GET); nothing sent.
-  expect(posted.filter((p) => !p.url.endsWith("/commands"))).toEqual([]);
+  // Only the reads (the commands prefetch, the lists); nothing sent.
+  expect(posted.filter((p) => !/\/commands$|^\/api\/(agents\?|principals)/.test(p.url))).toEqual(
+    [],
+  );
 });
 
 test("Stop is outline, left of Send; shows a spinner and Stopping… until turnEpoch changes", async () => {
@@ -308,10 +312,15 @@ function Session({ agent }: { agent: AgentSummary }) {
   return (
     <>
       <div data-testid="queue">
-        <QueueItems items={s.queue} sending={s.sending} agent={agent} self="alice" />
+        <QueueItems
+          items={s.queue}
+          sending={s.sending}
+          agent={agent}
+          selfMention={mentionOf(refFor("alice"))}
+        />
       </div>
       <Composer
-        slug="dev"
+        agentRef={refFor("dev")}
         agent={agent}
         stopEpoch={1}
         onSending={onSending}
@@ -355,7 +364,7 @@ const _accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
           item: {
             id: "m1",
             kind: "message",
-            from: "@alice",
+            from: mentionOf(refFor("alice")),
             fromKind: "human",
             body: "hello",
             clientMessageId,
@@ -369,7 +378,7 @@ const _accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
   );
 const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId: "t1",
   at: new Date().toISOString(),
   event: {
@@ -377,7 +386,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
     messages: [
       envelope({
         id: "m1",
-        from: "@alice",
+        from: mentionOf(refFor("alice")),
         fromKind: "human",
         kind: "message",
         urgent: false,
@@ -388,7 +397,9 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   },
 });
 const frame = (event: SessionEvent) =>
-  act(() => act$?.({ type: "frame", message: { type: "session_event", agent: "dev", event } }));
+  act(() =>
+    act$?.({ type: "frame", message: { type: "session_event", agent: refFor("dev"), event } }),
+  );
 function renderSession(agent = agentSummary()) {
   render(<Session agent={agent} />);
   return screen.getByRole("combobox", { name: "Message to Dev agent" });
@@ -399,8 +410,8 @@ test("the draft is in localStorage under a versioned key and survives a remount"
   const box = renderSession();
   await userEvent.type(box, "half a thought");
   box.blur();
-  expect(readDraft(sessionDraftKey("dev"))).toBe("half a thought");
-  expect(localStorage.getItem("of-draft:v1:session:dev")).not.toBeNull();
+  expect(readDraft(sessionDraftKey(refFor("dev")))).toBe("half a thought");
+  expect(localStorage.getItem(`of-draft:v1:session:${refFor("dev")}`)).not.toBeNull();
   cleanup();
   expect(renderSession()).toHaveValue("half a thought");
 });
@@ -479,7 +490,7 @@ test("a late message_in for an aborted send clears the unchanged box and the err
   frame(echoIn(5, id));
   expect(box).toHaveValue("");
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(readDraft(sessionDraftKey("dev"))).toBe("");
+  expect(readDraft(sessionDraftKey(refFor("dev")))).toBe("");
 });
 
 test("an aborted send whose item the queue already showed counts as sent", async () => {
@@ -494,12 +505,12 @@ test("an aborted send whose item the queue already showed counts as sent", async
       type: "frame",
       message: {
         type: "queue",
-        agent: "dev",
+        agent: refFor("dev"),
         items: [
           {
             id: "m1",
             kind: "message",
-            from: "@alice",
+            from: mentionOf(refFor("alice")),
             fromKind: "human",
             body: "hello",
             clientMessageId: id,
@@ -518,15 +529,15 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
+  render(<Composer ref={ref} agentRef={refFor("dev")} agent={working()} stopEpoch={1} />);
   expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
   });
-  expect(readDraft(sessionDraftKey("dev"))).toBe("cancelled text");
+  expect(readDraft(sessionDraftKey(refFor("dev")))).toBe("cancelled text");
   // Undo of an untouched box takes it out of the stored draft too.
   act(() => ref.current?.clearIfUnchanged("cancelled text"));
-  expect(readDraft(sessionDraftKey("dev"))).toBe("");
+  expect(readDraft(sessionDraftKey(refFor("dev")))).toBe("");
 });
 
 test("after an abort, text typed meanwhile makes Enter send under a new id, and there is no Retry", async () => {
@@ -594,7 +605,7 @@ const COMMANDS_RESPONSE = {
 };
 const inputs = () =>
   posted
-    .filter((p) => p.url === "/api/agents/dev/input")
+    .filter((p) => p.url === `/api/agents/${refFor("dev")}/input`)
     .map((p) => p.body as { text: string; clientMessageId: string });
 const hintLine = () => document.querySelector("[data-composer-hint]") as HTMLElement;
 const raw = (agent = agentSummary()) => setup(agent);
@@ -609,7 +620,7 @@ test("placeholder, toolbar and hint of the raw session", () => {
   // Until the chat has its own page the link goes to the agent (PR 3 points it at /chat).
   expect(
     within(hintLine()).getByRole("link", { name: "Message Dev agent in Chat" }),
-  ).toHaveAttribute("href", "/agents/dev/chat");
+  ).toHaveAttribute("href", `/agents/${refFor("dev")}/chat`);
 });
 
 test("with a turn open the hint says raw input runs after it", () => {
@@ -649,7 +660,7 @@ test("Enter and ⌥Enter both POST /input as typed, with a clientMessageId and n
 });
 
 test("a command and its arguments are one text; nothing is dispatched as a command", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   await userEvent.type(box, "/code");
   expect(screen.getByRole("option", { name: /code-review/ })).toBeInTheDocument();
@@ -661,7 +672,7 @@ test("a command and its arguments are one text; nothing is dispatched as a comma
 });
 
 test("`/clear ` shows its reason in the note slot and holds Send; `/news-digest` shows nothing", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   await userEvent.type(box, "/news-digest");
   expect(hintLine()).toHaveTextContent("Goes to Claude as typed"); // the rest hint, no note
@@ -679,7 +690,7 @@ test("`/clear ` shows its reason in the note slot and holds Send; `/news-digest`
 });
 
 test("a denied row shows only on an exact match, disabled, with its reason", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   await userEvent.type(box, "/cle");
   expect(screen.queryByRole("option", { name: /clear/ })).toBeNull();
@@ -698,7 +709,7 @@ test("Enter on `/context` while the commands list is pending POSTs /input", asyn
 });
 
 test("a pasted `/context` and Enter POSTs /input", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   box.focus();
   await userEvent.paste("/context");
@@ -709,7 +720,7 @@ test("a pasted `/context` and Enter POSTs /input", async () => {
 });
 
 test("an empty list and `/context` POSTs /input", async () => {
-  qc.setQueryData(["agent-commands", "dev"], { ...COMMANDS_RESPONSE, commands: [] });
+  qc.setQueryData(["agent-commands", refFor("dev")], { ...COMMANDS_RESPONSE, commands: [] });
   const { box } = raw();
   await userEvent.type(box, "/context{Enter}");
   await vi.waitFor(() => expect(inputs()).toHaveLength(1));
@@ -717,7 +728,7 @@ test("an empty list and `/context` POSTs /input", async () => {
 });
 
 test("a typed `/clear` and Enter is refused in the slot, never posted", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   await userEvent.type(box, "/clear{Enter}");
   await tick();
@@ -726,7 +737,7 @@ test("a typed `/clear` and Enter is refused in the slot, never posted", async ()
 });
 
 test("Esc closes the menu first; with none open it stops the turn", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw(working());
   await userEvent.type(box, "/co");
   expect(screen.getByRole("listbox")).toBeInTheDocument();
@@ -751,7 +762,7 @@ test("a refused input shows inline and the text comes back", async () => {
 });
 
 test("the note slot carries a refusal's full text in its title, since the line can be cut", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   expect(hintLine()).not.toHaveAttribute("title");
   await userEvent.type(box, "/clear ");
@@ -762,7 +773,7 @@ test("the note slot carries a refusal's full text in its title, since the line c
 });
 
 test("a known command over several lines is refused in the slot and held", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  qc.setQueryData(["agent-commands", refFor("dev")], COMMANDS_RESPONSE);
   const { box } = raw();
   await userEvent.type(box, "/context{Shift>}{Enter}{/Shift}more");
   expect(hintLine()).toHaveTextContent("A command must be one line.");

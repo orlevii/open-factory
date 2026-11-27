@@ -1,5 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { childrenOf, groupWork, heldSeqs, mergeFailures, runDisplayPasses } from "./display-passes";
 import { arrivedSince } from "./jump-pill";
 import { buildRows, type Row, stabilizeRows } from "./rows";
@@ -7,7 +8,7 @@ import { targetPath, targetRowKey } from "./timeline";
 
 const ev = (seq: number, event: AnyEvent, at = "2026-11-19T19:00:00.000Z"): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId: null,
   at,
   event,

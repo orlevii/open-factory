@@ -41,10 +41,10 @@ const isHttp = (s: string) => {
   }
 };
 
-/** UI design §8.3's per-row checks. Blank rows are dropped (nothing to check). `knownSlugs` are the agents that exist. */
+/** UI design §8.3's per-row checks. Blank rows are dropped (nothing to check). `knownHandles` are the agents that exist. */
 export function checkLink(
   row: LinkRow,
-  knownSlugs: ReadonlySet<string> | undefined,
+  knownHandles: ReadonlySet<string> | undefined,
 ): string | undefined {
   const target = row.target.trim();
   if (!target) return undefined;
@@ -52,8 +52,8 @@ export function checkLink(
     return isHttp(target) && target.length <= 2000 ? undefined : MSG.linkUrl;
   if (row.kind === "file")
     return /[\r\n]/.test(target) || target.length > 500 ? MSG.pathOneLine : undefined;
-  const slug = target.replace(/^@/, "");
-  return knownSlugs && !knownSlugs.has(slug) ? FORM_MSG.noSuchAgent : undefined;
+  const handle = target.replace(/^@/, "");
+  return knownHandles && !knownHandles.has(handle) ? FORM_MSG.noSuchAgent : undefined;
 }
 
 export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>
@@ -71,7 +71,7 @@ export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>
  */
 export function linkRowErrors(
   rows: LinkRow[],
-  knownSlugs: ReadonlySet<string> | undefined,
+  knownHandles: ReadonlySet<string> | undefined,
   checkedRows: ReadonlySet<string>,
   linksError: string | undefined,
 ): Record<string, string | undefined> {
@@ -79,7 +79,7 @@ export function linkRowErrors(
   if (!linksError) return out;
   let own = false;
   for (const r of rows) {
-    const m = checkLink(r, knownSlugs);
+    const m = checkLink(r, knownHandles);
     if (m) own = true;
     if (checkedRows.has(r.id)) out[r.id] = m;
   }

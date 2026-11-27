@@ -44,10 +44,10 @@ const doc = (template: Record<string, unknown> = {}, more: Partial<ConfigDoc> = 
 });
 
 let n = 0;
-async function agent(o: Omit<Parameters<typeof insertAgent>[1], "id" | "slug"> = {}) {
+async function agent(o: Omit<Parameters<typeof insertAgent>[1], "id" | "handle"> = {}) {
   n += 1;
   const id = `cc${n}`;
-  await insertAgent(h.t.sql, { id, slug: `cc-${n}`, ...o });
+  await insertAgent(h.t.sql, { id, handle: `cc-${n}`, ...o });
   return id;
 }
 async function rowOf(id: string) {
@@ -118,7 +118,7 @@ function world(
     const row = await h.store.createMessage({
       from: { userId: "u1" },
       toAgentId: agentId,
-      recipients: ["@x"],
+      recipientIds: [agentId],
       body: "hi",
       urgent: false,
     });
@@ -147,7 +147,7 @@ const events = (agentId: string) =>
     select type, payload from session_events where agent_id = ${agentId} and type = 'config_changed'`;
 const noticeLines = async (agentId: string) => {
   const rows = await h.t.sql<{ body: string }[]>`
-    select body from messages where to_agent_id = ${agentId} and notice = 'config_changed' and state = 'pending'`;
+    select body from messages where to_id = ${agentId} and notice = 'config_changed' and state = 'pending'`;
   return rows.map((r) => parseConfigNotice(r.body));
 };
 
@@ -300,7 +300,7 @@ test("a stale template dispatch arriving after an overlay save doesn't cancel th
   // holds the empty overlay, so its `after` equals what the process started with).
   await w.changes.overlaySaved(
     await rowOf(id),
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
     started,
     committed,
   );
@@ -329,7 +329,7 @@ test("an overlay save built on a stale base arriving after a template change doe
   // An overlay revert whose base was read before the template change: its `after` equals what the process started on.
   await w.changes.overlaySaved(
     await rowOf(id),
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
     mergeConfig(A, { template: { model: "haiku" } }),
     started,
   );
@@ -346,13 +346,13 @@ test("an overlay save on an archived agent writes the event only; values never r
   const id = await agent({ archived: true });
   const out = await w.changes.overlaySaved(
     await rowOf(id),
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
     doc(),
     doc({}, { settings: { env: { GH: SECRET } } }),
   );
   expect(out).toEqual({ changes: ["env GH added"], restartChecked: false });
   expect((await events(id)).map((e) => e.payload)).toEqual([
-    { by: "@or", changes: ["env GH added"] },
+    { by: "<@k7x2m9qd>", changes: ["env GH added"] },
   ]);
   expect(await noticeLines(id)).toEqual([]);
   const all = await h.t.sql`select payload::text as p from session_events where agent_id = ${id}`;

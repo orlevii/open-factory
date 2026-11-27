@@ -19,13 +19,13 @@ beforeEach(async () => {
   });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  for (const slug of ["lead", "dev", "qa"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
   // a spawned agent
-  ids.kid = (await h.seedAgent({ slug: "kid" })).id;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'kid'`;
+  ids.kid = (await h.seedAgent({ handle: "kid" })).id;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'kid')`;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
 });
 afterEach(() => h.close());
@@ -61,17 +61,16 @@ test("schedule_message defaults to the caller, the factory zone and a note for a
   const r = await call("dev", "schedule_message", { body: "Weekly review", cron: "0 9 * * 1-5" });
   expect(r.json).toEqual({
     id: expect.stringMatching(/^S-\d+$/),
-    to: "dev",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     next_run: "2026-11-23T09:00:00+01:00",
     note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",
   });
-  const [row] =
-    await h.sql`select created_by_agent_id, body_author_agent_id, target_agent_id from schedules`;
+  const [row] = await h.sql`select created_by_id, body_author_id, target_agent_id from schedules`;
   expect(row).toEqual({
-    created_by_agent_id: ids.dev,
-    body_author_agent_id: ids.dev,
+    created_by_id: ids.dev,
+    body_author_id: ids.dev,
     target_agent_id: ids.dev,
   });
 });
@@ -84,20 +83,20 @@ test("at, to and me; an errored target gets its note; identity never comes from 
     created_by: "lead",
   });
   expect(a.json).toMatchObject({
-    to: "qa",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/),
     at: "2026-12-01T09:00:00+01:00",
     timezone: "Europe/Berlin",
   });
   expect(a.json.note).toBeUndefined();
   const me = await call("dev", "schedule_message", { body: "x", at: "2026-12-02T09:00", to: "me" });
-  expect(me.json.to).toBe("dev");
-  await h.sql`update agents set status = 'errored' where slug = 'qa'`;
+  expect(me.json.to).toMatch(/^<@[0-9a-z]{8}\|dev>$/);
+  await h.sql`update agents set status = 'errored' where id = (select id from principals where handle = 'qa')`;
   const e = await call("dev", "schedule_message", { body: "x", at: "2026-12-03T09:00", to: "qa" });
   expect(e.json.note).toBe(
     "@qa is errored; it will see this after it is restarted (restart_agent, or a human).",
   );
-  const rows = await h.sql`select created_by_agent_id from schedules`;
-  expect(new Set(rows.map((r) => r.created_by_agent_id))).toEqual(new Set([ids.dev]));
+  const rows = await h.sql`select created_by_id from schedules`;
+  expect(new Set(rows.map((r) => r.created_by_id))).toEqual(new Set([ids.dev]));
 });
 
 test("service refusals (the 15-minute floor, both-or-neither, bad cron) come back as tool errors with sentences", async () => {
@@ -116,7 +115,7 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
   const mine = (await call("dev", "schedule_message", { body: "mine", cron: "0 9 * * *" })).json.id;
   const human = (
     await h.app.schedules.create(
-      { userId },
+      { kind: "human", id: userId },
       { target: "dev", cron: "0 8 * * *", timezone: "UTC", body: "from a human" },
     )
   ).item.key;
@@ -128,8 +127,8 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
     by: string;
   }[];
   expect(list.map((x) => [x.id, x.yours, x.by])).toEqual([
-    [human, false, "@or"],
-    [mine, true, "dev"],
+    [human, false, expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/)],
+    [mine, true, expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/)],
   ]);
   const no = await call("dev", "cancel_schedule", { id: human });
   expect(no).toMatchObject({
@@ -143,4 +142,17 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
   expect((await call("dev", "cancel_schedule", { id: mine })).text).toBe(
     `There is no schedule ${mine}.`,
   );
+});
+
+test("a schedule_message target given as an unknown mention is refused and creates nothing", async () => {
+  const r = await call("dev", "schedule_message", {
+    body: "x",
+    at: "2026-12-01T09:00",
+    to: "<@zzzzzzzz>",
+  });
+  expect(r.err).toBe(true);
+  expect(r.text).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
+  );
+  expect(await h.sql`select 1 from schedules`).toHaveLength(0);
 });

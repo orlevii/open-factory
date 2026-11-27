@@ -1,10 +1,12 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { GO_TO, isTaskKey, rankAgents } from "./rank";
 
-const a = (slug: string, displayName = slug): AgentSummary =>
-  ({ slug, displayName }) as unknown as AgentSummary;
-const slugs = (r: { agent: AgentSummary }[]) => r.map((x) => x.agent.slug);
+const a = (handle: string, displayName = handle): AgentSummary =>
+  ({ ref: refFor(handle), handle, displayName }) as unknown as AgentSummary;
+const refs = (...handles: string[]) => handles.map(refFor);
+const handles = (r: { agent: AgentSummary }[]) => r.map((x) => x.agent.handle);
 
 describe("rankAgents", () => {
   test("marks exact, prefix and recent matches strong, substring matches not", () => {
@@ -12,39 +14,39 @@ describe("rankAgents", () => {
       "bot",
       [a("bot"), a("botany"), a("recent-bot"), a("xbotx")],
       [a("bot-old")],
-      ["recent-bot"],
+      refs("recent-bot"),
       [],
     );
-    expect(r.map((x) => [x.agent.slug, x.strong])).toEqual([
+    expect(r.map((x) => [x.agent.handle, x.strong])).toEqual([
       ["bot", true],
       ["botany", true],
       ["recent-bot", true],
       ["xbotx", false],
       ["bot-old", true],
     ]);
-    expect(rankAgents("", [a("bot")], [], ["bot"], []).every((x) => x.strong)).toBe(true);
+    expect(rankAgents("", [a("bot")], [], refs("bot"), []).every((x) => x.strong)).toBe(true);
   });
-  test("exact slug beats exact name beats prefix beats recent beats substring", () => {
+  test("exact handle beats exact name beats prefix beats recent beats substring", () => {
     const live = [
       a("xbotx", "has bot inside"), // substring
       a("recent-one", "Zed bot"), // recent + substring
       a("botany", "Botany"), // prefix
       a("other", "bot"), // exact name
-      a("bot", "Something"), // exact slug
+      a("bot", "Something"), // exact handle
     ];
-    const r = rankAgents("bot", live, [], ["recent-one"], []);
-    expect(slugs(r)).toEqual(["bot", "other", "botany", "recent-one", "xbotx"]);
+    const r = rankAgents("bot", live, [], refs("recent-one"), []);
+    expect(handles(r)).toEqual(["bot", "other", "botany", "recent-one", "xbotx"]);
   });
 
   test("ties fall back to tree order", () => {
     const live = [a("alpha-2"), a("alpha-1"), a("alpha-3")];
-    const r = rankAgents("alpha", live, [], [], ["alpha-3", "alpha-1", "alpha-2"]);
-    expect(slugs(r)).toEqual(["alpha-3", "alpha-1", "alpha-2"]);
+    const r = rankAgents("alpha", live, [], [], refs("alpha-3", "alpha-1", "alpha-2"));
+    expect(handles(r)).toEqual(["alpha-3", "alpha-1", "alpha-2"]);
   });
 
   test("live agents come before ended ones, whatever the match quality", () => {
     const r = rankAgents("dev", [a("my-dev")], [a("dev")], [], []);
-    expect(r.map((x) => [x.agent.slug, x.ended])).toEqual([
+    expect(r.map((x) => [x.agent.handle, x.ended])).toEqual([
       ["my-dev", false],
       ["dev", true],
     ]);
@@ -52,8 +54,14 @@ describe("rankAgents", () => {
 
   test("an empty query lists only recent agents, in recent order", () => {
     const live = [a("a"), a("b"), a("c")];
-    const r = rankAgents("  ", live, [a("gone")], ["c", "gone", "missing", "a"], ["a", "b", "c"]);
-    expect(r.map((x) => [x.agent.slug, x.ended])).toEqual([
+    const r = rankAgents(
+      "  ",
+      live,
+      [a("gone")],
+      refs("c", "gone", "missing", "a"),
+      refs("a", "b", "c"),
+    );
+    expect(r.map((x) => [x.agent.handle, x.ended])).toEqual([
       ["c", false],
       ["gone", true],
       ["a", false],
@@ -61,11 +69,11 @@ describe("rankAgents", () => {
   });
 
   test("a recent agent that does not match the query is not listed", () => {
-    expect(rankAgents("zzz", [a("ceo")], [], ["ceo"], [])).toEqual([]);
+    expect(rankAgents("zzz", [a("ceo")], [], refs("ceo"), [])).toEqual([]);
   });
 
   test("matching is case-insensitive and ignores a leading @", () => {
-    expect(slugs(rankAgents("@CEO", [a("ceo", "Chief")], [], [], []))).toEqual(["ceo"]);
+    expect(handles(rankAgents("@CEO", [a("ceo", "Chief")], [], [], []))).toEqual(["ceo"]);
   });
 
   test("190 'Developer NNN' do not bury ceo for the query c", () => {
@@ -73,20 +81,20 @@ describe("rankAgents", () => {
       a(`dev-${i}`, `Developer ${String(i).padStart(3, "0")}`),
     );
     const live = [...devs, a("ceo", "Chief Executive")];
-    const tree = live.map((x) => x.slug);
+    const tree = live.map((x) => x.ref);
     // Prefix: ceo beats the 190 devs, which only contain a c ("Developer" has no c; "dev-" none).
-    expect(rankAgents("c", live, [], [], tree)[0]?.agent.slug).toBe("ceo");
+    expect(rankAgents("c", live, [], [], tree)[0]?.agent.handle).toBe("ceo");
     // Recent and prefix still lead among agents that merely contain the letter.
-    const noisy = devs.map((d) => a(d.slug, `Pace ${d.slug}`));
+    const noisy = devs.map((d) => a(d.handle, `Pace ${d.handle}`));
     const withCeo = [...noisy, a("ceo", "Boss c")];
     const r = rankAgents(
       "c",
       withCeo,
       [],
-      ["ceo"],
-      withCeo.map((x) => x.slug),
+      refs("ceo"),
+      withCeo.map((x) => x.ref),
     );
-    expect(r[0]?.agent.slug).toBe("ceo");
+    expect(r[0]?.agent.handle).toBe("ceo");
   });
 });
 

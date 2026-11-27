@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, signUp } from "../test/helpers.ts";
 
 const N = 2;
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -11,12 +11,12 @@ beforeEach(async () => {
   const me = await signUp(h.app, { handle: "or" });
   cookie = me.cookie;
   await h.app.factorySettings.update({ loopGuardMessages: N }, me.user.id);
-  await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
 });
 afterEach(() => h.close());
 
-const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+const idOf = async (handle: string) => (await agentRowOf(h.app, handle))?.id ?? "";
 const send = async (from: string, to: string) =>
   (await h.app.router.send({ agentId: await idOf(from) }, [`@${to}`], "ping", false)).results[0];
 /** Ada sends N, bob N + 1, then ada's next send trips the guard both ways. */
@@ -56,8 +56,8 @@ describe("the inbox entry's loopHold", () => {
     expect((await entry()).loopHold).toEqual({
       id: holdId,
       agents: [
-        { slug: expect.stringMatching(/^(ada|bob)$/), status: "live" },
-        { slug: expect.stringMatching(/^(ada|bob)$/), status: "live" },
+        { ref: expect.any(String), handle: expect.stringMatching(/^(ada|bob)$/), status: "live" },
+        { ref: expect.any(String), handle: expect.stringMatching(/^(ada|bob)$/), status: "live" },
       ],
       waiting: 3,
       sentOn: 0,
@@ -66,25 +66,32 @@ describe("the inbox entry's loopHold", () => {
     });
   });
 
-  test("after Resume: sentOn is the rows sent on, waiting 0, resumedBy the handle with @; a fresh read says the same", async () => {
+  test("after Resume: sentOn is the rows sent on, waiting 0, resumedBy the human; a fresh read says the same", async () => {
     await openHold(2);
     await resume(holdId);
     const first = (await entry()).loopHold;
     const again = (await entry()).loopHold;
-    expect(first).toMatchObject({ waiting: 0, sentOn: 3, resumedBy: "@or" });
+    expect(first).toMatchObject({
+      waiting: 0,
+      sentOn: 3,
+      resumedBy: { ref: expect.any(String), handle: "or" },
+    });
     expect(first.resumedAt).toEqual(expect.any(String));
     expect(again).toEqual(first);
   });
 
   test("an archived or terminated agent shows its status", async () => {
     await openHold(0);
-    const [a, b] = (await entry()).loopHold.agents as [{ slug: string }, { slug: string }];
-    await h.sql`update agents set archived_at = now() where slug = ${a.slug}`;
-    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.slug)}, reports_to_user = null, terminated_at = now(), terminated_by = '@or' where slug = ${b.slug}`;
+    const [a, b] = (await entry()).loopHold.agents as [
+      { ref: string; handle: string },
+      { ref: string; handle: string },
+    ];
+    await h.sql`update agents set archived_at = now() where id = ${await idOf(a.handle)}`;
+    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.handle)}, terminated_at = now(), terminated_by = null where id = ${await idOf(b.handle)}`;
     const { agents } = (await entry()).loopHold;
     expect(agents).toEqual([
-      { slug: a.slug, status: "archived" },
-      { slug: b.slug, status: "terminated" },
+      { ...a, status: "archived" },
+      { ...b, status: "terminated" },
     ]);
   });
 
@@ -113,7 +120,7 @@ describe("POST /api/loop-holds/:id/resume", () => {
       await h.sql`select distinct state from messages where loop_hold_id = ${holdId} and kind <> 'system'`;
     expect(states.map((r) => r.state)).toEqual(["pending"]);
     const [hold] =
-      await h.sql`select h.resumed_at, u.handle from loop_holds h join users u on u.id = h.resumed_by`;
+      await h.sql`select h.resumed_at, u.handle from loop_holds h join principals u on u.id = h.resumed_by`;
     expect(hold?.handle).toBe("or");
     expect(hold?.resumed_at).toBeTruthy();
     await vi.waitFor(() => expect(delivered).toHaveBeenCalledTimes(3));
@@ -167,7 +174,7 @@ describe("POST /api/loop-holds/:id/resume", () => {
       { resumed_at: Date },
     ];
     expect(second.json().error).toMatchObject({
-      resumedBy: "@or",
+      resumedBy: { ref: expect.any(String), handle: "or" },
       resumedAt: new Date(resumed_at).toISOString(),
     });
     expect(first.statusCode).toBe(200);

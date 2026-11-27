@@ -8,14 +8,11 @@ import { isCoarsePointer } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";
 
 const REASON: Record<string, string> = {
-  unknown: "no such name",
-  ambiguous: "matches more than one",
   archived: "archived",
   terminated: "terminated",
-  reserved: "reserved name",
 };
 
-/** "Not reached: @x (no such name), @y (archived), and 3 more (over 50 mentions)." (only the reasons present). */
+/** "Not reached: @x (archived), @y (terminated), and 3 more (over 50 mentions)." (only the reasons present). */
 export function notReachedLine(list: TaskCommentResponse["notReached"]): string | undefined {
   if (!list.length) return undefined;
   const many = list.filter((n) => n.reason === "too_many").length;
@@ -27,8 +24,8 @@ export function notReachedLine(list: TaskCommentResponse["notReached"]): string 
   return `Not reached: ${parts.join(", ")}.`;
 }
 
-/** The comment toolbar's `@` button (people and agents both). */
-const COMMENT_AT_LABEL = "Insert a handle";
+/** What the `@` menu says a pick does, in a comment. */
+const MENTION_NOTE = "A mention notifies them · Esc keeps it as text";
 export const POST_FAILED = "Couldn't post the comment. Try again.";
 
 export type CommentComposerHandle = {
@@ -55,7 +52,7 @@ export function CommentComposer({
   taskKey: string;
   /** After the server took the comment (the reading pane marks its item read). */
   onPosted?: () => void;
-  /** The current live assignee's slug, for the helper line. */
+  /** The current live assignee's handle, for the helper line. */
   assignee: string | undefined;
   /** Kept for callers: the shared composer starts at two lines and grows. */
   compact?: boolean;
@@ -97,14 +94,14 @@ export function CommentComposer({
     },
     [qc, taskKey, onPosted],
   );
-  // `@` completes a handle as `@slug ` (routing as today, U3 §13.4).
-  const at = useMentionSource(COMMENT_AT_LABEL);
+  // `@` mentions someone: the mention is sent as `<@ref>` and notifies them.
+  const at = useMentionSource({ note: MENTION_NOTE });
   const completions = useMemo(() => ({ at }), [at]);
   const coarse = isCoarsePointer();
   const note = useMemo(() => {
     const who = assignee
-      ? `Goes to @${assignee} and anyone you @mention.`
-      : "No assignee: only the people and agents you @mention are notified.";
+      ? `Goes to @${assignee} and anyone you mention.`
+      : "No assignee: only the people and agents you mention are notified.";
     return { kind: "hint" as const, text: coarse ? who : `${who} Enter to post.` };
   }, [assignee, coarse]);
   return (

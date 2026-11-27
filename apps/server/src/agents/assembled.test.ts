@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { listenOrClose } from "../shutdown.ts";
-import { makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
+import { agentRefOf, makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
 
 const fake = createFakeClaude({ scenario: "reply" });
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -44,35 +44,46 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
     if (f.type === "session_event") seen.push(f.event.seq);
   });
   await new Promise((r) => ws.once("open", r));
-  ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+  ws.send(
+    JSON.stringify({ type: "subscribe", agent: await agentRefOf(t.app, "dev"), afterSeq: 0 }),
+  );
 
   const res = await t.app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["dev"], body: "hello", urgent: false },
+    payload: { to: [t.seededRef("dev")], body: "hello", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(
     async () =>
-      (await t.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie } })).json()
-        .agent.status === "idle",
+      (
+        await t.app.inject({
+          method: "GET",
+          url: `/api/agents/${await agentRefOf(t.app, "dev")}`,
+          headers: { cookie },
+        })
+      ).json().agent.status === "idle",
   );
 
   const stdin = fake.log().filter((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
   expect(stdin).toHaveLength(1);
   expect(JSON.parse(stdin[0]?.kind === "stdin" ? stdin[0].line : "{}").message.content).toMatch(
-    /^<factory-message from="@or" from_kind="human" kind="message" to="@[a-z0-9-]+" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
+    /^<factory-message from="<@[0-9a-z]{8}\|or>" from_kind="human" kind="message" to="<@[0-9a-z]{8}\|[a-z0-9-]+>" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
   );
   const start = sessionStarts()[0];
   expect(start?.kind === "start" && start.env.DATABASE_URL).toBeUndefined();
   expect(start?.kind === "start" && start.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("test-token");
   expect(start?.kind === "start" && start.env.CLAUDE_CONFIG_DIR).toBe(
-    path.join(t.factoryHome, "agents", "dev", ".claude-config"),
+    path.join(t.seededWorkdir("dev"), ".claude-config"),
   );
 
   const page = (
-    await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })
+    await t.app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(t.app, "dev")}/events`,
+      headers: { cookie },
+    })
   ).json();
   const types = page.events.map((e: { event: { type: string } }) => e.event.type);
   expect(types).toEqual([
@@ -92,7 +103,11 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
 
 test("server restart: graceful stop, then the next message resumes the same session", async () => {
   const before = (
-    await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })
+    await t.app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(t.app, "dev")}/events`,
+      headers: { cookie },
+    })
   ).json();
   const sessionId = before.events.find(
     (e: { event: { type: string } }) => e.event.type === "session_started",
@@ -111,7 +126,7 @@ test("server restart: graceful stop, then the next message resumes the same sess
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["dev"], body: "again", urgent: false },
+    payload: { to: [t.seededRef("dev")], body: "again", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(() => sessionStarts().length === 2);
@@ -134,14 +149,19 @@ const alive = (pid: number) => {
 const startsOf = (f: FakeClaude) =>
   f.log().flatMap((e) => (e.kind === "start" && !e.argv.includes("--version") ? [e] : []));
 const statusOf = async (app: FastifyInstance, c: string) =>
-  (await app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })).json().agent
-    .status;
-const post = (app: FastifyInstance, c: string, body: string) =>
+  (
+    await app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(app, "dev")}`,
+      headers: { cookie: c },
+    })
+  ).json().agent.status;
+const post = async (app: FastifyInstance, c: string, body: string) =>
   app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { cookie: c },
-    payload: { to: ["dev"], body, urgent: false },
+    payload: { to: [await agentRefOf(app, "dev")], body, urgent: false },
   });
 
 test("assembled: app.close() with a live agent, reopen(): exactly one claude process per agent", async () => {
@@ -202,7 +222,7 @@ test("assembled: a server that died mid-turn: the next boot reaps the leftover c
     const page = (
       await next.app.inject({
         method: "GET",
-        url: "/api/agents/dev/events",
+        url: `/api/agents/${await agentRefOf(next.app, "dev")}/events`,
         headers: { cookie: c },
       })
     ).json();
@@ -238,7 +258,11 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
     await until(
       async () =>
         (
-          await w.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })
+          await w.app.inject({
+            method: "GET",
+            url: `/api/agents/${await agentRefOf(w.app, "dev")}`,
+            headers: { cookie: c },
+          })
         ).json().agent.turnOpen === true,
     );
     // Close stdin, 3 s of grace, SIGTERM: the turn is cut short by the shutdown.
@@ -268,9 +292,11 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
       /^<factory-message from="@factory" from_kind="factory" kind="system"/,
     );
     expect(await notices()).toEqual([{ state: "delivered" }]);
-    expect((await w.sql`select attempting from agents where slug = 'dev'`)[0]?.attempting).toBe(
-      false,
-    );
+    expect(
+      (
+        await w.sql`select attempting from agents where id = (select id from principals where handle = 'dev')`
+      )[0]?.attempting,
+    ).toBe(false);
 
     // Delivered once: a further restart has nothing to resume.
     await next.app.close();
@@ -293,8 +319,8 @@ test("assembled: a listen that fails after the boot woke an agent closes the app
     const agent = await w.seedAgent();
     const { user } = await w.signUpUser({ handle: "or" });
     await w.app.close();
-    await w.sql`insert into messages (id, from_user_id, to_agent_id, body, urgent, recipients)
-                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false, '{@test}')`;
+    await w.sql`insert into messages (id, from_id, to_id, body, urgent, recipient_ids)
+                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false, ${[agent.id]})`;
     const next = await w.reopen({ env });
     await until(() => startsOf(f).length === 1); // the boot woke it before any listen
     const pid = startsOf(f)[0]?.pid ?? 0;

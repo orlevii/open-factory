@@ -4,15 +4,16 @@ import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { CompactPopover } from "./compact-popover";
 
 const fail = () => json({ error: { code: "conflict", message: "Agent is busy." } }, 409);
 
 test("a failed compact shows its message in an alert, announced again on a repeat", async () => {
-  mockApi({ "POST /api/agents/dev/compact": fail });
+  mockApi({ [`POST /api/agents/${refFor("dev")}/compact`]: fail });
   render(
     <TooltipProvider>
-      <CompactPopover slug="dev" open onOpenChange={() => {}} />
+      <CompactPopover agentRef={refFor("dev")} open onOpenChange={() => {}} />
     </TooltipProvider>,
   );
   const u = userEvent.setup();
@@ -28,13 +29,13 @@ test("a failed compact shows its message in an alert, announced again on a repea
 
 test("an unreachable server shows the short unreachable line and keeps the typed focus", async () => {
   mockApi({
-    "POST /api/agents/dev/compact": () => {
+    [`POST /api/agents/${refFor("dev")}/compact`]: () => {
       throw new TypeError("Failed to fetch");
     },
   });
   render(
     <TooltipProvider>
-      <CompactPopover slug="dev" open onOpenChange={() => {}} />
+      <CompactPopover agentRef={refFor("dev")} open onOpenChange={() => {}} />
     </TooltipProvider>,
   );
   const u = userEvent.setup();

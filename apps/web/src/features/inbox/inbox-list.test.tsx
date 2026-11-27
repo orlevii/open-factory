@@ -1,10 +1,13 @@
 import type { ServerMessage } from "@open-factory/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { formatInboxTime } from "@/features/session/format";
+import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -34,12 +37,12 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: true,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: new Date(2026, 10, 19, 14, 32).toISOString(),
-  link: { kind: "session", agentSlug: "dev", seq: 40 + n },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 40 + n },
   ...o,
 });
 
@@ -50,7 +53,7 @@ test("rows link to the sender's call with an accessible name; the preview is the
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: "From @dev to @bob, urgent, 14:32" });
-  expect(link).toHaveAttribute("href", "/agents/dev/session?event=41");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("dev")}/session?event=41`);
   expect(link).toHaveAccessibleDescription("preview 1");
   expect(screen.getByRole("list", { name: "Inbox" })).toBeInTheDocument();
 });
@@ -62,9 +65,9 @@ test("a factory item names what it is about; a row without seq links to the chat
         chats: [],
         items: [
           item(1, {
-            from: { kind: "factory", name: "factory" },
+            from: { kind: "factory" },
             about: "ops",
-            link: { kind: "session", agentSlug: "ops" },
+            link: { kind: "session", agentRef: refFor("ops") },
           }),
         ],
         nextCursor: null,
@@ -74,7 +77,7 @@ test("a factory item names what it is about; a row without seq links to the chat
   const link = await screen.findByRole("link", {
     name: "From Factory about @ops to @bob, 14:32",
   });
-  expect(link).toHaveAttribute("href", "/agents/ops/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("ops")}/chat`);
 });
 
 test("empty state", async () => {
@@ -159,7 +162,7 @@ test("inbox_changed refetches and a new row appears at the top", async () => {
   await waitFor(() => expect(screen.getAllByRole("link", { name: /^From @dev/ })).toHaveLength(2));
   expect(
     within(screen.getByRole("list", { name: "Inbox" })).getAllByRole("link")[0],
-  ).toHaveAttribute("href", "/agents/dev/session?event=42");
+  ).toHaveAttribute("href", `/agents/${refFor("dev")}/session?event=42`);
 });
 
 test("arrow keys move focus between rows; Home and End jump", async () => {
@@ -243,11 +246,12 @@ test("unread rows have an 'Unread, ' name; read rows have none", async () => {
 });
 
 const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
-const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
+const chat = (handle: string, name: string, o: Record<string, unknown> = {}) => ({
   agent: {
-    slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -256,9 +260,9 @@ const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
     ...((o.agent as object) ?? {}),
   },
   unread: 3,
-  firstUnreadId: `${slug}-m`,
+  firstUnreadId: `${handle}-m`,
   latest: {
-    messageId: `${slug}-m`,
+    messageId: `${handle}-m`,
     preview: `${name} says hi`,
     createdAt: at(14, 20),
     urgent: false,
@@ -270,8 +274,8 @@ const hrefs = () =>
   within(screen.getByRole("list", { name: "Inbox" }))
     .getAllByRole("link")
     .map((a) => a.getAttribute("href"));
-const rowOf = (slug: string) =>
-  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${slug}"]`);
+const rowOf = (handle: string) =>
+  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(handle)}"]`);
 
 test("a chat row: the agent chip, '· 3 new', Urgent, the time, the preview as its description", async () => {
   mockApi({
@@ -284,7 +288,7 @@ test("a chat row: the agent chip, '· 3 new', Urgent, the time, the preview as i
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: "Unread, Ada, 3 new, urgent, 14:20" });
-  expect(link).toHaveAttribute("href", "/agents/ada/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("ada")}/chat`);
   expect(link).toHaveAccessibleDescription("Ada says hi");
   expect(within(link).getByText("· 3 new")).toBeInTheDocument();
   expect(within(link).getByText("Urgent")).toBeInTheDocument();
@@ -332,9 +336,9 @@ test("chats and items are interleaved by time", async () => {
   renderApp("/inbox", alice);
   await screen.findByRole("link", { name: /^Unread, Ada/ });
   expect(hrefs()).toEqual([
-    "/agents/dev/session?event=41",
-    "/agents/ada/chat",
-    "/agents/dev/session?event=42",
+    `/agents/${refFor("dev")}/session?event=41`,
+    `/agents/${refFor("ada")}/chat`,
+    `/agents/${refFor("dev")}/session?event=42`,
   ]);
 });
 
@@ -355,10 +359,10 @@ test("a chat older than the oldest loaded item waits until a page reaches it", a
   await userEvent.click(screen.getByRole("button", { name: "Load earlier" }));
   await waitFor(() => expect(rowOf("bo")).not.toBeNull());
   expect(hrefs()).toEqual([
-    "/agents/ada/chat",
-    "/agents/dev/session?event=41",
-    "/agents/bo/chat",
-    "/agents/dev/session?event=42",
+    `/agents/${refFor("ada")}/chat`,
+    `/agents/${refFor("dev")}/session?event=41`,
+    `/agents/${refFor("bo")}/chat`,
+    `/agents/${refFor("dev")}/session?event=42`,
   ]);
 });
 
@@ -396,7 +400,7 @@ test("a new message re-sorts a chat only after the pointer and the focus have le
   mockApi({ "GET /api/inbox?": () => json({ chats, items: [], nextCursor: null }) });
   renderApp("/inbox", alice);
   await screen.findByRole("link", { name: /^Unread, Ada/ });
-  expect(hrefs()).toEqual(["/agents/bo/chat", "/agents/ada/chat"]);
+  expect(hrefs()).toEqual([`/agents/${refFor("bo")}/chat`, `/agents/${refFor("ada")}/chat`]);
   const list = screen.getByRole("list", { name: "Inbox" });
   await userEvent.hover(list);
   act(() => (rowOf("bo") as HTMLElement).focus());
@@ -409,12 +413,14 @@ test("a new message re-sorts a chat only after the pointer and the focus have le
   await waitFor(() =>
     expect(within(rowOf("ada") as HTMLElement).getByText("· 4 new")).toBeVisible(),
   );
-  expect(hrefs()).toEqual(["/agents/bo/chat", "/agents/ada/chat"]);
+  expect(hrefs()).toEqual([`/agents/${refFor("bo")}/chat`, `/agents/${refFor("ada")}/chat`]);
   // The pointer leaves, the focus is still in: still held.
   await userEvent.unhover(list);
-  expect(hrefs()).toEqual(["/agents/bo/chat", "/agents/ada/chat"]);
+  expect(hrefs()).toEqual([`/agents/${refFor("bo")}/chat`, `/agents/${refFor("ada")}/chat`]);
   act(() => (rowOf("bo") as HTMLElement).blur());
-  await waitFor(() => expect(hrefs()).toEqual(["/agents/ada/chat", "/agents/bo/chat"]));
+  await waitFor(() =>
+    expect(hrefs()).toEqual([`/agents/${refFor("ada")}/chat`, `/agents/${refFor("bo")}/chat`]),
+  );
 });
 
 test("j and k keep the list held: a chat that was read stays until the focus leaves", async () => {
@@ -440,12 +446,12 @@ test("resting the pointer on a chat row warms its chat", async () => {
   fakeMatchMedia.installWidth(1280);
   const api = mockApi({
     "GET /api/inbox?": () => json({ chats: [chat("ada", "Ada")], items: [], nextCursor: null }),
-    "GET /api/agents/ada/chat?": () =>
+    [`GET /api/agents/${refFor("ada")}/chat?`]: () =>
       json({ entries: [], nextCursor: null, newerCursor: null, working: null }),
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: /^Unread, Ada/ });
-  const warmed = () => api.calls.some((c) => c.url.startsWith("/api/agents/ada/chat"));
+  const warmed = () => api.calls.some((c) => c.url.startsWith(`/api/agents/${refFor("ada")}/chat`));
   await userEvent.hover(link);
   await userEvent.unhover(link);
   await new Promise((r) => setTimeout(r, 300));
@@ -461,17 +467,21 @@ test("below 1024px a click on a chat row navigates to its chat", async () => {
   });
   const app = renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("link", { name: /^Unread, Ada/ }));
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/chat"));
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("ada")}/chat`),
+  );
 });
 
-test("at 1024px and up a click selects the chat (?item=chat:<slug>) and marks nothing read", async () => {
+test("at 1024px and up a click selects the chat (?item=chat:<handle>) and marks nothing read", async () => {
   fakeMatchMedia.installWidth(1280);
   const api = mockApi({
     "GET /api/inbox?": () => json({ chats: [chat("ada", "Ada")], items: [], nextCursor: null }),
   });
   const app = renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("link", { name: /^Unread, Ada/ }));
-  await waitFor(() => expect(app.router.state.location.search).toEqual({ item: "chat:ada" }));
+  await waitFor(() =>
+    expect(app.router.state.location.search).toEqual({ item: `chat:${refFor("ada")}` }),
+  );
   expect(rowOf("ada")).toHaveAttribute("aria-current", "true");
   expect(api.calls.filter((c) => c.method === "POST")).toEqual([]);
 });
@@ -480,7 +490,7 @@ const credItem = (c: { name: string; expiresAt: string | null; current: boolean 
   item(1, {
     kind: "credential",
     read: false,
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     to: "@alice",
     credential: c,
     link: { kind: "credential", name: c.name },
@@ -549,7 +559,13 @@ test("the row's expiry text follows the now prop, not the wall clock (memo contr
   );
   const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
   const row = credItem({ name: "work", expiresAt, current: true }) as never;
-  const rows = (now: number) => <InboxRow item={row} now={now} onOpen={() => {}} />;
+  // A row reads the principals cache for mentions in its preview.
+  const qc = createQueryClient({ queries: { retry: false } });
+  const rows = (now: number) => (
+    <QueryClientProvider client={qc}>
+      <InboxRow item={row} now={now} onOpen={() => {}} />
+    </QueryClientProvider>
+  );
   const router = createRouter({
     routeTree: createRootRoute({ component: () => <ul>{rows(Date.UTC(2026, 10, 19, 12))}</ul> }),
     history: createMemoryHistory(),
@@ -582,7 +598,7 @@ test.each([
   const link = await screen.findByRole("link", { name: new RegExp(`^Unread, Ada, ${text}`) });
   expect(link).toHaveTextContent(text);
   expect(link).toHaveAccessibleDescription("Shipped the fix");
-  expect(link).toHaveAttribute("href", "/agents/ada/session");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("ada")}/session`);
   expect(screen.queryByText("Nothing in your inbox.")).not.toBeInTheDocument();
 });
 
@@ -595,16 +611,18 @@ test("opening an update row goes to the report's session and reads its updates u
         items: [],
         nextCursor: null,
       }),
-    "POST /api/inbox/read-from/ada": () => json({ marked: 3, readAt: at(15, 0) }),
+    [`POST /api/inbox/read-from/${refFor("ada")}`]: () => json({ marked: 3, readAt: at(15, 0) }),
   });
   const app = renderApp("/inbox", alice);
   await userEvent.click(await screen.findByRole("link", { name: /^Unread, Ada, 3 updates/ }));
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/session"));
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("ada")}/session`),
+  );
   await waitFor(() =>
     expect(api.calls.filter((c) => c.method === "POST")).toEqual([
       {
         method: "POST",
-        url: "/api/inbox/read-from/ada",
+        url: `/api/inbox/read-from/${refFor("ada")}`,
         body: { upTo: at(14, 20), kind: "member_update" },
       },
     ]),

@@ -1,12 +1,27 @@
 import type { Envelope, MessageKind } from "@open-factory/shared";
+import { MENTION_SHAPE } from "@open-factory/shared/mentions";
 import type { FactoryMessage } from "./types.ts";
 
-const attr = (s: string) =>
+const escapeAttr = (s: string) =>
   s
     .replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+
+/**
+ * An attribute value: an exact `<@ref>` / `<@ref|handle>` mention (a validated ref and handle, so it holds no quote or
+ * angle bracket beyond its own) is written as is; everything else is escaped.
+ */
+const attr = (s: string) => {
+  let out = "";
+  let at = 0;
+  for (const m of s.matchAll(MENTION_SHAPE)) {
+    out += escapeAttr(s.slice(at, m.index)) + m[0];
+    at = m.index + m[0].length;
+  }
+  return out + escapeAttr(s.slice(at));
+};
 
 /** Any spelling of an opening or closing factory-message tag (case, inner spaces). */
 const TAG = /<(\s*\/?\s*)factory-message/gi;
@@ -59,7 +74,7 @@ export type BatchRow = {
   kind: MessageKind;
   from: string;
   fromKind: FactoryMessage["fromKind"];
-  /** The recipients of a `kind: "message"` row, as `@handle`s. */
+  /** The recipients of a `kind: "message"` row, as mentions. */
   to?: string[];
   urgent: boolean;
   body: string;
@@ -67,7 +82,7 @@ export type BatchRow = {
   about?: string;
   /** A report's `member_update`: the requests of its turn when it wrote the text. */
   re?: Envelope["re"];
-  /** The report's slug for member updates. */
+  /** The report's mention for member updates. */
   groupKey?: string;
   fact?: string;
   subject?: NonNullable<Envelope["subject"]>;
@@ -75,7 +90,7 @@ export type BatchRow = {
   taskKey?: string;
   taskTitle?: string;
   commentId?: string;
-  /** S9: a `scheduled` row. `by` is its author's `@handle` or slug, `due` is ISO 8601 with the schedule zone's offset. */
+  /** S9: a `scheduled` row. `by` is its author's mention, `due` is ISO 8601 with the schedule zone's offset. */
   scheduleKey?: string;
   by?: string;
   /** UI-only: what `by` is; `one()` never renders it. */

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
+import { refOf } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
@@ -9,7 +11,9 @@ import { liveCredentialId } from "../agents/live-credential.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 import { agentStateDir } from "../workspace/paths.ts";
 import { SWEEP_INTERVAL_MS } from "./lifecycle.ts";
@@ -41,7 +45,8 @@ const writeTemplate = (home: string, name: string, y: string) => {
 
 interface Child {
   id: string;
-  slug: string;
+  handle: string;
+  ref: string;
   rt: AgentRuntime;
   proc: FakeProcess;
 }
@@ -53,7 +58,7 @@ async function setup() {
   const app = t;
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
-    slug: "lead",
+    handle: "lead",
     config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
@@ -88,7 +93,7 @@ async function setup() {
     const proc = procsOf(r.agentId).at(-1) as FakeProcess;
     proc.emit(...ev.fullTurn(`sess-${suffix}`));
     await rt.settled();
-    return { id: r.agentId, slug: r.slug, rt, proc };
+    return { id: r.agentId, handle: r.handle, ref: refOf(r.agentId), rt, proc };
   }
   /** Spawned, then hibernated: no process, no slot. */
   async function spawnHibernated(suffix: string): Promise<Child> {
@@ -113,8 +118,12 @@ async function setup() {
     expect(procsOf(c.id).filter((p) => !p.exited)).toEqual([]);
     return c;
   }
-  const row = async (id: string) => (await app.app.store.agentById(id)) as AgentRow;
-  const terminatedBy = async (id: string) => (await row(id)).terminatedBy;
+  const row = async (id: string) => (await app.app.store.agentById(id)) as AgentRecord;
+  /** null while it lives, `@factory` once the TTL sweep ended it (a null `terminated_by` is the factory). */
+  const terminatedBy = async (id: string) => {
+    const r = await row(id);
+    return r.terminatedAt ? (r.terminatedBy ?? "@factory") : null;
+  };
   return {
     t: app,
     driver,
@@ -337,7 +346,7 @@ test("a wake requested right after the check can't start a process (latch); a fa
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(s.log.error).toHaveBeenCalledWith(
-    expect.objectContaining({ agent: c.slug }),
+    expect.objectContaining({ agent: c.handle }),
     "terminating an idle spawned agent failed; retrying next sweep",
   );
   expect(await s.terminatedBy(c.id)).toBeNull();
@@ -369,54 +378,55 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   const s = await setup();
   const a = await s.spawnHibernated("a");
   const b = await s.spawnHibernated("b");
-  for (const c of [a, b]) await s.t.app.terminator.terminate(c.id, "@or");
+  for (const c of [a, b])
+    await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await a.rt.settled();
   await b.rt.settled();
   const ws = s.t.app.workspace;
   const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
   writeFileSync(path.join(outside, "keep.txt"), "not the agent's");
-  symlinkSync(outside, path.join(ws.workdir(a.slug), "planted"));
+  symlinkSync(outside, path.join(ws.workdir(a.ref), "planted"));
   // The factory-owned state folder (persona backups live there once a reset happened).
-  const stateA = agentStateDir(s.t.factoryHome, a.slug);
+  const stateA = agentStateDir(s.t.factoryHome, a.ref);
   mkdirSync(path.join(stateA, "persona"), { recursive: true });
   await s.t.app.store.setWorkspacePinned(b.id, true);
 
   now = Date.now() + 3 * day - 60_000; // inside the grace
   await s.reaper.run();
-  expect(existsSync(ws.workdir(a.slug))).toBe(true);
+  expect(existsSync(ws.workdir(a.ref))).toBe(true);
 
   now += 2 * 60_000; // past it
   await s.reaper.run();
-  expect(existsSync(ws.workdir(a.slug))).toBe(false);
+  expect(existsSync(ws.workdir(a.ref))).toBe(false);
   expect(existsSync(stateA)).toBe(false);
   expect(existsSync(path.join(outside, "keep.txt"))).toBe(true); // the link went, not its target
   expect((await s.row(a.id)).workspaceDeletedAt).toEqual(new Date(now));
-  expect(existsSync(ws.workdir(b.slug))).toBe(true); // pinned
+  expect(existsSync(ws.workdir(b.ref))).toBe(true); // pinned
   expect((await s.row(b.id)).workspaceDeletedAt).toBeNull();
 
   await s.t.app.store.setWorkspacePinned(b.id, false);
   now += SWEEP_INTERVAL_MS;
   await s.reaper.run();
-  expect(existsSync(ws.workdir(b.slug))).toBe(false);
+  expect(existsSync(ws.workdir(b.ref))).toBe(false);
   expect((await s.row(b.id)).workspaceDeletedAt).toEqual(new Date(now));
 });
 
 test("a pin that lands after the candidate was read unpinned keeps the workspace (re-read under the lock)", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("p");
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   const ws = s.t.app.workspace;
-  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.slug), "persona"), { recursive: true });
+  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.ref), "persona"), { recursive: true });
   const observed: boolean[] = [];
   const original = ws.deleteWorkspace.bind(ws);
-  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {
+  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (ref, stillUnpinned, markDeleted) => {
     // The candidate query read it unpinned; the guard agrees before the race.
     observed.push(await stillUnpinned());
     // The pin route (Task 16's shape) takes the workspace lock first and pins.
-    await ws.lock.run(slug, () => s.t.app.store.setWorkspacePinned(c.id, true));
+    await ws.lock.run(ref, () => s.t.app.store.setWorkspacePinned(c.id, true));
     return original(
-      slug,
+      ref,
       async () => {
         const v = await stillUnpinned();
         observed.push(v);
@@ -428,15 +438,15 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(observed).toEqual([true, false]);
-  expect(existsSync(ws.workdir(c.slug))).toBe(true);
-  expect(existsSync(agentStateDir(s.t.factoryHome, c.slug))).toBe(true);
+  expect(existsSync(ws.workdir(c.ref))).toBe(true);
+  expect(existsSync(agentStateDir(s.t.factoryHome, c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
 });
 
 test("a failing deletion is logged and retried by the next run", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("f");
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   vi.spyOn(s.t.app.workspace, "deleteWorkspace").mockRejectedValueOnce(
     new Error("EBUSY: resource busy or locked"),
@@ -444,13 +454,13 @@ test("a failing deletion is logged and retried by the next run", async () => {
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(s.log.error).toHaveBeenCalledWith(
-    expect.objectContaining({ agent: c.slug }),
+    expect.objectContaining({ agent: c.handle }),
     "deleting a workspace failed; retrying next sweep",
   );
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(true);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
   await s.reaper.run();
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(false);
   expect((await s.row(c.id)).workspaceDeletedAt).not.toBeNull();
 });
 
@@ -462,7 +472,7 @@ test("stuck: a terminated stop_failed child is force-removed and its slot releas
   // A stop in progress: never stuck, nothing done to it.
   const busy = await s.spawnIdle("s1");
   busy.proc.holdStop = true;
-  await s.t.app.terminator.terminate(busy.id, "@or");
+  await s.t.app.terminator.terminate(busy.id, await seedTestUser(s.t.db, "or"));
   await busy.rt.settled();
   expect(busy.proc.stopped).toBe(true);
   expect(await busy.rt.sweepStuck()).toBe("still");
@@ -482,7 +492,7 @@ test("stuck: a terminated stop_failed child is force-removed and its slot releas
   };
   expect(await c.rt.hibernate("warm_window")).toBe(true);
   await c.rt.settled();
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   expect((await s.row(c.id)).errorKind).toBe("stop_failed");
   expect(c.proc.exited).toBe(false);
@@ -518,13 +528,13 @@ test("a stuck agent's workspace is kept past the grace until it is cleared", asy
   c.proc.forceKill = async () => {
     throw new Error("kill: operation not permitted");
   };
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   expect((await s.row(c.id)).errorKind).toBe("stop_failed");
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   await c.rt.settled();
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(true);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
 });
 
@@ -532,13 +542,16 @@ test("the sweep appends a terminated event a crash after the commit lost", async
   const s = await setup();
   const c = await s.spawnHibernated("e");
   // The commit happened (the row says so) but the stop job never ran.
+  const boss = await seedTestUser(s.t.db, "boss");
   await s.t.db
     .update(schema.agents)
-    .set({ terminatedAt: new Date(), terminatedBy: "@lead" })
+    .set({ terminatedAt: new Date(), terminatedBy: boss.id })
     .where(eq(schema.agents.id, c.id));
   await s.reaper.run();
   const evs = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);
-  expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(evs.filter((e) => e.type === "terminated")).toEqual([
+    { type: "terminated", by: mentionOf(boss.ref) },
+  ]);
   await s.reaper.run();
   const again = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);
   expect(again.filter((e) => e.type === "terminated")).toHaveLength(1);
@@ -552,7 +565,7 @@ test("the stuck sweep is bounded: 50 long-terminated, cleanly removed agents loa
     ids.push(id);
     await insertAgent(s.t.sql, {
       id,
-      slug: `gone-${i}`,
+      handle: `gone-${i}`,
       reportsTo: s.lead.id,
       terminatedAt: new Date(now - day),
     });
@@ -576,7 +589,7 @@ test("stuck candidates: stop_failed, a kept journal, or a recent termination", a
   for (const [id, r] of rows) {
     await insertAgent(s.t.sql, {
       id,
-      slug: id,
+      handle: id,
       reportsTo: s.lead.id,
       terminatedAt: r.terminatedAt,
       errorKind: r.errorKind ?? null,

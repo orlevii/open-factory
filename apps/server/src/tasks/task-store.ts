@@ -28,7 +28,7 @@ import type { TaskStatus } from "@open-factory/shared";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
 
-const { tasks, taskDependencies, taskLinks, taskComments, taskEvents, agents } = schema;
+const { tasks, taskDependencies, taskLinks, taskComments, taskEvents, agents, principals } = schema;
 
 /** The fixed key of the dependency-edit advisory lock (spec §6.4). */
 export const TASK_GRAPH_LOCK = 0x5348_0008;
@@ -40,7 +40,6 @@ const list = (xs: string[]) =>
     sql`, `,
   );
 
-export type Principal = { agentId: string } | { userId: string };
 export type ResolvedLink = {
   kind: "url" | "pr" | "file" | "agent";
   target?: string;
@@ -79,7 +78,7 @@ export class TaskStore {
 
   async insertTask(
     tx: Exec,
-    t: { title: string; body: string; assigneeAgentId: string | null; createdBy: Principal },
+    t: { title: string; body: string; assigneeAgentId: string | null; createdById: string },
   ): Promise<TaskRow> {
     const now = this.d.clock();
     const [row] = await tx
@@ -89,8 +88,7 @@ export class TaskStore {
         title: t.title,
         body: t.body,
         assigneeAgentId: t.assigneeAgentId,
-        createdByAgentId: "agentId" in t.createdBy ? t.createdBy.agentId : null,
-        createdByUserId: "userId" in t.createdBy ? t.createdBy.userId : null,
+        createdById: t.createdById,
         createdAt: now,
         updatedAt: now,
       })
@@ -252,7 +250,7 @@ export class TaskStore {
       })),
     );
   }
-  /** In the order given, with the linked agent's slug and ended state. */
+  /** In the order given, with the linked agent's handle and ended state. */
   async links(tx: Exec, taskId: string) {
     return tx
       .select({
@@ -262,28 +260,29 @@ export class TaskStore {
         target: taskLinks.target,
         title: taskLinks.title,
         agentId: taskLinks.agentId,
-        agentSlug: agents.slug,
+        agentRef: principals.ref,
+        agentHandle: principals.handle,
         agentDisplayName: agents.displayName,
         agentArchivedAt: agents.archivedAt,
         agentTerminatedAt: agents.terminatedAt,
       })
       .from(taskLinks)
       .leftJoin(agents, eq(agents.id, taskLinks.agentId))
+      .leftJoin(principals, eq(principals.id, taskLinks.agentId))
       .where(eq(taskLinks.taskId, taskId))
       .orderBy(asc(taskLinks.position));
   }
 
   async insertComment(
     tx: Exec,
-    c: { taskId: string; author: Principal; body: string },
+    c: { taskId: string; authorId: string; body: string },
   ): Promise<TaskCommentRow> {
     const [row] = await tx
       .insert(taskComments)
       .values({
         id: randomUUID(),
         taskId: c.taskId,
-        authorAgentId: "agentId" in c.author ? c.author.agentId : null,
-        authorUserId: "userId" in c.author ? c.author.userId : null,
+        authorId: c.authorId,
         body: c.body,
         createdAt: this.d.clock(),
       })
@@ -293,15 +292,14 @@ export class TaskStore {
 
   async insertEvents(
     tx: Exec,
-    rows: { taskId: string; actor: Principal; type: EventType; from?: unknown; to?: unknown }[],
+    rows: { taskId: string; actorId: string; type: EventType; from?: unknown; to?: unknown }[],
   ): Promise<void> {
     if (!rows.length) return;
     await tx.insert(taskEvents).values(
       rows.map((r) => ({
         id: randomUUID(),
         taskId: r.taskId,
-        actorAgentId: "agentId" in r.actor ? r.actor.agentId : null,
-        actorUserId: "userId" in r.actor ? r.actor.userId : null,
+        actorId: r.actorId,
         type: r.type,
         fromValue: r.from ?? null,
         toValue: r.to ?? null,
@@ -311,25 +309,24 @@ export class TaskStore {
   }
 
   /** Who wrote the task's current body: the actor of its last `body` event, else of its `created` event. */
-  async bodyAuthor(tx: Exec, taskId: string): Promise<Principal | undefined> {
+  async bodyAuthor(tx: Exec, taskId: string): Promise<string | undefined> {
     const [e] = await tx
-      .select({ agentId: taskEvents.actorAgentId, userId: taskEvents.actorUserId })
+      .select({ actorId: taskEvents.actorId })
       .from(taskEvents)
       .where(and(eq(taskEvents.taskId, taskId), inArray(taskEvents.type, ["created", "body"])))
       .orderBy(desc(taskEvents.at), desc(taskEvents.id))
       .limit(1);
-    if (!e) return undefined;
-    return e.agentId ? { agentId: e.agentId } : { userId: e.userId as string };
+    return e?.actorId;
   }
 
-  /** The managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). */
+  /** The agent managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). A human manager ends the chain and isn't in it. */
   async managerChain(tx: Exec, agentId: string): Promise<string[]> {
     const r = await tx.execute(sql`
       with recursive up(id, depth) as (
         select reports_to, 1 from agents where id = ${agentId} and reports_to is not null
         union
         select a.reports_to, up.depth + 1 from up join agents a on a.id = up.id where a.reports_to is not null)
-      select id from up order by depth`);
+      select id from up where exists (select 1 from agents m where m.id = up.id) order by depth`);
     return (r as unknown as { id: string }[]).map((x) => x.id);
   }
 }

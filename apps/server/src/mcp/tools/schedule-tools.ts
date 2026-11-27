@@ -1,10 +1,11 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   cancelScheduleToolSchema,
   formatOffsetIso,
   listSchedulesToolSchema,
   scheduleMessageToolSchema,
 } from "@open-factory/shared";
+import type { AgentRecord } from "../../principals/principal-store.ts";
+import { type AgentFacing, UnknownMentionsError } from "../../principals/principal-text.ts";
 import { ScheduleError } from "../../scheduling/errors.ts";
 import type { ScheduleService } from "../../scheduling/schedule-service.ts";
 import {
@@ -21,7 +22,9 @@ type ScheduleTools = {
   /** The zone an agent's schedule gets when it passes none (`FACTORY_TIMEZONE`, spec §7.1). */
   factoryZone: string;
   /** The calling agent, from the token (never from an argument). */
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
 /**
@@ -39,7 +42,8 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof ScheduleError) return toolError(e.message);
+      if (e instanceof ScheduleError || e instanceof UnknownMentionsError)
+        return toolError(e.message);
       throw e;
     }
   };
@@ -67,7 +71,7 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
               const me = await agentOf(tctx);
               const timezone = args.timezone ?? d.factoryZone;
               const r = await d.schedules.create(
-                { agentId: me.id },
+                { kind: "agent", id: me.id },
                 {
                   ...(args.to !== undefined ? { target: args.to } : {}),
                   ...(args.cron !== undefined ? { cron: args.cron } : {}),
@@ -77,14 +81,16 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
                 },
               );
               const i = r.item;
+              const facing = await d.facing({ handles: [i.target.handle] });
               return {
                 id: i.key,
-                to: i.target.slug,
+                to: facing.mention(i.target.handle),
                 ...(i.cron ? { cron: i.cron } : {}),
                 ...(i.at ? { at: formatOffsetIso(new Date(i.at), i.timezone) } : {}),
                 timezone: i.timezone,
                 next_run: i.nextRunAt ? formatOffsetIso(new Date(i.nextRunAt), i.timezone) : null,
                 ...(r.note ? { note: r.note } : {}),
+                ...(r.warnings?.length ? { warnings: r.warnings } : {}),
               };
             }),
         );
@@ -95,7 +101,20 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
             inputSchema: listSchedulesToolSchema,
           },
           (_args: Record<string, never>, tctx: ToolContext) =>
-            guard(async () => d.schedules.listForAgent((await agentOf(tctx)).id)),
+            guard(async () => {
+              const views = await d.schedules.listForAgent((await agentOf(tctx)).id);
+              const facing = await d.facing({
+                handles: views.flatMap((v) => [v.to, v.created_by, v.by]),
+                texts: views.map((v) => v.body),
+              });
+              return views.map((v) => ({
+                ...v,
+                to: facing.mention(v.to),
+                created_by: facing.mention(v.created_by),
+                by: facing.mention(v.by),
+                body: facing.render(v.body),
+              }));
+            }),
         );
         server.registerTool(
           "cancel_schedule",

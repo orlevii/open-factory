@@ -17,7 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
-import { handles } from "./handles.ts";
+import { principals } from "./principals.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,11 +33,9 @@ export type RuntimeJournal = {
 export const agents = pgTable(
   "agents",
   {
-    id: text("id").primaryKey(),
-    slug: text("slug")
-      .notNull()
-      .unique()
-      .references(() => handles.handle),
+    id: text("id")
+      .primaryKey()
+      .references(() => principals.id),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),
@@ -47,14 +45,12 @@ export const agents = pgTable(
     template: text("template").notNull(),
     config: jsonb("config").$type<AgentOverlay>().notNull().default({}),
     runtime: text("runtime").notNull().$type<"local" | "docker">(),
-    /** The manager when it is an agent (an ephemeral agent's spawner). Exactly one of this and `reportsToUser` is set. */
-    reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, {
-      onDelete: "restrict",
-    }),
-    /** I9 §4.5: the manager when it is a human (persistent agents only). */
-    reportsToUser: text("reports_to_user").references(() => users.id, { onDelete: "restrict" }),
+    /** The manager: a human or an agent principal. An ephemeral agent's is its spawner (an agent, app-enforced). */
+    reportsTo: text("reports_to")
+      .notNull()
+      .references(() => principals.id, { onDelete: "restrict" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
-    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the slug). Identity, not overlay. */
+    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the ref). Identity, not overlay. */
     color: smallint("color"),
     lastError: text("last_error"),
     errorKind: text("error_kind"),
@@ -68,8 +64,8 @@ export const agents = pgTable(
     rateLimitNoticeOwed: boolean("rate_limit_notice_owed").notNull().default(false),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     terminatedAt: timestamp("terminated_at", { withTimezone: true }),
-    /** '@handle' (a human), the spawner's bare slug, or '@factory' (the TTL). */
-    terminatedBy: text("terminated_by"),
+    /** Who ended it: the spawner or a human; null when the factory did (the idle TTL). */
+    terminatedBy: text("terminated_by").references(() => principals.id),
     /** §5.1: the org manager (persistent only): sees and manages the whole org. */
     manageOrg: boolean("manage_org").notNull().default(false),
     /** §10: the agent that last wrote `description` (the manager who set it); null when nobody did. */
@@ -99,12 +95,6 @@ export const agents = pgTable(
       sql`${t.kind} = 'ephemeral' OR (${t.terminatedAt} IS NULL AND ${t.terminatedBy} IS NULL)`,
     ),
     check("agents_manage_org_persistent", sql`NOT ${t.manageOrg} OR ${t.kind} = 'persistent'`),
-    // I9 §4.5: an ephemeral agent reports to its spawner agent; a persistent one to exactly one agent or one human.
-    check(
-      "agents_manager",
-      sql`(${t.kind} = 'ephemeral' AND ${t.reportsTo} IS NOT NULL AND ${t.reportsToUser} IS NULL)
-        OR (${t.kind} = 'persistent' AND num_nonnulls(${t.reportsTo}, ${t.reportsToUser}) = 1)`,
-    ),
     index("agents_spawned_idx").on(t.reportsTo, t.createdAt).where(sql`${t.kind} = 'ephemeral'`),
     // The Ended list (Task 16): newest end first, limit 200.
     index("agents_ended_idx")
@@ -187,9 +177,9 @@ export const messages = pgTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind").notNull().default("message"),
-    fromUserId: text("from_user_id").references(() => users.id),
+    // The sender principal (an agent or a human); null = the factory, a notice or a scheduled firing.
+    fromId: text("from_id").references(() => principals.id),
     notice: text("notice"),
-    fromAgentId: text("from_agent_id").references((): AnyPgColumn => agents.id),
     subjectAgentId: text("subject_agent_id").references((): AnyPgColumn => agents.id),
     // I3: the credential a `system` notice is about; deleting the credential deletes its notices.
     subjectCredentialId: text("subject_credential_id").references(
@@ -198,13 +188,13 @@ export const messages = pgTable(
         onDelete: "cascade",
       },
     ),
-    toAgentId: text("to_agent_id").references(() => agents.id, { onDelete: "cascade" }),
-    toUserId: text("to_user_id").references(() => users.id),
+    // The recipient principal; an agent for the agent-only kinds, a human or an agent for messages.
+    toId: text("to_id").references(() => principals.id, { onDelete: "cascade" }),
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
-    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
-    recipients: text("recipients").array(),
+    // I1: the full recipient list of a `kind='message'` row, as principal ids (a fan-out writes one row per recipient).
+    recipientIds: text("recipient_ids").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -216,8 +206,7 @@ export const messages = pgTable(
     commentId: text("comment_id"),
     // S9: scheduled rows. They carry their author (the schedule's body author can change after the firing).
     scheduleId: text("schedule_id").references((): AnyPgColumn => schedules.id),
-    authorAgentId: text("author_agent_id").references((): AnyPgColumn => agents.id),
-    authorUserId: text("author_user_id").references(() => users.id),
+    authorId: text("author_id").references(() => principals.id),
     dueAt: timestamp("due_at", { withTimezone: true }),
     firings: integer("firings"),
     late: boolean("late"),
@@ -231,29 +220,26 @@ export const messages = pgTable(
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },
   (t) => [
-    index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
+    index("messages_to_state_idx").on(t.toId, t.state, t.createdAt),
     // Loop guard: a schedule holds at most one undelivered row per agent, whether it is pending or loop_held.
     uniqueIndex("messages_schedule_pending_idx")
-      .on(t.scheduleId, t.toAgentId)
+      .on(t.scheduleId, t.toId)
       .where(sql`${t.state} IN ('pending','loop_held') AND ${t.scheduleId} IS NOT NULL`),
-    index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
+    index("messages_from_idx").on(t.fromId, t.createdAt),
     // S10: turn attribution reads a closing turn's delivered messages.
     index("messages_delivered_turn_idx")
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
+      .on(t.fromId, t.clientMessageId, t.toId)
       .where(sql`${t.clientMessageId} is not null`),
-    // I1 §6.3: the chat thread, both directions, newest first by (created_at, id).
+    // I1 §6.3: the chat thread, one direction per scan (to, from), newest first by (created_at, id).
     index("messages_chat_in_idx")
-      .on(t.toAgentId, t.fromUserId, t.createdAt)
-      .where(sql`${t.kind} = 'message'`),
-    index("messages_chat_out_idx")
-      .on(t.toUserId, t.fromAgentId, t.createdAt)
+      .on(t.toId, t.fromId, t.createdAt)
       .where(sql`${t.kind} = 'message'`),
     // I8: Resume's flip and the inbox's hold counts look rows up by hold.
     index("messages_loop_hold_idx").on(t.loopHoldId).where(sql`${t.loopHoldId} is not null`),
-    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipientIds} IS NOT NULL`),
   ],
 );
 

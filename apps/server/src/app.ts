@@ -53,6 +53,8 @@ import { LoopGuard } from "./messaging/loop-guard.ts";
 import { LoopResume } from "./messaging/loop-resume.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
+import { type PublishPrincipal, publishPrincipal } from "./principals/principal-events.ts";
+import { principalById } from "./principals/principal-store.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -64,6 +66,7 @@ import { libraryRoutes } from "./routes/library.ts";
 import { loopHoldsRoutes } from "./routes/loop-holds.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
+import { principalsRoutes } from "./routes/principals.ts";
 import { projectsRoutes } from "./routes/projects.ts";
 import { schedulesRoutes } from "./routes/schedules.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
@@ -107,6 +110,7 @@ import { wsRoutes } from "./ws/route.ts";
 declare module "fastify" {
   interface FastifyInstance {
     auth: Auth;
+    db: Db;
     config: Config;
     runtimes: AgentRuntimes;
     bus: EventBus;
@@ -139,6 +143,8 @@ declare module "fastify" {
     usage: UsageService;
     invites: InviteService;
     userAdmin: UserAdminService;
+    /** Publishes `principal_updated` for a principal; call after the change committed. */
+    publishPrincipal: PublishPrincipal;
     factorySettings: FactorySettings;
     reaper: Reaper;
     schedules: ScheduleService;
@@ -211,6 +217,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate("config", config);
+  app.decorate("db", deps.db);
   app.decorate("auth", createAuth(config, deps.db, deps.passwordHasher));
   registerErrorHandlers(app);
 
@@ -364,7 +371,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("schedules", schedules);
   app.decorate("scheduler", scheduler);
+  const publishPrincipalFrame: PublishPrincipal = async (id) => {
+    try {
+      await publishPrincipal({ bus, db: deps.db, templatesDir: templates.dir }, id);
+    } catch (err) {
+      app.log.warn({ err, principal: id }, "publishing a principal update failed");
+    }
+  };
+  app.decorate("publishPrincipal", publishPrincipalFrame);
   const agents = new AgentService({
+    publishPrincipal: publishPrincipalFrame,
     db: deps.db,
     templates,
     workspace,
@@ -432,7 +448,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   );
   app.decorate(
     "userAdmin",
-    new UserAdminService({ db: deps.db, now: clock, bus, signIn: app.signIn }),
+    new UserAdminService({
+      db: deps.db,
+      now: clock,
+      bus,
+      signIn: app.signIn,
+      publishPrincipal: publishPrincipalFrame,
+    }),
   );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
@@ -461,9 +483,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
+    publishPrincipal: publishPrincipalFrame,
   });
   app.decorate("spawner", spawner);
-  const terminator = new TerminateService({ db: deps.db, store, runtimes, router, log: app.log });
+  const terminator = new TerminateService({
+    db: deps.db,
+    store,
+    runtimes,
+    router,
+    log: app.log,
+    publishPrincipal: publishPrincipalFrame,
+  });
   app.decorate("terminator", terminator);
   const taskStore = new TaskStore({ db: deps.db, clock: () => store.clock() });
   const tasks = new TaskService({
@@ -577,6 +607,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(statusRoutes, { sql: deps.sql });
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
+  await app.register(principalsRoutes);
   await app.register(hostRoutes);
   await app.register(libraryRoutes);
   await app.register(wsRoutes);
@@ -604,6 +635,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   // its MCP servers only at startup. A bind failure fails the boot.
   try {
     agentListener = await listenForAgents(config, {
+      db: deps.db,
       docker,
       tokens,
       store,
@@ -679,6 +711,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
 async function listenForAgents(
   config: Config,
   d: {
+    db: Db;
     docker: ReturnType<typeof dockerodeClient>;
     tokens: AgentTokens;
     store: EventStore;
@@ -691,7 +724,7 @@ async function listenForAgents(
     tasks: TaskService;
     schedules: ScheduleService;
     /** The services the org tools call; the caller's own row is `store.agentById`. */
-    org: Omit<OrgToolDeps, "loadAgent">;
+    org: Omit<OrgToolDeps, "loadAgent" | "principalRef" | "facing">;
     log: FastifyInstance["log"];
   },
 ) {
@@ -721,7 +754,12 @@ async function listenForAgents(
           resolver: d.resolver,
           spawned: caller.kind === "ephemeral",
         }),
-        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        ...taskTools({
+          tasks: d.tasks,
+          loadAgent: (id) => d.store.agentById(id),
+          loadPrincipal: (id) => principalById(d.db, id),
+          facing: (want) => d.store.facing(want),
+        }),
         // Q12 and I7 §9.1: persistent agents only; a spawned agent never sees the schedule or restart tools.
         ...(caller.kind === "persistent"
           ? [
@@ -732,18 +770,25 @@ async function listenForAgents(
                 runtimes: d.runtimes,
                 resolver: d.resolver,
                 router: d.router,
+                db: d.db,
                 localRuntimeAllowed: () => config.allowLocalRuntime,
               }),
               ...scheduleTools({
                 schedules: d.schedules,
                 factoryZone: config.factoryTimezone,
                 loadAgent: (id) => d.store.agentById(id),
+                facing: (want) => d.store.facing(want),
               }),
             ]
           : []),
         listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
         ...(caller.manageOrg
-          ? orgTools({ ...d.org, loadAgent: (id) => d.store.agentById(id) })
+          ? orgTools({
+              ...d.org,
+              loadAgent: (id) => d.store.agentById(id),
+              principalRef: (id) => d.store.principalRef(id),
+              facing: (want) => d.store.facing(want),
+            })
           : []),
         ...(started && maySpawn(caller, started)
           ? [

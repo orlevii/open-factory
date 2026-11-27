@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -9,10 +9,10 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
-  await insertAgent(t.sql, { id: "a1", slug: "dev" });
-  await insertAgent(t.sql, { id: "a2", slug: "b" });
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
+  await insertAgent(t.sql, { id: "a1", handle: "dev" });
+  await insertAgent(t.sql, { id: "a2", handle: "b" });
 });
 afterAll(() => t.close());
 
@@ -22,7 +22,7 @@ test("append assigns seq 1..n per agent, independently", async () => {
   const f1 = await store.append("a2", null, { type: "turn_started" });
   expect([e1.seq, e2.seq, f1.seq]).toEqual([1, 2, 1]);
   expect(e1).toMatchObject({
-    agentSlug: "dev",
+    agentRef: testRef("a1"),
     turnId: null,
     event: { type: "process_started", resumed: false },
   });
@@ -85,7 +85,7 @@ test("turns and messages", async () => {
   const m = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a1",
-    recipients: ["@test"],
+    recipientIds: ["a1"],
     body: "hi",
     urgent: true,
   });
@@ -107,7 +107,7 @@ test("pendingQueue returns system notices first, including sender-less rows", as
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a2",
-    recipients: ["@test"],
+    recipientIds: ["a2"],
     body: "older",
     urgent: false,
   });
@@ -162,7 +162,7 @@ test("credential pauses extend, never shorten; a conditional clear keeps a later
 
 test("owed agents: per credential, flag set and cleared", async () => {
   await store.setNoticeOwed("a1", true);
-  expect(await store.owedAgents("cred-a1")).toEqual([{ id: "a1", slug: "dev" }]);
+  expect(await store.owedAgents("cred-a1")).toEqual([{ id: "a1", handle: "dev" }]);
   expect(await store.owedAgents("cred-a2")).toEqual([]);
   await store.setNoticeOwed("a1", false);
   expect(await store.owedAgents("cred-a1")).toEqual([]);

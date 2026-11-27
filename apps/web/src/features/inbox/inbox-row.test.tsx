@@ -3,6 +3,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -25,20 +26,20 @@ afterEach(() => {
 const hold = (resumedAt: string | null) => ({
   id: "h1",
   agents: [
-    { slug: "a", status: "live" },
-    { slug: "b", status: "live" },
+    { ref: refFor("a"), handle: "a", status: "live" },
+    { ref: refFor("b"), handle: "b", status: "live" },
   ],
   waiting: 2,
   sentOn: 0,
   resumedAt,
-  resumedBy: resumedAt ? "@ana" : null,
+  resumedBy: resumedAt ? { ref: refFor("ana"), handle: "ana" } : null,
 });
 const item = (resumedAt: string | null) => ({
   id: "i1",
   messageId: "m1",
   kind: "notice",
   read: true,
-  from: { kind: "factory", name: "factory" },
+  from: { kind: "factory" },
   about: "a",
   to: "@alice",
   preview: "@a and @b exchanged 22 messages in 3 minutes; further messages between them are held.",
@@ -46,7 +47,7 @@ const item = (resumedAt: string | null) => ({
   createdAt: new Date().toISOString(),
   notice: "loop_held",
   loopHold: hold(resumedAt),
-  link: { kind: "session", agentSlug: "a" },
+  link: { kind: "session", agentRef: refFor("a") },
 });
 
 test("a hold row says Held, then Resumed once inbox_changed brings resumedAt", async () => {

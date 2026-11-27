@@ -11,8 +11,8 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   await signUp(h.app, { handle: "or" });
-  const ada = await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  const ada = await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
   tok = h.app.agentTokens.mint(ada.id).token;
 });
 afterEach(() => h.close());
@@ -24,8 +24,13 @@ test("the result is {results} as JSON text, one entry per recipient in order", a
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r));
   expect(out.results).toMatchObject([
-    { to: "@or", kind: "human", status: "inbox" },
-    { to: "@bob", kind: "agent", status: "queued", recipient_status: "hibernated" },
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/), kind: "human", status: "inbox" },
+    {
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
+      kind: "agent",
+      status: "queued",
+      recipient_status: "hibernated",
+    },
   ]);
 });
 
@@ -38,7 +43,11 @@ test("every recipient refused is a tool error with one line per reason", async (
     "Channels aren't supported yet.",
   ]);
   // an archived recipient is refused too, and nothing is written for it
-  await h.app.agents.archive("bob", { kind: "human", handle: "or" });
+  await h.app.agents.archive(await h.refOf("bob"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   const archived = await callTool(url, tok, "send_message", { to: ["bob"], body: "x" });
   expect(archived.isError).toBe(true);
   expect(text(archived)).toBe("@bob is archived and can't receive messages.");
@@ -75,4 +84,57 @@ test("the tool never mentions @humans", async () => {
     list.json.result.tools as { name: string; description: string; inputSchema: unknown }[]
   ).find((t) => t.name === "send_message");
   expect(JSON.stringify(tool)).not.toContain("@humans");
+});
+
+test("send_message to a plain handle delivers and warns", async () => {
+  const bob = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "hi" });
+  expect(r.isError).toBeFalsy();
+  const out = JSON.parse(text(r));
+  expect(out.results).toMatchObject([
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/), status: "queued" },
+  ]);
+  expect(out.warnings).toEqual([
+    `Plain mention detected: @bob was resolved to <@${bob[0]?.ref}|bob>. Mention as <@ref|handle>.`,
+  ]);
+});
+
+test("send_message to a mention delivers with no warning, even when its handle label is stale", async () => {
+  const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: [`<@${bob?.ref}|old>`], body: "hi" });
+  expect(r.isError).toBeFalsy();
+  const out = JSON.parse(text(r));
+  expect(out.results).toMatchObject([
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/), status: "queued" },
+  ]);
+  expect(out).not.toHaveProperty("warnings");
+});
+
+test("send_message to an unknown ref is refused with the fix-it error", async () => {
+  const r = await callTool(url, tok, "send_message", { to: ["<@zzzzzzzz>"], body: "hi" });
+  expect(r.isError).toBe(true);
+  expect(text(r)).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
+  );
+  expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
+});
+
+test("send_message with an unknown mention is refused and nothing is sent", async () => {
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask <@zzzzzzzz> too" });
+  expect(r.isError).toBe(true);
+  expect(text(r)).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
+  );
+  expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
+});
+
+test("send_message stores a plain @handle in the body as a mention and warns", async () => {
+  const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask @bob later" });
+  expect(r.isError).toBeFalsy();
+  expect(JSON.parse(text(r)).warnings).toEqual([
+    `Plain mention detected: @bob was resolved to <@${bob?.ref}|bob>. Mention as <@ref|handle>.`,
+  ]);
+  const [row] = await h.sql`select body from messages where kind = 'message'`;
+  expect(row?.body).toBe(`ask <@${bob?.ref}> later`);
 });

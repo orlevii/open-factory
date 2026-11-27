@@ -15,18 +15,20 @@ import {
   sendAs,
   silentLog,
 } from "../agents/testing/runtime-harness.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
-
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { Supervisor } from "./supervisor.ts";
+
+/** An envelope sender is a mention; this test reads its handle. */
+const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -51,7 +53,7 @@ class World {
       log,
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: store,
-      load: async (slug) => [...this.loaded.values()].find((rt) => rt.agent.slug === slug),
+      load: async (handle) => [...this.loaded.values()].find((rt) => rt.agent.handle === handle),
     });
   }
 
@@ -71,7 +73,7 @@ class World {
     const credId = await this.credential(cred);
     n += 1;
     const id = `rl${n}`;
-    await insertAgent(t.sql, { id, slug: `rl${n}` });
+    await insertAgent(t.sql, { id, handle: `rl${n}` });
     await t.sql`update agents set credential_id = ${credId} where id = ${id}`;
     const agent = await store.agentById(id);
     if (!agent) throw new Error("no agent");
@@ -101,7 +103,7 @@ class World {
   }
   proc(rt: AgentRuntime): FakeProcess {
     const p = this.starts(rt).at(-1);
-    if (!p) throw new Error(`${rt.agent.slug} never started`);
+    if (!p) throw new Error(`${rt.agent.handle} never started`);
     return p;
   }
 
@@ -261,7 +263,7 @@ test("deliveries to a running paused agent are held, then flushed at reset", asy
   expect(w.proc(b).controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   w.proc(b).emit(ev.end({ terminalReason: "aborted_tools" }));
   await w.settleAll();
-  await b.compact({ byHandle: "or" }); // compacts are held too
+  await b.compact({ by: "<@or>" }); // compacts are held too
   expect(sentBodies(b)).toEqual([["first"]]);
   expect(w.proc(b).controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
 
@@ -296,7 +298,7 @@ test("the cut-off agent gets exactly one notice at reset, batched first with pen
   await w.until(() => w.proc(a).sent.length === 2);
   const name = (await credRow(liveCredentialId(a.agent)))?.name ?? "";
   const batch = w.proc(a).sent[1] ?? [];
-  expect(batch.map((m) => [m.from, m.kind, m.body])).toEqual([
+  expect(batch.map((m) => [handleOf(m.from), m.kind, m.body])).toEqual([
     [
       "@factory",
       "system",
@@ -311,7 +313,7 @@ test("the cut-off agent gets exactly one notice at reset, batched first with pen
     { type: "rate_limit_reset", credential: name },
   ]);
   const rows =
-    await t.sql`select id from messages where to_agent_id = ${a.agent.id} and notice = 'rate_limit_reset'`;
+    await t.sql`select id from messages where to_id = ${a.agent.id} and notice = 'rate_limit_reset'`;
   expect(rows).toHaveLength(1);
 });
 

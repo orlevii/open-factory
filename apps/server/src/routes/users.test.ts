@@ -51,7 +51,7 @@ test.each([
   "%s %s needs a human session: no auth and an agent token get 401",
   async (method, url) => {
     expect((await h.app.inject({ method, url })).statusCode).toBe(401);
-    const agent = await h.seedAgent({ slug: "lead" });
+    const agent = await h.seedAgent({ handle: "lead" });
     const { token } = h.app.agentTokens.mint(agent.id);
     const res = await h.app.inject({ method, url, headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(401);

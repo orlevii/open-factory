@@ -7,6 +7,7 @@ import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-st
 import { installInputModality } from "@/lib/input-modality";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 import { newTask } from "./actions";
@@ -21,11 +22,11 @@ vi.mock("@/components/ui/toaster", async (orig) => ({
 }));
 
 const agents =
-  (...slugs: string[]) =>
+  (...handles: string[]) =>
   () =>
     json({
-      agents: slugs.map((s) =>
-        agentSummary({ slug: s, displayName: s[0]?.toUpperCase() + s.slice(1) }),
+      agents: handles.map((s) =>
+        agentSummary({ handle: s, displayName: s[0]?.toUpperCase() + s.slice(1) }),
       ),
       more: false,
       running: { count: 0 },
@@ -39,7 +40,7 @@ const detail = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: "2026-11-19T10:00:00.000Z",
   body: "",
   createdAt: "2026-11-19T10:00:00.000Z",
@@ -70,7 +71,7 @@ afterEach(() => {
 
 test("c in a session prefills that agent, and the description says who it is for", async () => {
   mockApi(base);
-  renderApp("/agents/ada/session", alice);
+  renderApp(`/agents/${refFor("ada")}/session`, alice);
   await screen.findByRole("heading", { level: 1 });
   press("c");
   expect(await assignee()).toHaveTextContent("Ada");
@@ -79,7 +80,7 @@ test("c in a session prefills that agent, and the description says who it is for
 
 test("c on the Tasks list prefills its assignee filter", async () => {
   mockApi(base);
-  renderApp("/tasks?assignee=bo", alice);
+  renderApp(`/tasks?assignee=${refFor("bo")}`, alice);
   await screen.findByRole("heading", { level: 1, name: "Tasks" });
   press("c");
   expect(await assignee()).toHaveTextContent("Bo");
@@ -96,10 +97,10 @@ test("anywhere else the task starts unassigned, with no description", async () =
 
 test("newTask() reads the router at call time", async () => {
   mockApi(base);
-  const { router } = renderApp("/agents/ada/session", alice);
+  const { router } = renderApp(`/agents/${refFor("ada")}/session`, alice);
   await screen.findByRole("heading", { level: 1 });
   newTask(router);
-  expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: "ada" });
+  expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: refFor("ada") });
 });
 
 test("a non-empty draft keeps its own assignee over the context prefill", async () => {
@@ -112,7 +113,7 @@ test("a non-empty draft keeps its own assignee over the context prefill", async 
   await userEvent.click(await screen.findByRole("option", { name: /Bo\s*@bo/ }));
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  await act(() => router.navigate({ to: "/agents/$slug/chat", params: { slug: "ada" } }));
+  await act(() => router.navigate({ to: "/agents/$ref/chat", params: { ref: refFor("ada") } }));
   press("c");
   expect(await assignee()).toHaveTextContent("Bo");
   expect(screen.getByText(/Draft restored/)).toBeInTheDocument();
@@ -279,13 +280,13 @@ test("a stale prefill that gets cleared leaves no draft, so the next prefill sti
   mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], ["ada"]) });
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("ada") }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   expect(screen.queryByText("For Ada")).toBeNull();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
   expect(hasDraft("new-task")).toBe(false);
-  act(() => openSheet({ kind: "new-task", assignee: "bo" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("bo") }));
   expect(await assignee()).toHaveTextContent("Bo");
   expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
@@ -294,7 +295,7 @@ test("a prefill naming no agent at all says so", async () => {
   mockApi({ ...base, "GET /api/agents?": liveEnded(["bo"], []) });
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-task", assignee: "typo" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("typo") }));
   expect(await screen.findByText("No such agent; pick another.")).toBeInTheDocument();
   expect(screen.queryByText(/For /)).toBeNull();
 });
@@ -307,7 +308,7 @@ test("a restored draft hides For X: the prefill did not apply", async () => {
   await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("ada") }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   expect(screen.queryByText("For Ada")).toBeNull();
 });
@@ -320,7 +321,7 @@ test("Discard over a prefilled open brings the prefill back, with For X", async 
   await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("ada") }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   expect(screen.queryByText("For Ada")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -336,14 +337,14 @@ test("Discard over a stale prefill leaves no phantom draft", async () => {
   await userEvent.type(await within(await sheet()).findByLabelText("Title"), "Mine");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("ada") }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   expect(hasDraft("new-task")).toBe(false);
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
-  act(() => openSheet({ kind: "new-task", assignee: "bo" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("bo") }));
   expect(await assignee()).toHaveTextContent("Bo");
   expect(screen.queryByText(/Draft restored/)).toBeNull();
 });

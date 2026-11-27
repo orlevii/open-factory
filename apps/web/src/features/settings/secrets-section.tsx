@@ -12,6 +12,7 @@ import { deleteSecret, putSecret, secretsQueryOptions } from "@/features/setting
 import {
   focusOutcome,
   InlineForm,
+  mentions,
   RowLine,
   RowName,
   restartNote,
@@ -19,7 +20,6 @@ import {
   SettingsSection,
   smallClass,
   TimeAgo,
-  tags,
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
@@ -94,7 +94,7 @@ function UpdateForm({
 function deleteBody(users: string[]) {
   if (users.length === 0) return "Its value is erased. No agent uses it.";
   const verb = users.length === 1 ? "restarts" : "restart";
-  return `Its value is erased. ${tags(users)} ${verb} when idle without it and won't start until you add it again.`;
+  return `Its value is erased. ${mentions(users)} ${verb} when idle without it and won't start until you add it again.`;
 }
 
 export function SecretsSection({ addSecret }: { addSecret?: string }) {

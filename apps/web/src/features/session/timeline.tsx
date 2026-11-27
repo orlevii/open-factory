@@ -76,7 +76,7 @@ const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]
  *  deep-link centring and tint, and one tab stop with roving focus (UI design §4.3, §7). */
 export function Timeline(props: {
   ref?: Ref<TimelineHandle>;
-  slug: string;
+  agentRef: string;
   spawned?: boolean;
   rows: Row[];
   failedIds: ReadonlySet<string>;
@@ -138,7 +138,7 @@ export function Timeline(props: {
   // Where the reader left this agent's session (a Chat/Session switch remounts the view): recorded on
   // scroll, restored once the rows are in. A deep-link window is not a place worth coming back to.
   const isPinned = useCallback(() => stick.pinned.current, [stick]);
-  useRememberPosition(props.slug, "session", scroller, isPinned, !windowed);
+  useRememberPosition(props.agentRef, "session", scroller, isPinned, !windowed);
   const restored = useRef(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
@@ -198,7 +198,7 @@ export function Timeline(props: {
     }
     if (!restored.current && rows.length > 0) {
       restored.current = true;
-      const left = windowed ? undefined : readViewPosition(props.slug, "session");
+      const left = windowed ? undefined : readViewPosition(props.agentRef, "session");
       if (left && !left.pinned) {
         stick.unpin();
         el.scrollTop = left.top;
@@ -208,7 +208,7 @@ export function Timeline(props: {
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litPath, expanded, stick, props.slug, windowed, startArrival]);
+  }, [rows, litPath, expanded, stick, props.agentRef, windowed, startArrival]);
 
   const arrived = useMemo(
     () => arrivedSince(rows, seen?.seq, handedOff, seen?.live),
@@ -240,7 +240,7 @@ export function Timeline(props: {
     }),
     [stick],
   );
-  useEffect(() => registerTimelineRepin(props.slug, stick.repin), [props.slug, stick]);
+  useEffect(() => registerTimelineRepin(props.agentRef, stick.repin), [props.agentRef, stick]);
 
   const loadEarlier = async () => {
     // The top visible row keeps its place when the earlier rows land above it.
@@ -376,7 +376,7 @@ export function Timeline(props: {
     [],
   );
 
-  const { spawned, slug, failedIds, interruptedEnds } = props;
+  const { spawned, agentRef, failedIds, interruptedEnds } = props;
   const progressOf = useProgressOf(props.subagents ?? NO_PROGRESS);
   // Memoized on the rows and the per-row props: a live frame reuses these element objects, so React
   // skips every persisted item (U3 §11.4, acceptance 22).
@@ -386,7 +386,7 @@ export function Timeline(props: {
         <TimelineItem
           key={row.key}
           row={row}
-          slug={slug}
+          agentRef={agentRef}
           spawned={spawned}
           lit={row.key === litKey}
           arrivedKey={row.key === litKey ? arrivedKey : undefined}
@@ -407,7 +407,7 @@ export function Timeline(props: {
     [
       progressOf,
       rows,
-      slug,
+      agentRef,
       spawned,
       litKey,
       arrivedKey,
@@ -434,7 +434,7 @@ export function Timeline(props: {
             <TimelineItem
               key={row.key}
               row={row}
-              slug={slug}
+              agentRef={agentRef}
               spawned={spawned}
               lit={false}
               arrivedKey={undefined}
@@ -456,7 +456,7 @@ export function Timeline(props: {
             <TimelineItem
               key={row.key}
               row={row}
-              slug={slug}
+              agentRef={agentRef}
               spawned={spawned}
               lit={false}
               arrivedKey={undefined}

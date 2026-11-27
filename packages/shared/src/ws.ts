@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { agentLiveShape, agentStatusSchema, queueItemSchema, waitingOnSchema } from "./agents.ts";
 import { sessionEventSchema } from "./events.ts";
+import { principalItemSchema } from "./principals.ts";
 import { liveCronSchema } from "./schedules.ts";
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
   z.object({
     type: z.literal("subscribe"),
+    /** The agent's ref; every `agent` in this protocol is one. */
     agent: z.string(),
     afterSeq: z.number().int().nonnegative(),
   }),
@@ -103,6 +105,8 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   /** S10: factory settings, users and invites, and the images list changed. */
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
+  /** A principal was created or its handle, name or state changed: the full item, so the web patches its principals cache. */
+  z.object({ type: z.literal("principal_updated"), principal: principalItemSchema }),
   /**
    * I5 §9.5: the Library (skill sources) changed; the Library pages refetch. `addFailed` is
    * the repo of a background GitHub add that failed and whose row was removed: the spec (§10.4) asks for a toast
@@ -120,7 +124,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * I7 §8.3: an agent created, archived or unarchived an agent, or created a template. Published only for agent
-   * actors (a human's own action already toasts in their browser); `by` is the actor's `@slug`.
+   * actors (a human's own action already toasts in their browser); `by` and `subject` are the actor's and the agent's refs.
    */
   z.object({
     type: z.literal("org_action"),

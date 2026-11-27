@@ -32,6 +32,7 @@ import { PageBody, PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BackToAgent } from "@/features/agents/back-to-agent";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import type { CodeEditorHandle } from "@/features/templates/code-editor";
 import { focusTextareaLine } from "@/features/templates/code-surface";
@@ -91,9 +92,9 @@ const Form = memo(ConfigForm);
  * The Agent Configuration page (spec §12.4): the header shared with Usage, then the state blocks, the Configuration
  * and Raw JSON tabs over one draft, the restart notice and the page footer. A spawned agent gets its read-only view.
  */
-export function AgentConfigPage({ slug }: { slug: string }) {
-  const detail = useQuery(agentDetailQueryOptions(slug));
-  const config = useQuery(agentConfigQueryOptions(slug));
+export function AgentConfigPage({ agentRef }: { agentRef: string }) {
+  const detail = useQuery(agentDetailQueryOptions(agentRef));
+  const config = useQuery(agentConfigQueryOptions(agentRef));
   const agent = detail.data?.agent;
   let body: ReactNode;
   if (!agent || !config.data)
@@ -111,13 +112,13 @@ export function AgentConfigPage({ slug }: { slug: string }) {
       );
   else if (agent.kind === "ephemeral")
     body = <SpawnedConfig agent={agent} merged={config.data.merged} />;
-  else body = <AgentConfigEditor key={slug} agent={agent} config={config.data} />;
+  else body = <AgentConfigEditor key={agentRef} agent={agent} config={config.data} />;
   return (
     <>
-      <ConfigHeader slug={slug} agent={agent} />
+      <ConfigHeader agentRef={agentRef} agent={agent} />
       <PageBody>
         <div className="grid max-w-[44rem] min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
-          <BackToAgent slug={slug} />
+          <BackToAgent agentRef={agentRef} handle={agent?.handle} />
           {body}
         </div>
       </PageBody>
@@ -127,21 +128,22 @@ export function AgentConfigPage({ slug }: { slug: string }) {
 
 /** The Usage page's header: the agent's avatar, "Configuration", and "@ana · Template dev". */
 const ConfigHeader = memo(function ConfigHeader({
-  slug,
+  agentRef,
   agent,
 }: {
-  slug: string;
+  agentRef: string;
   agent: AgentSummary | undefined;
 }) {
+  const handle = useHandle(agentRef);
   return (
     <PageHeader
       wrap
       title={CONFIG_PAGE_COPY.title}
-      documentTitle={`${CONFIG_PAGE_COPY.title} · ${agent?.displayName ?? `@${slug}`}`}
+      documentTitle={`${CONFIG_PAGE_COPY.title} · ${agent?.displayName ?? `@${handle}`}`}
       leading={
         agent ? (
           <AgentAvatar
-            slug={slug}
+            agentRef={agentRef}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
             color={agent.color}
@@ -156,7 +158,7 @@ const ConfigHeader = memo(function ConfigHeader({
             data-slot="config-meta"
             className="min-w-0 text-[0.8125rem] text-muted-foreground [overflow-wrap:anywhere] @max-[28rem]:order-last @max-[28rem]:basis-full"
           >
-            <span className="font-mono">@{slug}</span> · Template{" "}
+            <span className="font-mono">@{agent.handle}</span> · Template{" "}
             <Link
               to="/templates/$name"
               params={{ name: agent.template }}
@@ -178,9 +180,9 @@ function AgentConfigEditor({
   agent: AgentSummary;
   config: AgentConfigResponse;
 }) {
-  const slug = agent.slug;
+  const agentRef = agent.ref;
   const qc = useQueryClient();
-  const save = useMutation(saveAgentConfigMutation(slug));
+  const save = useMutation(saveAgentConfigMutation(agentRef));
   // The template's own skills/ folders, for the read-only "Template skill" rows (the agent GET doesn't carry them).
   const localSkills = useQuery(templateConfigQueryOptions(agent.template)).data?.localSkills;
   const loaded = useMemo(
@@ -397,7 +399,7 @@ function AgentConfigEditor({
       }
       return setOutcome({ kind: "error", text: CONFIG_PAGE_MSG.couldntSave });
     }
-    cacheSavedAgentConfig(qc, slug, r);
+    cacheSavedAgentConfig(qc, agentRef, r);
     // Edits made while the request ran are kept, re-applied over what was saved.
     if (latest.current.draft === sent) latest.current.reset();
     else latest.current.rebase({ value: r.overlay, version: r.version });
@@ -408,17 +410,20 @@ function AgentConfigEditor({
         r.checked === "schema"
           ? savedSchemaOnly(config.template.name)
           : restarts && r.changes.length > 0
-            ? savedRestarts(slug)
+            ? savedRestarts(agent.handle)
             : CONFIG_PAGE_MSG.saved,
     });
     // Edit agent's model summary reads the agent's detail.
-    void qc.invalidateQueries({ queryKey: agentDetailQueryOptions(slug).queryKey, exact: true });
+    void qc.invalidateQueries({
+      queryKey: agentDetailQueryOptions(agentRef).queryKey,
+      exact: true,
+    });
   }
 
   /** 409 → Reload: fetch the new version and re-apply my edits over it (R4). Still unsaved. */
   async function onReload() {
     try {
-      const fresh = await qc.fetchQuery(agentConfigQueryOptions(slug));
+      const fresh = await qc.fetchQuery(agentConfigQueryOptions(agentRef));
       latest.current.rebase({ value: fresh.overlay, version: fresh.version });
       setFormEpoch((n) => n + 1);
       setIssuesOverride(null);
@@ -443,8 +448,10 @@ function AgentConfigEditor({
       {agent.restartPending || agent.archivedAt || !valid ? (
         <div className="grid gap-3">
           {agent.restartPending ? <RestartPendingLine changes={agent.restartChanges} /> : null}
-          {agent.archivedAt ? <ArchivedBlock slug={slug} /> : null}
-          {!valid ? <BrokenTemplateBlock slug={slug} template={config.template.name} /> : null}
+          {agent.archivedAt ? <ArchivedBlock handle={agent.handle} /> : null}
+          {!valid ? (
+            <BrokenTemplateBlock handle={agent.handle} template={config.template.name} />
+          ) : null}
         </div>
       ) : null}
       <AgentRuntimeSection
@@ -492,7 +499,7 @@ function AgentConfigEditor({
         </TabsContent>
         <TabsContent value="raw" className="min-w-0">
           <RawJsonTab
-            slug={slug}
+            agentRef={agentRef}
             labelledBy={rawLabelId}
             text={shownRaw?.text ?? ""}
             onTextChange={onRawChange}
@@ -516,7 +523,7 @@ function AgentConfigEditor({
           sticky range is the whole column. */}
       {restartSummary ? (
         <p className="-mb-5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          {restartNotice(slug, restartSummary)}
+          {restartNotice(agent.handle, restartSummary)}
         </p>
       ) : null}
       <PageFooter

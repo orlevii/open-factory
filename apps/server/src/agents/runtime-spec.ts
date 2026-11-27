@@ -19,7 +19,9 @@ export function buildAgentEnv(
   serverEnv: NodeJS.ProcessEnv,
   extra: {
     configDir: string;
-    slug: string;
+    /** Its handle at this start (the git author name) and its ref (the git email). */
+    handle: string;
+    ref: string;
     credential: { kind: "oauth_token" | "api_key"; value: string };
     secrets: Record<string, string>;
     agentUrl?: string;
@@ -45,8 +47,8 @@ export function buildAgentEnv(
       : ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
   env[credVar as string] = extra.credential.value;
   delete env[otherVar as string]; // exactly one credential var, whatever a secret is called
-  env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = extra.slug;
-  env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = `${extra.slug}@open-factory.local`;
+  env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = extra.handle;
+  env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = `${extra.ref}@open-factory.local`;
   if (runtime === "docker") {
     delete env.OPEN_FACTORY_URL;
     if (extra.agentUrl) env.OPEN_FACTORY_URL = extra.agentUrl;
@@ -66,7 +68,7 @@ export function buildAgentEnv(
 
 export function buildRuntimeSpec(i: {
   agentId: string;
-  slug: string;
+  ref: string;
   workdir: string;
   env: Record<string, string>;
   claudeBin: string;
@@ -75,7 +77,7 @@ export function buildRuntimeSpec(i: {
 }): AgentRuntimeSpec {
   return {
     agentId: i.agentId,
-    slug: i.slug,
+    ref: i.ref,
     cwd: i.workdir,
     env: i.env,
     claudeBin: i.claudeBin,

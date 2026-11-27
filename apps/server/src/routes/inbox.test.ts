@@ -3,7 +3,9 @@ import { asc } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import type { Actor } from "../tasks/permission.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
+import { testRef, UNKNOWN_REF } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -15,8 +17,8 @@ beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp({ harnessDriver: driver });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
-  await h.seedAgent({ slug: "ada" });
-  await h.seedAgent({ slug: "bob" });
+  await h.seedAgent({ handle: "ada" });
+  await h.seedAgent({ handle: "bob" });
   const or = await signUp(h.app, { handle: "or" });
   cookie = or.cookie;
   orId = or.user.id;
@@ -24,19 +26,19 @@ beforeEach(async () => {
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["ada"], body: "hi" },
+    payload: { to: [h.seededRef("ada")], body: "hi" },
   });
   driver.last.emit(...ev.fullTurn("sess-a"));
-  await (await h.app.runtimes.bySlug("ada"))?.settled();
+  await (await runtimeOf(h.app, "ada"))?.settled();
   tokA = driver.last.spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
 });
 afterEach(() => h.close());
 
 const get = (path: string, headers: Record<string, string> = { cookie }) =>
   h.app.inject({ method: "GET", url: path, headers });
-const procOf = (slug: string) => {
-  const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
-  if (!p) throw new Error(`${slug} not started`);
+const procOf = (handle: string) => {
+  const p = driver.startsOf(handle).at(-1);
+  if (!p) throw new Error(`${handle} not started`);
   return p;
 };
 /** `ada` opens a turn and records the `send_message` tool call Claude would make before calling the tool. */
@@ -47,7 +49,7 @@ async function aCalls(toolUseId: string, input: object) {
     name: "mcp__factory__send_message",
     input,
   });
-  await (await h.app.runtimes.bySlug("ada"))?.settled();
+  await (await runtimeOf(h.app, "ada"))?.settled();
   return callTool(url, tokA, "send_message", input, toolUseId);
 }
 
@@ -66,7 +68,8 @@ test("GET /api/inbox: agent messages are chats, not items; the preview is plain 
   expect(page.chats).toEqual([
     {
       agent: {
-        slug: "ada",
+        ref: await h.refOf("ada"),
+        handle: "ada",
         displayName: expect.any(String),
         template: expect.any(String),
         avatarVersion: null,
@@ -94,10 +97,10 @@ test("chats lists every agent with unread messages, newest first; ?unread=true i
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["bob"], body: "wake bob" },
+    payload: { to: [h.seededRef("bob")], body: "wake bob" },
   });
   procOf("bob").emit(...ev.fullTurn("sess-b"));
-  await (await h.app.runtimes.bySlug("bob"))?.settled();
+  await (await runtimeOf(h.app, "bob"))?.settled();
   const tokB = procOf("bob").spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
   await callTool(url, tokB, "send_message", { to: ["@or"], body: "from bob" });
   await callTool(url, tokB, "send_message", { to: ["@or"], body: "bob again" });
@@ -105,7 +108,7 @@ test("chats lists every agent with unread messages, newest first; ?unread=true i
     const { chats, items } = (await get(path)).json();
     expect(items).toEqual([]);
     expect(
-      chats.map((c: { agent: { slug: string }; unread: number }) => [c.agent.slug, c.unread]),
+      chats.map((c: { agent: { handle: string }; unread: number }) => [c.agent.handle, c.unread]),
     ).toEqual([
       ["bob", 2],
       ["ada", 1],
@@ -114,7 +117,7 @@ test("chats lists every agent with unread messages, newest first; ?unread=true i
   }
   expect((await get("/api/inbox/unread-count")).json()).toMatchObject({
     count: 3,
-    byAgent: { ada: 1, bob: 2 },
+    byAgent: { [await h.refOf("ada")]: 1, [await h.refOf("bob")]: 2 },
   });
 });
 
@@ -145,7 +148,7 @@ test("GET /api/inbox pages items with a cursor; a bad cursor or limit is a 400, 
     const { row } = await h.app.store.createHumanMessage({
       kind: "system",
       notice: "agent_errored",
-      subjectAgentId: (await h.app.store.agentBySlug("ada"))?.id as string,
+      subjectAgentId: (await agentRowOf(h.app, "ada"))?.id as string,
       fromAgentId: null,
       to: "all",
       body: `m${i}`,
@@ -193,7 +196,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
     (await aCalls("toolu_01Y", { to: ["bob"], body: "hello bob" })).content[0]?.text ?? "{}",
   ).results[0];
   // The send woke the hibernated `bob`: its start job, settled, has written the batch, and no session has begun.
-  const b = await h.app.runtimes.bySlug("bob");
+  const b = await runtimeOf(h.app, "bob");
   await b?.settled();
   expect(
     procOf("bob")
@@ -208,7 +211,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
     fromKind: "agent",
     to: "@bob",
     state: "pending",
-    senderEvent: { agentSlug: "ada", seq: expect.any(Number) },
+    senderEvent: { agentRef: await h.refOf("ada"), seq: expect.any(Number) },
   });
 
   procOf("bob").emit(...ev.fullTurn("sess-b"));
@@ -217,7 +220,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect(after).toMatchObject({
     state: "delivered",
     senderEvent: before.senderEvent,
-    recipientEvent: { agentSlug: "bob", seq: expect.any(Number) },
+    recipientEvent: { agentRef: await h.refOf("bob"), seq: expect.any(Number) },
   });
   expect((await get(`/api/messages/${out.id}`, {})).statusCode).toBe(401);
 });
@@ -227,38 +230,37 @@ const post = (path: string, payload: object = {}, c = cookie) =>
   h.app.inject({ method: "POST", url: path, headers: { cookie: c }, payload });
 async function actors() {
   const sam = await signUp(h.app, { handle: "sam" });
-  const or = {
-    kind: "user" as const,
-    userId: (await get("/api/me")).json().id as string,
-    handle: "or",
+  const orId = (await get("/api/me")).json().id as string;
+  const or: Actor = { kind: "human", id: orId, ref: testRef(orId), handle: "or" };
+  const ada = await agentRowOf(h.app, "ada");
+  const adaId = ada?.id as string;
+  const agent: Actor = { kind: "agent", id: adaId, ref: testRef(adaId), handle: "ada" };
+  const samActor: Actor = {
+    kind: "human",
+    id: sam.user.id,
+    ref: testRef(sam.user.id),
+    handle: "sam",
   };
-  const ada = await h.app.store.agentBySlug("ada");
-  const agent = { kind: "agent" as const, agentId: ada?.id ?? "", slug: "ada" };
-  return {
-    sam,
-    or,
-    agent,
-    samActor: { kind: "user" as const, userId: sam.user.id, handle: "sam" },
-  };
+  return { sam, or, agent, samActor };
 }
 
 test("a mention item: from the agent or the human author, with the task and a deep link to the comment", async () => {
   const { or, agent, samActor } = await actors();
   await h.app.tasks.create(or, { title: "Plan the migration", assignee: "ada" });
   const c1 = await h.app.tasks.comment(agent, "T-1", "@or can you confirm?");
-  const c2 = await h.app.tasks.comment(samActor, "T-1", "@or and me");
+  const c2 = await h.app.tasks.comment(samActor, "T-1", `<@${or.ref}> and me`);
   const items = (await get("/api/inbox")).json().items as Record<string, unknown>[];
   const mentions = items.filter((i) => i.kind === "mention");
   expect(mentions).toHaveLength(2);
   expect(mentions[1]).toMatchObject({
     kind: "mention",
     read: false,
-    from: { kind: "agent", name: "ada" },
+    from: { kind: "agent", ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "ada" },
     task: { key: "T-1", title: "Plan the migration" },
     link: { kind: "task", key: "T-1", commentId: c1.id },
   });
   expect(mentions[0]).toMatchObject({
-    from: { kind: "human", name: "sam" },
+    from: { kind: "human", ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "sam" },
     link: { kind: "task", key: "T-1", commentId: c2.id },
   });
 });
@@ -273,7 +275,7 @@ test("a task event: done from an agent reaches the human creator with fact and a
   expect(item).toMatchObject({
     kind: "task_event",
     fact: "done",
-    from: { kind: "factory", name: "factory" },
+    from: { kind: "factory" },
     task: { key: "T-1", title: "Plan" },
     link: { kind: "task", key: "T-1" },
   });
@@ -315,7 +317,7 @@ test("unread-count byAgent counts unread messages by sending agent only", async 
   await h.app.tasks.create(or, { title: "t" });
   await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const r = (await get("/api/inbox/unread-count")).json();
-  expect(r.byAgent).toEqual({ ada: 2 });
+  expect(r.byAgent).toEqual({ [await h.refOf("ada")]: 2 });
   expect(r.count).toBe(3);
 });
 
@@ -359,11 +361,17 @@ test("read-from marks that agent's unread messages up to upTo, idempotent, user-
   await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const sam = (await signUp(h.app, { handle: "sam" })).cookie;
   const upTo = new Date().toISOString();
-  const readFrom = (c: string, slug = "ada", body: object = { upTo }) =>
-    post(`/api/inbox/read-from/${slug}`, body, c);
+  const readFrom = async (c: string, handle = "ada", body: object = { upTo }) =>
+    post(
+      `/api/inbox/read-from/${handle === "nobody" ? UNKNOWN_REF : await h.refOf(handle)}`,
+      body,
+      c,
+    );
   // Another user's call neither marks nor leaks into my items.
   expect((await readFrom(sam)).json().marked).toBe(0);
-  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
+  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({
+    [await h.refOf("ada")]: 1,
+  });
   expect((await readFrom(cookie)).json().marked).toBe(1);
   expect((await readFrom(cookie)).json().marked).toBe(0);
   expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({});
@@ -373,7 +381,9 @@ test("read-from marks that agent's unread messages up to upTo, idempotent, user-
   await new Promise((r) => setTimeout(r, 5));
   await aCalls("toolu_r2", { to: ["@or"], body: "later" });
   expect((await readFrom(cookie)).json().marked).toBe(0);
-  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
+  expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({
+    [await h.refOf("ada")]: 1,
+  });
 });
 
 test("read-from publishes inbox_changed only when it marked something", async () => {
@@ -382,15 +392,15 @@ test("read-from publishes inbox_changed only when it marked something", async ()
   let n = 0;
   h.app.bus.subscribeUser(orId, (m) => m.type === "inbox_changed" && n++);
   const upTo = new Date().toISOString();
-  await post("/api/inbox/read-from/ada", { upTo });
+  await post(`/api/inbox/read-from/${await h.refOf("ada")}`, { upTo });
   expect(n).toBe(1);
-  await post("/api/inbox/read-from/ada", { upTo });
+  await post(`/api/inbox/read-from/${await h.refOf("ada")}`, { upTo });
   expect(n).toBe(1);
 });
 
 test("read changes reach the reading user's sockets only; new items reach the users they are for", async () => {
   const { or, agent, sam } = await actors();
-  const orId = or.userId;
+  const orId = or.id;
   const got = { or: 0, sam: 0, all: 0 };
   h.app.bus.subscribeUser(orId, () => got.or++);
   h.app.bus.subscribeUser(sam.user.id, () => got.sam++);
@@ -415,7 +425,7 @@ test.each([
   ["POST", "/api/inbox/x/read"],
   ["POST", "/api/inbox/read-all"],
   ["POST", "/api/inbox/read-all/undo"],
-  ["POST", "/api/inbox/read-from/ada"],
+  ["POST", `/api/inbox/read-from/${UNKNOWN_REF}`],
 ] as const)("%s %s: a live agent token gets 401", async (method, path) => {
   const r = await h.app.inject({
     method,
@@ -448,15 +458,15 @@ test("GET /api/inbox/:id: the owner's item equals the list entry; another user's
 });
 
 /** A report of @or's forwards `n` updates, as its runtime does. */
-async function updatesFrom(slug: string, n: number, over: { fact?: "denied" } = {}) {
-  const a = await h.app.store.agentBySlug(slug);
-  if (!a) throw new Error(`no agent ${slug}`);
+async function updatesFrom(handle: string, n: number, over: { fact?: "denied" } = {}) {
+  const a = await agentRowOf(h.app, handle);
+  if (!a) throw new Error(`no agent ${handle}`);
   for (let i = 1; i <= n; i++)
-    await h.app.router.forward({ agentId: a.id, body: `${slug} update ${i}`, ...over });
+    await h.app.router.forward({ agentId: a.id, body: `${handle} update ${i}`, ...over });
 }
 
 test("a human manager's reports' updates come grouped per report as updates, never as items, for that user only", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
   const sam = await signUp(h.app, { handle: "sam" });
   await updatesFrom("ada", 3);
   await updatesFrom("bob", 1);
@@ -465,7 +475,10 @@ test("a human manager's reports' updates come grouped per report as updates, nev
   expect(page.items).toEqual([]);
   expect(page.chats).toEqual([]);
   expect(
-    page.updates.map((u: { agent: { slug: string }; unread: number }) => [u.agent.slug, u.unread]),
+    page.updates.map((u: { agent: { handle: string }; unread: number }) => [
+      u.agent.handle,
+      u.unread,
+    ]),
   ).toEqual([
     ["ada", 4],
     ["bob", 1],
@@ -484,7 +497,7 @@ test("a human manager's reports' updates come grouped per report as updates, nev
 });
 
 test("read-from with kind member_update marks one report's updates read and leaves chats and other reports alone", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
   await updatesFrom("ada", 2);
   await updatesFrom("bob", 1);
   await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
@@ -492,26 +505,26 @@ test("read-from with kind member_update marks one report's updates read and leav
   const before = (await get("/api/inbox/unread-count")).json().count;
   const done = await h.app.inject({
     method: "POST",
-    url: "/api/inbox/read-from/ada",
+    url: `/api/inbox/read-from/${await h.refOf("ada")}`,
     headers: { cookie },
     payload: { upTo, kind: "member_update" },
   });
   expect(done.json().marked).toBe(2);
   expect((await get("/api/inbox/unread-count")).json().count).toBe(before - 2);
   const after = (await get("/api/inbox")).json();
-  expect(after.updates.map((u: { agent: { slug: string } }) => u.agent.slug)).toEqual(["bob"]);
+  expect(after.updates.map((u: { agent: { handle: string } }) => u.agent.handle)).toEqual(["bob"]);
   expect(after.chats).toEqual([expect.objectContaining({ unread: 1 })]);
 });
 
 test("read-from with the default kind leaves the human manager's errored notice about that agent unread", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug = 'ada'`;
-  const ada = await h.app.store.agentBySlug("ada");
+  await h.sql`update agents set reports_to = ${orId} where id = (select id from principals where handle = 'ada')`;
+  const ada = await agentRowOf(h.app, "ada");
   if (!ada) throw new Error("seed");
   await h.app.router.forward({ agentId: ada.id, fact: "errored", body: "@ada is errored." });
   const upTo = "2999-01-01T00:00:00.000000Z";
   const done = await h.app.inject({
     method: "POST",
-    url: "/api/inbox/read-from/ada",
+    url: `/api/inbox/read-from/${await h.refOf("ada")}`,
     headers: { cookie },
     payload: { upTo },
   });
@@ -537,7 +550,7 @@ test("a chat row's firstUnreadId is the oldest unread message from that agent, a
 
 test("?unread=true&notify=true returns the chats and only mention, agent_errored, credential and loop_held items, newest first, capped at 200", async () => {
   const { or, agent } = await actors();
-  const adaId = (await h.app.store.agentBySlug("ada"))?.id as string;
+  const adaId = (await agentRowOf(h.app, "ada"))?.id as string;
   const notice = (n: string, body: string) =>
     h.app.store.createHumanMessage({
       kind: "system",

@@ -1,8 +1,8 @@
 import type { Totals, UsageDays } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { insertAgent, insertTurn } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, refOfHandle, testRef, UNKNOWN_REF } from "../test/principals.ts";
 import { UsageService } from "./usage-service.ts";
 
 /** S10 AC1: every rollup equals a reference sum computed here from the seeded turns (spec §6, §7). */
@@ -39,7 +39,7 @@ type Seed = {
 const turns: Seed[] = [];
 type AgentFixture = {
   id: string;
-  slug: string;
+  handle: string;
   displayName: string;
   kind: "persistent" | "ephemeral";
   reportsTo?: string;
@@ -47,25 +47,25 @@ type AgentFixture = {
   terminated?: boolean;
 };
 const AGENTS: AgentFixture[] = [
-  { id: "a-lead", slug: "lead", displayName: "Lead", kind: "persistent" },
-  { id: "a-kid1", slug: "kid1", displayName: "Kid one", kind: "ephemeral", reportsTo: "a-lead" },
+  { id: "a-lead", handle: "lead", displayName: "Lead", kind: "persistent" },
+  { id: "a-kid1", handle: "kid1", displayName: "Kid one", kind: "ephemeral", reportsTo: "a-lead" },
   {
     id: "a-kid2",
-    slug: "kid2",
+    handle: "kid2",
     displayName: "Kid two",
     kind: "ephemeral",
     reportsTo: "a-lead",
     terminated: true,
   },
-  { id: "a-dev", slug: "dev", displayName: "Dev", kind: "persistent", reportsTo: "a-lead" },
-  { id: "a-w1", slug: "w1", displayName: "Busy", kind: "persistent" },
-  { id: "a-w2", slug: "w2", displayName: "W2", kind: "persistent" },
-  { id: "a-w3", slug: "w3", displayName: "W3", kind: "persistent" },
-  { id: "a-w4", slug: "w4", displayName: "W4", kind: "persistent" },
-  { id: "a-idle", slug: "idle", displayName: "Idle", kind: "persistent" },
-  { id: "a-gone", slug: "gone", displayName: "Gone", kind: "persistent", archived: true },
-  { id: "a-old", slug: "old", displayName: "Old", kind: "persistent", archived: true },
-  { id: "a-late", slug: "late", displayName: "Late", kind: "persistent" },
+  { id: "a-dev", handle: "dev", displayName: "Dev", kind: "persistent", reportsTo: "a-lead" },
+  { id: "a-w1", handle: "w1", displayName: "Busy", kind: "persistent" },
+  { id: "a-w2", handle: "w2", displayName: "W2", kind: "persistent" },
+  { id: "a-w3", handle: "w3", displayName: "W3", kind: "persistent" },
+  { id: "a-w4", handle: "w4", displayName: "W4", kind: "persistent" },
+  { id: "a-idle", handle: "idle", displayName: "Idle", kind: "persistent" },
+  { id: "a-gone", handle: "gone", displayName: "Gone", kind: "persistent", archived: true },
+  { id: "a-old", handle: "old", displayName: "Old", kind: "persistent", archived: true },
+  { id: "a-late", handle: "late", displayName: "Late", kind: "persistent" },
 ];
 const TASKS = [
   { id: "task1", title: "Ship it" },
@@ -201,15 +201,15 @@ const scopeOf = (id: string) =>
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1','Or','or@x.io')`;
   for (const a of AGENTS)
     await insertAgent(t.sql, {
       id: a.id,
-      slug: a.slug,
+      handle: a.handle,
       displayName: a.displayName,
       kind: a.kind,
-      reportsTo: a.reportsTo ?? null,
+      reportsTo: a.reportsTo ?? undefined,
       archived: a.archived,
       terminatedAt: a.terminated ? "2026-11-11T00:00:00Z" : null,
     });
@@ -225,7 +225,7 @@ beforeAll(async () => {
               values ('c-z', 'zeta', 'oauth_token', ${Buffer.from("x")}, '2026-11-20T14:45:00Z')`;
   for (const k of TASKS) {
     const [row] = await t.sql<{ number: number }[]>`
-      insert into tasks (id, title, created_by_user_id) values (${k.id}, ${k.title}, 'u1') returning number`;
+      insert into tasks (id, title, created_by_id) values (${k.id}, ${k.title}, 'u1') returning number`;
     taskKey.set(k.id, `T-${row?.number}`);
   }
   for (const s of turns)
@@ -281,7 +281,7 @@ test("the calendar window includes local midnight of the first day and excludes 
 });
 
 test("a scoped daily sums only those agents and equals the agent page total (F4)", async () => {
-  const lead = await usage.agent("lead", 30);
+  const lead = await usage.agent(await refOfHandle(t.db, "lead"), 30);
   const r = await usage.daily(30, { agentIds: scopeOf("a-lead") });
   expect(r.days).toHaveLength(30);
   expect(sumOf(r.days.map(strip))).toEqual(lead?.total);
@@ -301,10 +301,13 @@ function expectedAgents(pred: (s: Seed) => boolean) {
     if (total.turns === 0 && !(a.kind === "persistent" && !a.archived)) return [];
     return [
       {
-        slug: a.slug,
+        ref: testRef(a.id),
+        handle: a.handle,
         displayName: a.displayName,
         kind: a.kind,
-        ...(a.kind === "ephemeral" ? { spawnerSlug: byId.get(a.reportsTo ?? "")?.slug } : {}),
+        ...(a.kind === "ephemeral" && a.reportsTo
+          ? { spawner: { ref: testRef(a.reportsTo), handle: byId.get(a.reportsTo)?.handle } }
+          : {}),
         archived: a.archived ?? false,
         terminated: a.terminated ?? false,
         own,
@@ -312,7 +315,7 @@ function expectedAgents(pred: (s: Seed) => boolean) {
         total,
       },
     ];
-  }).sort((x, y) => y.total.costUsd - x.total.costUsd || x.slug.localeCompare(y.slug));
+  }).sort((x, y) => y.total.costUsd - x.total.costUsd || x.handle.localeCompare(y.handle));
 }
 
 test.each([7, 30, 90] as const)("agents(calendar %i) equals the reference", async (days) => {
@@ -324,15 +327,15 @@ test.each([7, 30, 90] as const)("agents(calendar %i) equals the reference", asyn
 test("agents(rolling 7) is the tree's window: now minus 7 days", async () => {
   const r = await usage.agents({ kind: "rolling", days: 7 });
   expect(r.agents).toEqual(expectedAgents(inRolling));
-  const lead = r.agents.find((a) => a.slug === "lead");
+  const lead = r.agents.find((a) => a.handle === "lead");
   // the turn exactly at now - 7d counts, 1 ms earlier does not
   expect(lead?.own.costUsd).toBe((1_500_000 + 110_000 + 130_000 + 170_000) / 1e6);
 });
 
 test("a spawner's total is own plus spawned and excludes its persistent reports", async () => {
   const r = await usage.agents({ kind: "calendar", days: 30 });
-  const lead = r.agents.find((a) => a.slug === "lead");
-  const dev = r.agents.find((a) => a.slug === "dev");
+  const lead = r.agents.find((a) => a.handle === "lead");
+  const dev = r.agents.find((a) => a.handle === "dev");
   expect(lead?.total).toEqual(add(lead?.own ?? zero(), lead?.spawned ?? zero()));
   expect(lead?.spawned).toEqual(
     reference((s) => inCal(30)(s) && ["a-kid1", "a-kid2"].includes(s.agentId)),
@@ -342,9 +345,9 @@ test("a spawner's total is own plus spawned and excludes its persistent reports"
     reference((s) => inCal(30)(s) && scopeOf("a-lead").includes(s.agentId)),
   );
   // idle (live, no turns) is listed with zeros; old (archived, no turns in the window) is not
-  expect(r.agents.find((a) => a.slug === "idle")?.total).toEqual(zero());
-  expect(r.agents.find((a) => a.slug === "old")).toBeUndefined();
-  expect(r.agents.find((a) => a.slug === "gone")?.archived).toBe(true);
+  expect(r.agents.find((a) => a.handle === "idle")?.total).toEqual(zero());
+  expect(r.agents.find((a) => a.handle === "old")).toBeUndefined();
+  expect(r.agents.find((a) => a.handle === "gone")?.archived).toBe(true);
 });
 
 test("credentials(30): totals, top 5 agents by cost, rate-limit state and unattributed", async () => {
@@ -361,15 +364,16 @@ test("credentials(30): totals, top 5 agents by cost, rate-limit state and unattr
   expect(alpha?.kind).toBe("oauth_token");
   expect(alpha?.totals).toEqual(reference((s) => pred(s) && s.credentialId === "c-a"));
   const perAgent = AGENTS.map((a) => ({
-    slug: a.slug,
+    ref: testRef(a.id),
+    handle: a.handle,
     costUsd: reference((s) => pred(s) && s.credentialId === "c-a" && s.agentId === a.id).costUsd,
     turns: reference((s) => pred(s) && s.credentialId === "c-a" && s.agentId === a.id).turns,
   }))
     .filter((x) => x.turns > 0)
-    .sort((x, y) => y.costUsd - x.costUsd || x.slug.localeCompare(y.slug));
+    .sort((x, y) => y.costUsd - x.costUsd || x.handle.localeCompare(y.handle));
   expect(perAgent.length).toBeGreaterThan(5);
   expect(alpha?.agents).toEqual(
-    perAgent.slice(0, 5).map(({ slug, costUsd }) => ({ slug, costUsd })),
+    perAgent.slice(0, 5).map(({ ref, handle, costUsd }) => ({ ref, handle, costUsd })),
   );
   expect(alpha?.rateLimit).toEqual({
     status: "allowed_warning",
@@ -404,10 +408,10 @@ test("credentials(30): totals, top 5 agents by cost, rate-limit state and unattr
 
 test("a calendar window ends at local midnight tonight, so its totals equal the sum of its bars (F4)", async () => {
   const late = (await usage.agents({ kind: "calendar", days: 7 })).agents.find(
-    (a) => a.slug === "late",
+    (a) => a.handle === "late",
   );
   expect(late?.own).toMatchObject({ turns: 1, costUsd: 0.02 });
-  const page = await usage.agent("late", 7);
+  const page = await usage.agent(await refOfHandle(t.db, "late"), 7);
   expect(page?.total).toMatchObject({ turns: 1, costUsd: 0.02 });
   expect(sumOf(page?.daily.map(strip) ?? [])).toEqual(page?.total);
   const alpha = (await usage.credentials(7)).credentials.find((c) => c.name === "alpha");
@@ -419,8 +423,13 @@ test("a calendar window ends at local midnight tonight, so its totals equal the 
 test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
   const pred = inCal(30);
   const scope = scopeOf("a-lead");
-  const r = await usage.agent("lead", 30);
-  expect(r?.agent).toEqual({ slug: "lead", displayName: "Lead", kind: "persistent" });
+  const r = await usage.agent(await refOfHandle(t.db, "lead"), 30);
+  expect(r?.agent).toEqual({
+    ref: testRef("a-lead"),
+    handle: "lead",
+    displayName: "Lead",
+    kind: "persistent",
+  });
   expect(r?.timezone).toBe(TZ);
   expect(r?.own).toEqual(reference((s) => pred(s) && s.agentId === "a-lead"));
   expect(r?.total).toEqual(reference((s) => pred(s) && scope.includes(s.agentId)));
@@ -455,13 +464,15 @@ test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
 
   expect(r?.spawned).toEqual([
     {
-      slug: "kid2",
+      ref: testRef("a-kid2"),
+      handle: "kid2",
       displayName: "Kid two",
       terminated: true,
       ...reference((s) => pred(s) && s.agentId === "a-kid2"),
     },
     {
-      slug: "kid1",
+      ref: testRef("a-kid1"),
+      handle: "kid1",
       displayName: "Kid one",
       terminated: false,
       ...reference((s) => pred(s) && s.agentId === "a-kid1"),
@@ -469,14 +480,14 @@ test("agent(lead, 30): spawner scope, by model, by task, spawned", async () => {
   ]);
 });
 
-test("agent(): a spawned agent's figure is its own; byTask holds the top 20; unknown slug", async () => {
-  const kid = await usage.agent("kid1", 90);
+test("agent(): a spawned agent's figure is its own; byTask holds the top 20; unknown handle", async () => {
+  const kid = await usage.agent(await refOfHandle(t.db, "kid1"), 90);
   expect(kid?.agent.kind).toBe("ephemeral");
   expect(kid?.total).toEqual(reference((s) => s.agentId === "a-kid1" && inCal(90)(s)));
   expect(kid?.own).toEqual(kid?.total);
   expect(kid?.spawned).toEqual([]);
 
-  const w1 = await usage.agent("w1", 30);
+  const w1 = await usage.agent(await refOfHandle(t.db, "w1"), 30);
   expect(w1?.byTask).toHaveLength(20);
   expect(w1?.byTask[0]).toMatchObject({
     key: taskKey.get("bt21"),
@@ -487,11 +498,11 @@ test("agent(): a spawned agent's figure is its own; byTask holds the top 20; unk
   expect(w1?.byTask.map((x) => x.key)).not.toContain(taskKey.get("bt0"));
   expect(w1?.byTask.map((x) => x.key)).not.toContain(taskKey.get("bt1"));
 
-  const idle = await usage.agent("idle", 7);
+  const idle = await usage.agent(await refOfHandle(t.db, "idle"), 7);
   expect(idle?.total).toEqual(zero());
   expect(idle?.daily).toHaveLength(7);
   expect(idle?.byModel).toEqual([]);
-  expect(await usage.agent("nobody", 30)).toBeUndefined();
+  expect(await usage.agent(UNKNOWN_REF, 30)).toBeUndefined();
 });
 
 test("task(): attributed closed turns, any time; null without them", async () => {
@@ -512,8 +523,8 @@ test("the open turn is excluded everywhere and the NULL-cost turn counts with $0
   expect(d19).toMatchObject({ turns: 0, costUsd: 0 }); // only the open turn started that day
   const d18 = lead.days.find((d) => d.date === "2026-11-18");
   expect(d18).toMatchObject({ turns: 1, costUsd: 0, inputTokens: 0, cacheReadTokens: 0 });
-  const page = await usage.agent("lead", 7);
+  const page = await usage.agent(await refOfHandle(t.db, "lead"), 7);
   expect(page?.byTask.map((k) => k.key)).not.toContain(taskKey.get("task3"));
   const tree = await usage.agents({ kind: "rolling", days: 7 });
-  expect(tree.agents.find((a) => a.slug === "lead")?.own.turns).toBe(5);
+  expect(tree.agents.find((a) => a.handle === "lead")?.own.turns).toBe(5);
 });

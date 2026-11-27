@@ -20,9 +20,9 @@ const VIEWS = [
   { value: "combined" as const, label: CONFIG_PAGE_COPY.viewCombined },
 ];
 
-/** The fileKey of a raw editor's state in the page's map: `agent:<slug>`, and its read-only Combined view. */
-export const rawFileKey = (slug: string, view: RawView) =>
-  view === "agent" ? `agent:${slug}` : `agent:${slug}:combined`;
+/** The fileKey of a raw editor's state in the page's map: `agent:<agentRef>`, and its read-only Combined view. */
+export const rawFileKey = (agentRef: string, view: RawView) =>
+  view === "agent" ? `agent:${agentRef}` : `agent:${agentRef}:combined`;
 
 /**
  * The Raw JSON tab (spec §12.4): this agent's overlay as JSON in the shared code surface, or the read-only Combined
@@ -31,7 +31,7 @@ export const rawFileKey = (slug: string, view: RawView) =>
  * Values only ever appear in the editor: every marker message is a constant.
  */
 export function RawJsonTab(p: {
-  slug: string;
+  agentRef: string;
   labelledBy: string;
   text: string;
   onTextChange(v: string): void;
@@ -112,7 +112,7 @@ export function RawJsonTab(p: {
           value={combined ? (p.combinedText ?? "") : text}
           onChange={combined ? ignore : p.onTextChange}
           onSave={p.onSave}
-          fileKey={rawFileKey(p.slug, view)}
+          fileKey={rawFileKey(p.agentRef, view)}
           states={p.states}
           diagnostics={diagnostics}
           readOnly={combined}

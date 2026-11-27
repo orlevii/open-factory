@@ -1,7 +1,9 @@
 import type { ServerMessage } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
 
@@ -9,9 +11,16 @@ let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
 let sam: Actor;
+/** Who the `or` human is, as the task messages name it: its mention. */
+let OR = "";
 const ids: Record<string, string> = {};
 const frames: ServerMessage[] = [];
-const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
+const agent = (handle: string): Actor => ({
+  kind: "agent",
+  id: ids[handle] as string,
+  ref: testRef(ids[handle] as string),
+  handle: handle,
+});
 
 beforeEach(async () => {
   driver = new FakeDriver();
@@ -20,24 +29,25 @@ beforeEach(async () => {
   h.app.bus.subscribeAll((m) => frames.push(m));
   const u1 = await signUp(h.app, { handle: "or" });
   const u2 = await signUp(h.app, { handle: "sam" });
-  or = { kind: "user", userId: u1.user.id, handle: "or" };
-  sam = { kind: "user", userId: u2.user.id, handle: "sam" };
+  or = { kind: "human", id: u1.user.id, ref: testRef(u1.user.id), handle: "or" };
+  sam = { kind: "human", id: u2.user.id, ref: testRef(u2.user.id), handle: "sam" };
   ids.or = u1.user.id;
+  OR = mentionOf(or.ref);
   ids.sam = u2.user.id;
   h.app.bus.subscribeUser(u2.user.id, (m) => frames.push(m));
-  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
+  for (const handle of ["lead", "dev", "qa"]) ids[handle] = (await h.seedAgent({ handle })).id;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
 });
 afterEach(() => h.close());
 
-const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
+const settle = async (...handles: string[]) => {
+  for (const s of handles) await (await runtimeOf(h.app, s))?.settled();
 };
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
-const sentTo = (slug: string) => (proc(slug)?.sent ?? []).flat();
-const rowsTo = (slug: string) =>
-  h.sql`select m.kind, m.notice, m.body, m.state from messages m join agents a on a.id = m.to_agent_id
-    where a.slug = ${slug} and m.task_id is not null order by m.created_at`;
+const proc = (handle: string) => driver.startsOf(handle).at(-1);
+const sentTo = (handle: string) => (proc(handle)?.sent ?? []).flat();
+const rowsTo = (handle: string) =>
+  h.sql`select m.kind, m.notice, m.body, m.state from messages m join agents a on a.id = m.to_id
+    where a.id = (select id from principals where handle = ${handle}) and m.task_id is not null order by m.created_at`;
 const fails = async (p: Promise<unknown>) => {
   try {
     await p;
@@ -54,13 +64,22 @@ test("create assigned to a hibernated agent wakes it with the brief (AC 1)", asy
     body: "Line one\nLine two",
     assignee: "dev",
   });
-  expect(r.task).toMatchObject({ key: "T-1", status: "open", assignee: "dev", blockedBy: [] });
+  expect(r.task).toMatchObject({
+    key: "T-1",
+    status: "open",
+    assignee: { ref: expect.any(String), handle: "dev" },
+    blockedBy: [],
+  });
   await settle("dev");
   const env = sentTo("dev");
   expect(env).toHaveLength(1);
   expect(env[0]).toMatchObject({ from: "@factory", kind: "task_assigned", taskKey: "T-1" });
-  expect(env[0]?.body).toContain(`@or assigned you T-1, created by @or: "Plan the migration"`);
-  expect(env[0]?.body).toContain("The task, written by @or:\n> Line one\n> Line two");
+  // Delivered with the author's current handle.
+  const orMention = `${OR.slice(0, -1)}|${(await h.sql`select handle from principals where ref = ${OR.slice(2, -1)}`)[0]?.handle}>`;
+  expect(env[0]?.body).toContain(
+    `${orMention} assigned you T-1, created by ${orMention}: "Plan the migration"`,
+  );
+  expect(env[0]?.body).toContain(`The task, written by ${orMention}:\n> Line one\n> Line two`);
   expect(frames).toContainEqual({ type: "tasks_changed", keys: ["T-1"] });
   const ev = await h.sql`select type from task_events order by at`;
   expect(ev.map((e) => e.type)).toEqual(["created", "assignee"]);
@@ -143,7 +162,11 @@ test("done tells the creator and unblocks the dependent's assignee; nobody is to
   expect(r.changed).toEqual(["status"]);
   await settle("lead", "qa", "dev");
   expect(await rowsTo("lead")).toMatchObject([
-    { kind: "task_update", notice: "done", body: "@dev marked T-1 done." },
+    {
+      kind: "task_update",
+      notice: "done",
+      body: `${mentionOf(testRef(ids.dev as string))} marked T-1 done.`,
+    },
   ]);
   const qa = (await rowsTo("qa")).filter((x) => x.kind === "task_update");
   expect(qa).toMatchObject([{ notice: "unblocked" }]);
@@ -160,14 +183,14 @@ test("one update changing status and body sends the assignee one message listing
   expect(rows).toHaveLength(1);
   expect(rows[0]?.notice).toBe("status_changed");
   expect(rows[0]?.body).toBe(
-    "@or moved T-1 to in progress.\n@or edited T-1's description:\n> new brief",
+    `${OR} moved T-1 to in progress.\n${OR} edited T-1's description:\n> new brief`,
   );
 });
 
 test("reassigning tells the new assignee and the old one", async () => {
   await h.app.tasks.create(or, { title: "t", assignee: "dev" });
   const r = await h.app.tasks.update(agent("lead"), "T-1", { assignee: "qa" });
-  expect(r.task.assignee).toBe("qa");
+  expect(r.task.assignee?.handle).toBe("qa");
   expect((await rowsTo("qa")).map((x) => x.kind)).toEqual(["task_assigned"]);
   expect((await rowsTo("dev")).map((x) => [x.kind, x.notice])).toEqual([
     ["task_assigned", null],
@@ -178,7 +201,7 @@ test("reassigning tells the new assignee and the old one", async () => {
 });
 
 test("assignee rules: ended, human, unknown, me", async () => {
-  await h.sql`update agents set archived_at = now() where slug = 'qa'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'qa')`;
   expect((await fails(h.app.tasks.create(or, { title: "t", assignee: "qa" }))).message).toBe(
     "@qa was archived and can't be assigned tasks.",
   );
@@ -188,13 +211,13 @@ test("assignee rules: ended, human, unknown, me", async () => {
   expect((await fails(h.app.tasks.create(or, { title: "t", assignee: "me" }))).code).toBe(
     "reserved",
   );
-  const spawned = await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
+  const spawned = await h.seedAgent({ handle: "kid" });
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = null where id = ${spawned.id}`;
   expect((await fails(h.app.tasks.create(or, { title: "t", assignee: "kid" }))).message).toBe(
     "@kid was terminated and can't be assigned tasks.",
   );
   const mine = await h.app.tasks.create(agent("dev"), { title: "mine", assignee: "me" });
-  expect(mine.task.assignee).toBe("dev");
+  expect(mine.task.assignee?.handle).toBe("dev");
   expect(await rowsTo("dev")).toEqual([]);
   expect((await fails(h.app.tasks.update(or, "T-1", { assignee: "nobody" }))).code).toBe(
     "not_found",
@@ -218,8 +241,8 @@ test("a human creator hears about done as an inbox task_event, the actor does no
   expect(items).toEqual([{ user_id: ids.sam, kind: "task_event" }]);
   expect(frames).toContainEqual({ type: "inbox_changed" });
   const done =
-    await h.sql`select notice, to_user_id, state from messages where kind = 'task_update' and to_user_id is not null`;
-  expect(done).toEqual([{ notice: "done", to_user_id: ids.sam, state: "delivered" }]);
+    await h.sql`select notice, to_id, state from messages where kind = 'task_update' and to_id in (select id from users)`;
+  expect(done).toEqual([{ notice: "done", to_id: ids.sam, state: "delivered" }]);
 });
 
 test("removing the last blocking dependency unblocks the task's assignee", async () => {
@@ -234,7 +257,7 @@ test("removing the last blocking dependency unblocks the task's assignee", async
 });
 
 test("a task_update to an errored assignee carries the errored note", async () => {
-  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = 'dev'`;
+  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where id = (select id from principals where handle = 'dev')`;
   await h.app.tasks.create(or, { title: "t", assignee: "dev" });
   const r = await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   expect(r.note).toBe(

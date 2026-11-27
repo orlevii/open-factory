@@ -1,3 +1,5 @@
+import { normaliseRef } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -5,8 +7,9 @@ import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
-import { type Party, type PartyKind, SpeakerLine } from "./speaker-line";
+import { type Party, type PartyKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
+import { parseWho, whoName } from "./who";
 
 type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
 
@@ -55,9 +58,6 @@ export function parseSendResults(result: OutgoingRow["result"]): SendResults | u
   return sent;
 }
 
-/** A handle as written in a result or an argument: `@x`, however it was typed. */
-const handleOf = (to: string) => (/^[@#]/.test(to) ? to : `@${to}`);
-
 const recipientsOf = new WeakMap<object, readonly Party[]>();
 /** The recipients the call addressed, in order, each with its kind once a result names it. Cached by
  *  the result (or, before one arrives, the call), so the speaker line's props stay identical. */
@@ -65,10 +65,28 @@ function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
   const key = row.result ?? row.call;
   let parties = recipientsOf.get(key);
   if (!parties) {
-    const kinds = new Map<string, PartyKind>();
+    // A result names its recipient as a mention; the call may have written a mention, a ref or a plain handle.
+    type Found = { name: string; kind: PartyKind; ref: string | undefined };
+    const byRef = new Map<string, Found>();
+    const byName = new Map<string, Found>();
     for (const r of parseSendResults(row.result)?.results ?? [])
-      if ("kind" in r) kinds.set(handleOf(r.to).toLowerCase(), r.kind);
-    parties = to.map((t) => ({ handle: handleOf(t), kind: kinds.get(handleOf(t).toLowerCase()) }));
+      if ("kind" in r) {
+        const ref = parseWho(r.to)?.ref;
+        const entry = { name: whoName(r.to), kind: r.kind, ref };
+        if (ref) byRef.set(ref, entry);
+        byName.set(entry.name.toLowerCase(), entry);
+      }
+    parties = to.map((t) => {
+      const written = parseWho(t)?.ref ?? normaliseRef(t);
+      const found = (written && byRef.get(written)) || byName.get(whoName(t).toLowerCase());
+      // A known ref names the recipient by mention, so the line shows its live handle and links after a rename.
+      const ref = written ?? found?.ref;
+      return {
+        handle: found?.name ?? whoName(t),
+        kind: found?.kind,
+        ...(ref ? { mention: mentionOf(ref) } : {}),
+      };
+    });
     recipientsOf.set(key, parties);
   }
   return parties;
@@ -85,13 +103,11 @@ const STATUS_TEXT: Record<string, string> = {
  *  line, the body as written, and a status line only when there is something to say. The call, the
  *  inbox and the links live in the row menu (U3 §7.5). */
 export function OutgoingMessage({
-  slug,
   row,
   showCall,
   onToggleCall,
   rowProps,
 }: {
-  slug: string;
   row: OutgoingRow;
   showCall: boolean;
   onToggleCall(): void;
@@ -101,16 +117,17 @@ export function OutgoingMessage({
   const sent = parseSendResults(row.result);
   const parties = partiesOf(row, input.to);
   const failed = row.result?.isError === true;
+  const handle = useSpeakers().sessionAgent?.handle ?? "…";
   return (
     <CallBlock
       row={row}
-      label={`Message from @${slug} to ${parties.map((p) => p.handle).join(", ")}`}
+      label={`Message from @${handle} to ${parties.map((p) => p.handle).join(", ")}`}
       showCall={showCall}
       onToggleCall={onToggleCall}
       rowProps={rowProps}
       header={
         // "Name → Recipient" (U3 §7.2): "You" for you; several: "Name → @a, @b +8" (I1 §4.7).
-        <SpeakerLine from={slug} fromKind="agent" self to={parties} at={row.at}>
+        <SpeakerLine from={handle} fromKind="agent" self to={parties} at={row.at}>
           {input.urgent === true && (
             <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
           )}
@@ -222,7 +239,7 @@ export function CallBlock({
 function sendNote(row: OutgoingRow, sent: SendResults | undefined): ReactNode {
   if (!row.result) return <span>{row.turnOpen ? "Sending…" : "Not sent"}</span>;
   const lines = (sent?.results ?? []).flatMap((r): ReactNode[] => {
-    const who = handleOf(r.to);
+    const who = whoName(r.to);
     if ("reason" in r)
       return [
         <span key={who}>

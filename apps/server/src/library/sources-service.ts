@@ -17,6 +17,7 @@ import {
   type skillSourcePreviewBodySchema,
   type sourceDetailSchema,
 } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { ApiError, FieldError } from "../errors.ts";
@@ -149,7 +150,7 @@ export function dbSourcesStore(db: Db): SourcesStore {
 
 export interface SourcesDeps {
   store: SourcesStore;
-  /** Who lists any of the skills: template names and agent slugs (`LibraryIndex.usedByAny`). */
+  /** Who lists any of the skills: template names and agent handles (`LibraryIndex.usedByAny`). */
   usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }>;
   factoryHome: string;
   hostClaudeDir: string;
@@ -193,6 +194,9 @@ const DEFAULT_GITHUB = "https://github.com";
 
 const sourceLabel = (s: SkillSourceRow) => (s.kind === "github" ? (s.repo ?? "") : (s.path ?? ""));
 const hookKey = (h: HookDecl) => JSON.stringify([h.event, h.matcher, h.command]);
+
+/** Who made a Library change: a human principal. */
+export type Who = { id: string; ref: string; handle: string };
 
 /** Hooks and executable files (by content hash) of a skill folder: what makes an update run different code. */
 async function codeSurface(
@@ -333,14 +337,18 @@ export class SourcesService {
 
   private async after(
     skills: string[] | undefined,
-    by: string,
+    by: Who | undefined,
     o?: { addFailed?: string },
     before?: { skills: Record<string, string> },
   ): Promise<void> {
     this.d.publish?.(o);
-    if (skills === undefined) return;
+    if (skills === undefined || !by) return;
     try {
-      await this.d.onLibraryChanged?.({ skills, by, ...(before ? { before } : {}) });
+      await this.d.onLibraryChanged?.({
+        skills,
+        by: mentionOf(by.ref),
+        ...(before ? { before } : {}),
+      });
     } catch (e) {
       this.d.log("libraryChanged failed", e);
     }
@@ -417,7 +425,7 @@ export class SourcesService {
 
   // Preview -------------------------------------------------------------------------------
 
-  async preview(b: SkillSourcePreviewBody, _by: string): Promise<SourcePreview> {
+  async preview(b: SkillSourcePreviewBody, _by: Who): Promise<SourcePreview> {
     return b.kind === "folder" ? this.previewFolder(b.path) : this.previewGithub(b);
   }
 
@@ -508,12 +516,9 @@ export class SourcesService {
 
   // Add -----------------------------------------------------------------------------------
 
-  async add(
-    b: SkillSourceAddBody,
-    by: string,
-  ): Promise<{ status: 201 | 202; source: SourceDetail }> {
-    const out = await (b.kind === "folder" ? this.addFolder(b, by) : this.addGithub(b, by));
-    await this.after(undefined, by);
+  async add(b: SkillSourceAddBody, by: Who): Promise<{ status: 201 | 202; source: SourceDetail }> {
+    const out = await (b.kind === "folder" ? this.addFolder(b, by.id) : this.addGithub(b, by.id));
+    await this.after(undefined, undefined);
     return out;
   }
 
@@ -576,7 +581,7 @@ export class SourcesService {
       skills: [...o.skills].sort(),
       state: o.state ?? "ready",
       startedAt: o.now,
-      addedBy: o.by,
+      addedById: o.by,
       addedAt: o.now,
       deletedAt: null,
     };
@@ -648,12 +653,12 @@ export class SourcesService {
       this.previews.delete(b.previewId);
       return { status: 202 as const, source: await this.detail(row) };
     });
-    if (done.status === 202) this.background(() => this.finishAdding(id, by));
+    if (done.status === 202) this.background(() => this.finishAdding(id));
     return done;
   }
 
   /** Fetches the pinned commit of an "adding" row, installs it and marks the row ready; a failure removes the row. */
-  private async finishAdding(id: string, by: string): Promise<void> {
+  private async finishAdding(id: string): Promise<void> {
     const row = await this.get(id).catch(() => undefined);
     if (row?.state !== "adding" || row.commit === null) return;
     const subpath = row.subpath ?? "";
@@ -686,13 +691,13 @@ export class SourcesService {
     } finally {
       await removeTree(tmp).catch(() => {});
     }
-    await this.after(undefined, by, failed ? { addFailed: row.repo ?? "" } : undefined);
+    await this.after(undefined, undefined, failed ? { addFailed: row.repo ?? "" } : undefined);
   }
 
   /** Boot: finishes the GitHub adds a restart interrupted, or removes them (spec §10.4). */
   async bootRepair(): Promise<void> {
     for (const s of await this.live()) {
-      if (s.state === "adding") await this.finishAdding(s.id, s.addedBy);
+      if (s.state === "adding") await this.finishAdding(s.id);
     }
   }
 
@@ -723,7 +728,7 @@ export class SourcesService {
     return { root, one: path.basename(row.subpath ?? "") || path.basename(row.repo ?? "") };
   }
 
-  async addSkills(id: string, skills: string[], by: string): Promise<SourceDetail> {
+  async addSkills(id: string, skills: string[], by: Who): Promise<SourceDetail> {
     const first = await this.get(id);
     const { root, one } = await this.rootOf(first);
     const fresh = skills.filter((n) => !first.skills.includes(n));
@@ -767,7 +772,7 @@ export class SourcesService {
         });
         return next as SkillSourceRow;
       });
-      await this.after(undefined, by);
+      await this.after(undefined, undefined);
       return this.detail(row);
     } finally {
       if (tmp) await removeTree(tmp).catch(() => {});
@@ -979,7 +984,7 @@ export class SourcesService {
     return view;
   }
 
-  async update(id: string, commit: string, by: string): Promise<SourceDetail> {
+  async update(id: string, commit: string, by: Who): Promise<SourceDetail> {
     const first = await this.get(id);
     if (first.kind !== "github" || first.updateCommit !== commit) {
       throw new ApiError(409, "stale_update", SOURCE_MSG.noUpdate);
@@ -1087,7 +1092,7 @@ export class SourcesService {
     return { undoUntil };
   }
 
-  async restore(id: string, by: string): Promise<SourceDetail> {
+  async restore(id: string, by: Who): Promise<SourceDetail> {
     const row = await libraryLock.run(LIBRARY_KEY, async () => {
       const cur = await this.get(id, { deleted: true });
       const until = (cur.deletedAt as Date).getTime() + this.undoMs;

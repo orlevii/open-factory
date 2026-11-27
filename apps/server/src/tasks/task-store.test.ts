@@ -1,8 +1,8 @@
 import { schema } from "@open-factory/db";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { TaskStore } from "./task-store.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -13,21 +13,23 @@ let tick = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new TaskStore({ db: t.db, clock: () => new Date(Date.UTC(2026, 0, 1) + ++tick * 1000) });
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id,name,email,handle) values (${ids.or},'Or','or@x.io','or')`;
+  await t.sql.unsafe(principalSql(ids.or, "human", "or"));
+  await t.sql`insert into users (id, name, email) values (${ids.or},'Or','or@x.io')`;
   await t.sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
-  for (const slug of ["lead", "dev", "kid"]) await claimTestHandleSql(t.sql, slug, "agent");
-  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,reports_to_user,credential_id) values
-    (${ids.lead},'lead','Lead','t','{}','local','persistent',null,${ids.or},'c1')`;
-  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
-    (${ids.dev},'dev','Dev','t','{}','local','persistent',${ids.lead},'c1'),
-    (${ids.kid},'kid','Kid','t','{}','local','ephemeral',${ids.dev},'c1')`;
+  await t.sql.unsafe(principalSql(ids.lead, "agent", "lead"));
+  await t.sql`insert into agents (id, display_name,template,config,runtime,kind,reports_to,credential_id) values
+    (${ids.lead},'Lead','t','{}','local','persistent',${ids.or},'c1')`;
+  await t.sql.unsafe(principalSql(ids.dev, "agent", "dev"));
+  await t.sql.unsafe(principalSql(ids.kid, "agent", "kid"));
+  await t.sql`insert into agents (id, display_name,template,config,runtime,kind,reports_to,credential_id) values
+    (${ids.dev},'Dev','t','{}','local','persistent',${ids.lead},'c1'),
+    (${ids.kid},'Kid','t','{}','local','ephemeral',${ids.dev},'c1')`;
 });
 afterAll(() => t.close());
 
 const mk = (title: string) =>
   t.db.transaction((tx) =>
-    store.insertTask(tx, { title, body: "", assigneeAgentId: null, createdBy: { userId: ids.or } }),
+    store.insertTask(tx, { title, body: "", assigneeAgentId: null, createdById: ids.or }),
   );
 const depend = (task: string, dep: string) =>
   t.db.insert(schema.taskDependencies).values({ taskId: task, dependsOnTaskId: dep });
@@ -160,7 +162,7 @@ test("replaceDependencies reports added and removed; replaceLinks keeps order", 
     { kind: "file", target: "a.md" },
   ]);
   const links = await store.links(t.db, a.id);
-  expect(links.map((l) => [l.kind, l.target ?? l.agentSlug])).toEqual([
+  expect(links.map((l) => [l.kind, l.target ?? l.agentHandle])).toEqual([
     ["url", "https://x.io"],
     ["agent", "dev"],
     ["file", "a.md"],
@@ -170,8 +172,8 @@ test("replaceDependencies reports added and removed; replaceLinks keeps order", 
 test("comments and events insert with strictly increasing times", async () => {
   const a = await mk("e1");
   await store.insertEvents(t.db, [
-    { taskId: a.id, actor: { userId: ids.or }, type: "created" },
-    { taskId: a.id, actor: { agentId: ids.dev }, type: "status", from: "open", to: "done" },
+    { taskId: a.id, actorId: ids.or, type: "created" },
+    { taskId: a.id, actorId: ids.dev, type: "status", from: "open", to: "done" },
   ]);
   const ev = await t.db.select().from(schema.taskEvents).orderBy(sql`at`);
   const mine = ev.filter((e) => e.taskId === a.id);
@@ -179,9 +181,9 @@ test("comments and events insert with strictly increasing times", async () => {
   expect(mine[1]?.at.getTime()).toBeGreaterThan(mine[0]?.at.getTime() as number);
   const c = await store.insertComment(t.db, {
     taskId: a.id,
-    author: { agentId: ids.dev },
+    authorId: ids.dev,
     body: "hi",
   });
-  expect(c.authorAgentId).toBe(ids.dev);
+  expect(c.authorId).toBe(ids.dev);
   expect(c.createdAt.getTime()).toBeGreaterThan(mine[1]?.at.getTime() as number);
 });

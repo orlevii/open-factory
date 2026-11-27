@@ -143,6 +143,10 @@ export class FakeDriver implements HarnessDriver {
     this.starts.push(p);
     return p;
   }
+  /** The processes started for the agent with this handle (its git author name at that start). */
+  startsOf(handle: string): FakeProcess[] {
+    return this.starts.filter((p) => p.spec.env.GIT_AUTHOR_NAME === handle);
+  }
   get last(): FakeProcess {
     const p = this.starts.at(-1);
     if (!p) throw new Error("no process started");

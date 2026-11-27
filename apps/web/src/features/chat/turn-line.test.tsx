@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { chatMsg, mine, page, stubChatApi } from "@/test/chat-fixtures";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { onChatChanged } from "./use-chat";
 
@@ -29,14 +30,14 @@ const outcome = (over = {}) =>
   }) as const;
 const lineEl = () => document.querySelector<HTMLElement>("[data-status-line]");
 const frame = (qc: Parameters<typeof onChatChanged>[0]) =>
-  act(() => onChatChanged(qc, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(qc, { type: "chat_changed", agent: refFor("dev") }));
 const since = () => new Date(Date.now() - 42_000).toISOString();
 
 test("the working line is the thread's last row: duration first, then the name, then the link", async () => {
   stubChatApi({
     chat: () => page([mine(1), chatMsg(2)], { working: { key: "m1", since: since() } }),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 2");
   const line = await waitFor(() => {
     const el = lineEl();
@@ -52,13 +53,13 @@ test("the working line is the thread's last row: duration first, then the name, 
 
 test("status frames never hide the working line", async () => {
   stubChatApi({ chat: () => page([mine(1)], { working: { key: "m1", since: since() } }) });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await waitFor(() => expect(lineEl()).not.toBeNull());
   const line = lineEl();
   await act(async () => {
     enqueueStatusFrame(queryClient, {
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "idle",
       turnOpen: false,
       restartPending: false,
@@ -80,7 +81,7 @@ test("a working line that appears live fades in; its outcome is the same node", 
           ? page([mine(1)], { working: { key: "m1", since: since() } })
           : page([mine(1), outcome()]),
   });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Ask 1");
   expect(lineEl()).toBeNull();
   state = "working";
@@ -106,7 +107,7 @@ test("when the agent replied, the working line goes in the commit that brings th
         ? page([mine(1), chatMsg(2)])
         : page([mine(1)], { working: { key: "m1", since: since() } }),
   });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await waitFor(() => expect(lineEl()).not.toBeNull());
   const seen: boolean[] = [];
   const watch = new MutationObserver(() => {

@@ -9,6 +9,7 @@ import { AgentLayout } from "@/features/agents/agent-layout";
 import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 import { longPress } from "@/test/long-press";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary, envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
@@ -136,7 +137,7 @@ vi.mock("@/components/markdown/markdown", async (orig) => {
 const at = "2026-11-18T00:00:00.000Z";
 const ev = (seq: number, event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId,
   at,
   event,
@@ -177,8 +178,8 @@ let detail: AgentDetail = {
 
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
-  agentDetailQueryOptions: (slug: string) => ({
-    queryKey: ["agent", slug],
+  agentDetailQueryOptions: (handle: string) => ({
+    queryKey: ["agent", handle],
     queryFn: async () => detail,
   }),
   fetchEvents: async () => ({ events: initial, hasMore: { before: false, after: false } }),
@@ -189,13 +190,13 @@ let harnessRenders = 0;
 let seen: ReturnType<typeof useSession> | undefined;
 function Harness() {
   harnessRenders++;
-  const s = useSession("dev");
+  const s = useSession(refFor("dev"));
   seen = s;
   return (
     // A "nested-update" is a newly mounted Radix menu settling in a layout effect, not a second frame.
     <Profiler id="timeline" onRender={(_id, phase) => phase !== "nested-update" && commits++}>
       <Timeline
-        slug="dev"
+        agentRef={refFor("dev")}
         rows={s.rows}
         failedIds={s.failedIds}
         interruptedEnds={s.interruptedEnds}
@@ -252,7 +253,7 @@ const frame = () =>
   });
 const sessionEvent = (e: SessionEvent): ServerMessage => ({
   type: "session_event",
-  agent: "dev",
+  agent: refFor("dev"),
   event: e,
 });
 /** Renders of rows that existed before the frame. */
@@ -278,7 +279,7 @@ test("an agent_status frame renders no row and no markdown", async () => {
   await setup();
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "working",
     turnOpen: true,
     restartPending: false,
@@ -292,10 +293,10 @@ test("an agent_status frame renders no row and no markdown", async () => {
 
 test("a queue frame renders no row and no markdown", async () => {
   await setup();
-  push({ type: "queue", agent: "dev", items: [] });
+  push({ type: "queue", agent: refFor("dev"), items: [] });
   push({
     type: "queue",
-    agent: "dev",
+    agent: refFor("dev"),
     items: [
       {
         id: "q1",
@@ -604,7 +605,7 @@ const parent: Row = {
 };
 const props = (over: Partial<TimelineItemProps> = {}): TimelineItemProps => ({
   row: parent,
-  slug: "dev",
+  agentRef: refFor("dev"),
   lit: false,
   arrivedKey: undefined,
   arrival: undefined,
@@ -651,7 +652,7 @@ test("buildRows runs once per events change, not for status or queue frames; ope
   await setup();
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "working",
     turnOpen: true,
     restartPending: false,
@@ -663,7 +664,7 @@ test("buildRows runs once per events change, not for status or queue frames; ope
   expect(harnessRenders).toBeGreaterThan(0);
   expect(count.builds).toBe(0);
   harnessRenders = 0;
-  push({ type: "queue", agent: "dev", items: [] });
+  push({ type: "queue", agent: refFor("dev"), items: [] });
   frame();
   expect(harnessRenders).toBeGreaterThan(0);
   expect(count.builds).toBe(0);
@@ -683,8 +684,8 @@ const renderSessionView = () =>
   setup(
     <SidebarProvider>
       <TooltipProvider>
-        <AgentLayout slug="dev">
-          <SessionView slug="dev" />
+        <AgentLayout agentRef={refFor("dev")}>
+          <SessionView agentRef={refFor("dev")} />
         </AgentLayout>
       </TooltipProvider>
     </SidebarProvider>,
@@ -705,7 +706,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   // The turn's start arrives by frame, so Elapsed's chain runs on the fake clock.
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "working",
     turnOpen: true,
     restartPending: false,
@@ -748,7 +749,7 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
   reset();
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "working",
     turnOpen: true,
     restartPending: false,
@@ -774,7 +775,7 @@ test("SessionView: a status frame that opens the turn renders the composer once 
   expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "working",
     turnOpen: true,
     restartPending: false,
@@ -808,7 +809,7 @@ const livePatch = (
   append: string,
 ): ServerMessage => ({
   type: "live",
-  agent: "dev",
+  agent: refFor("dev"),
   texts: [{ messageId, index, offset, append }],
 });
 
@@ -877,7 +878,7 @@ test("SessionView: the activity line reads live frames (text, then tool input), 
   reset();
   push({
     type: "live",
-    agent: "dev",
+    agent: refFor("dev"),
     toolInput: { toolUseId: "tu9", name: "Write", bytes: 3000, target: "/w/src/app.ts" },
   });
   frame();
@@ -914,13 +915,13 @@ test("SessionView: a progress frame re-renders only its subagent card; a text-on
   push(agentCall(201));
   push(agentCall(202));
   frame();
-  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 1)] });
+  push({ type: "live", agent: refFor("dev"), subagents: [prog("ag201", 1), prog("ag202", 1)] });
   frame();
   expect(
     document.querySelector('[data-row="201"]')?.closest("[data-subagent]")?.textContent,
   ).toContain("1 tool call");
   reset();
-  push({ type: "live", agent: "dev", subagents: [prog("ag201", 1), prog("ag202", 2)] });
+  push({ type: "live", agent: refFor("dev"), subagents: [prog("ag201", 1), prog("ag202", 2)] });
   frame();
   expect(Object.fromEntries(count.rows)).toEqual({ "202": 1 });
   expect(Object.fromEntries(count.profiled)).toEqual({});

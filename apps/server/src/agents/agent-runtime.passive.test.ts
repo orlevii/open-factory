@@ -1,6 +1,7 @@
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -17,8 +18,8 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -30,10 +31,10 @@ async function make(o: { spawned?: boolean } = {}) {
   n += 1;
   id = `p${n}`;
   if (o.spawned) {
-    await insertAgent(t.sql, { id: `lead${n}`, slug: `lead${n}` });
-    await insertAgent(t.sql, { id, slug: `pas${n}`, reportsTo: `lead${n}` });
+    await insertAgent(t.sql, { id: `lead${n}`, handle: `lead${n}` });
+    await insertAgent(t.sql, { id, handle: `pas${n}`, reportsTo: `lead${n}` });
     await t.sql`update agents set kind = 'ephemeral' where id = ${id}`;
-  } else await insertAgent(t.sql, { id, slug: `pas${n}` });
+  } else await insertAgent(t.sql, { id, handle: `pas${n}` });
   driver = new FakeDriver();
   forwarded.length = 0;
   const agent = await store.agentById(id);
@@ -48,7 +49,7 @@ async function make(o: { spawned?: boolean } = {}) {
     prepareStart: async (a) => ({
       credentialId: liveCredentialId(a),
       agentId: a.id,
-      slug: a.slug,
+      ref: a.id,
       cwd: "/w",
       env: {},
       claudeBin: "claude",
@@ -109,14 +110,14 @@ test("a later human message goes out as one batch with the notice first, then th
   const batch = driver.last.sent[1] ?? [];
   expect(batch.map((m) => [m.kind, m.from])).toEqual([
     ["system", "@factory"],
-    ["message", "@or"],
+    ["message", `<@${testRef("u1")}|or>`],
   ]);
 });
 
 test("a compact queued behind the passive notice still runs; the notice stays queued", async () => {
   await runIdle();
   await rt.postNotice("crons_stopped", "stopped");
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   await rt.settled();
   expect(driver.last.controls.map((c) => (c as { cmd: string }).cmd)).toContain("compact");
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);
@@ -126,7 +127,7 @@ test("a second notice of the type replaces the first: one pending row", async ()
   await notice();
   await store.createNotice({ toAgentId: id, notice: "crons_stopped", body: "newer" });
   const rows =
-    await t.sql`select body from messages where to_agent_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
+    await t.sql`select body from messages where to_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
   expect(rows).toEqual([{ body: "newer" }]);
 });
 
@@ -144,7 +145,7 @@ test("the Reaper may reap a spawned agent whose only queued item is the passive 
 });
 
 test("a queued report_config_changed never wakes the manager: not deliverable, no boot wake", async () => {
-  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
+  await insertAgent(t.sql, { id: `rep${n}`, handle: `rep${n}`, reportsTo: id });
   await store.createNotice({
     toAgentId: id,
     notice: "report_config_changed",
@@ -158,8 +159,8 @@ test("a queued report_config_changed never wakes the manager: not deliverable, n
 
 test("recordReportNotice on a running idle manager queues the notice without sending it", async () => {
   await runIdle();
-  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
-  await rt.recordReportNotice(`rep${n}`, "@hr", ["added skill tdd"]);
+  await insertAgent(t.sql, { id: `rep${n}`, handle: `rep${n}`, reportsTo: id });
+  await rt.recordReportNotice(`rep${n}`, "<@hr000000>", ["added skill tdd"]);
   expect(driver.last.sent).toHaveLength(1); // only the boot batch
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);
   expect(rt.hibernatable()).toBe(true);
@@ -168,7 +169,11 @@ test("recordReportNotice on a running idle manager queues the notice without sen
   await rt.settled();
   const batch = driver.last.sent[1] ?? [];
   expect(batch.map((m) => [m.kind, m.from, m.body])).toEqual([
-    ["system", "@factory", `@hr changed @rep${n}'s configuration:\n- added skill tdd`],
-    ["message", "@or", "hello again"],
+    [
+      "system",
+      "@factory",
+      `<@hr000000|unknown> changed <@${testRef(`rep${n}`)}|rep${n}>'s configuration:\n- added skill tdd`,
+    ],
+    ["message", `<@${testRef("u1")}|or>`, "hello again"],
   ]);
 });

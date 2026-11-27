@@ -32,7 +32,7 @@ import { ScheduleTime } from "./schedule-time";
 
 type Spec = { kind: "edit-schedule"; key: string; at?: string };
 
-const who = (a: ScheduleItem["createdBy"]) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
+const who = (a: ScheduleItem["createdBy"]) => `@${a.handle}`;
 
 function Description({ s }: { s: ScheduleItem }) {
   return (
@@ -138,8 +138,8 @@ function StateLine({ s, actionFailed }: { s: ScheduleItem; actionFailed: string 
       {s.pendingFiring && (
         <p>
           {s.state === "pending_errored"
-            ? `A run is waiting for @${s.target.slug}, which is errored. Edits apply from the next run.`
-            : `A run is waiting to be delivered to @${s.target.slug}. Edits apply from the next run.`}
+            ? `A run is waiting for @${s.target.handle}, which is errored. Edits apply from the next run.`
+            : `A run is waiting to be delivered to @${s.target.handle}. Edits apply from the next run.`}
         </p>
       )}
       {actionFailed && (
@@ -186,7 +186,7 @@ function Deleted({ s }: { s: ScheduleItem }) {
         <dl className="grid gap-3 text-sm">
           <div className="grid gap-0.5">
             <dt className="text-[0.8125rem] text-muted-foreground">Target</dt>
-            <dd className="font-mono">@{s.target.slug}</dd>
+            <dd className="font-mono">@{s.target.handle}</dd>
           </div>
           <div className="grid gap-0.5">
             <dt className="text-[0.8125rem] text-muted-foreground">When</dt>

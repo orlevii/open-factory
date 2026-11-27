@@ -1,6 +1,14 @@
-import { screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  mergePrincipals,
+  type PrincipalsCache,
+  principalsQueryOptions,
+} from "@/features/principals/api";
+import { principal } from "@/test/chat-fixtures";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { OutgoingMessage } from "./outgoing-message";
 import { rowMenuItems } from "./row-menu";
@@ -9,8 +17,23 @@ import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 
 const AT = "2026-11-23T10:00:00.000Z";
 const index = buildSpeakerIndex({
-  sessionAgent: { slug: "ada", displayName: "Ada", template: "dev", avatarVersion: null },
-  live: [{ slug: "x", displayName: "X", template: "dev", kind: "persistent", avatarVersion: null }],
+  sessionAgent: {
+    ref: refFor("ada"),
+    handle: "ada",
+    displayName: "Ada",
+    template: "dev",
+    avatarVersion: null,
+  },
+  live: [
+    {
+      ref: refFor("x"),
+      handle: "x",
+      displayName: "X",
+      template: "dev",
+      kind: "persistent",
+      avatarVersion: null,
+    },
+  ],
   ended: [],
   users: [],
 });
@@ -45,13 +68,7 @@ async function show(r: OutgoingRow) {
   renderInRouter(
     <TooltipProvider>
       <SpeakerContext value={index}>
-        <OutgoingMessage
-          slug="ada"
-          row={r}
-          showCall={false}
-          onToggleCall={() => {}}
-          rowProps={{}}
-        />
+        <OutgoingMessage row={r} showCall={false} onToggleCall={() => {}} rowProps={{}} />
       </SpeakerContext>
     </TooltipProvider>,
   );
@@ -213,4 +230,84 @@ test("the result's kind is matched to the argument whatever its case", async () 
   const line = document.querySelector("[data-speaker-line]") as HTMLElement;
   // An agent by the result's word, so a chip (beside Ada's own), though the index doesn't know it.
   expect(line.querySelectorAll("[data-agent-avatar]")).toHaveLength(2);
+});
+
+test("a send written with a mention, a ref or a plain handle matches its mentioned result by ref", async () => {
+  const bob = "<@b0b00001|bob>";
+  await show(
+    row(
+      [bob, "<@a1ce0001>", "carol"],
+      [
+        { to: bob, kind: "agent", status: "held", id: "m1", note: "held" },
+        { to: "<@a1ce0001|alice>", kind: "human", status: "inbox", id: "m2" },
+        {
+          to: "<@c4r01000|carol>",
+          kind: "agent",
+          status: "queued",
+          recipient_status: "idle",
+          id: "m3",
+        },
+      ],
+    ),
+  );
+  const card = screen.getByRole("article");
+  // A result's label is current; the call's stale label never shows.
+  expect(card).toHaveAccessibleName("Message from @ada to @bob, @alice, @carol");
+  expect(within(card).getByText("Held by the loop guard:")).toHaveTextContent("@bob");
+  expect(card.textContent).not.toContain("<@");
+  expect(
+    rowMenuItems(
+      row(
+        ["carol"],
+        [
+          {
+            to: "<@c4r01000|carol>",
+            kind: "agent",
+            status: "queued",
+            recipient_status: "idle",
+            id: "m3",
+          },
+        ],
+      ),
+      "ada",
+    ).find((i) => i.kind === "session"),
+  ).toMatchObject({ to: "c4r01000", label: "View in @carol's session" });
+});
+
+test("a recipient named by a result's mention shows its live handle after a rename", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData<PrincipalsCache>(principalsQueryOptions.queryKey, {
+    byRef: new Map([[refFor("bob"), principal(refFor("bob"), "bob")]]),
+    unknown: new Set(),
+  });
+  renderInRouter(
+    <QueryClientProvider client={qc}>
+      <TooltipProvider>
+        <SpeakerContext value={index}>
+          <OutgoingMessage
+            row={row(
+              ["bob"],
+              [
+                {
+                  to: `<@${refFor("bob")}|bob>`,
+                  kind: "agent",
+                  status: "queued",
+                  recipient_status: "idle",
+                  id: "m1",
+                },
+              ],
+            )}
+            showCall={false}
+            onToggleCall={() => {}}
+            rowProps={{}}
+          />
+        </SpeakerContext>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+  const line = (await screen.findByRole("article")).querySelector("[data-speaker-line]");
+  expect(within(line as HTMLElement).getByText("@bob")).toBeInTheDocument();
+  act(() => mergePrincipals(qc, [principal(refFor("bob"), "robert")]));
+  expect(await within(line as HTMLElement).findByText("@robert")).toBeInTheDocument();
+  expect(within(line as HTMLElement).queryByText("@bob")).toBeNull();
 });

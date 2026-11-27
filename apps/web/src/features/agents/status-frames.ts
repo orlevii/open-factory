@@ -84,7 +84,7 @@ function patched<T extends object>(a: T, p: Patch): T {
   return a;
 }
 
-/** Fold a batch of frames into the caches: the last `agent_status` per slug wins, the lists are
+/** Fold a batch of frames into the caches: the last `agent_status` per ref wins, the lists are
  *  written once, `["agents"]` is invalidated at most once, and the newest `supervisor` frame sets the
  *  running count. */
 export function applyStatusFrames(qc: QueryClient, frames: ServerMessage[]): void {
@@ -102,11 +102,11 @@ export function applyStatusFrames(qc: QueryClient, frames: ServerMessage[]): voi
   const before = new Map<string, AgentSummary[]>();
   for (const [, l] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] }))
     for (const a of l ?? [])
-      if (patches.has(a.slug)) before.set(a.slug, [...(before.get(a.slug) ?? []), a]);
+      if (patches.has(a.ref)) before.set(a.ref, [...(before.get(a.ref) ?? []), a]);
 
   let invalidateLists = false;
-  for (const [slug, p] of patches) {
-    const rows = before.get(slug);
+  for (const [ref, p] of patches) {
+    const rows = before.get(ref);
     if (!rows)
       invalidateLists = true; // not cached yet (frame beat the fetch, or a new agent)
     // Entering terminated moves it from the Active list to the Ended one: refetch both, once.
@@ -118,7 +118,7 @@ export function applyStatusFrames(qc: QueryClient, frames: ServerMessage[]): voi
       if (!l) return l;
       let out: AgentSummary[] | undefined;
       l.forEach((a, i) => {
-        const p = patches.get(a.slug);
+        const p = patches.get(a.ref);
         const next = p ? patched(a, p) : a;
         if (next === a) return;
         out ??= [...l];
@@ -127,13 +127,13 @@ export function applyStatusFrames(qc: QueryClient, frames: ServerMessage[]): voi
       return out ?? l;
     });
 
-  for (const [slug, p] of patches) {
-    if (qc.getQueryData<AgentDetail>(["agent", slug])) {
-      qc.setQueryData<AgentDetail>(["agent", slug], (d) =>
+  for (const [ref, p] of patches) {
+    if (qc.getQueryData<AgentDetail>(["agent", ref])) {
+      qc.setQueryData<AgentDetail>(["agent", ref], (d) =>
         d ? { ...d, agent: patched(d.agent, p) } : d,
       );
     } else {
-      void qc.invalidateQueries({ queryKey: ["agent", slug] });
+      void qc.invalidateQueries({ queryKey: ["agent", ref] });
     }
   }
   if (invalidateLists) void qc.invalidateQueries({ queryKey: ["agents"] });

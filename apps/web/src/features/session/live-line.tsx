@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { setWorkspacePin } from "./api";
 import { NETWORK_ERROR } from "./composer";
 import { formatInboxTime, formatResetTime, formatTime } from "./format";
-import { formatBy } from "./format-by";
 import { UnpinDialog } from "./unpin-dialog";
 
 export type LiveFact = {
@@ -28,15 +27,9 @@ function firstLine(text: string): string {
 }
 
 function terminatedText(agent: AgentSummary, now: Date): string {
-  const by = agent.terminatedBy ? formatBy(agent.terminatedBy) : null;
+  const by = agent.terminatedBy;
   const who =
-    by?.kind === "agent"
-      ? ` by @${by.slug}`
-      : by?.kind === "human"
-        ? ` by ${by.handle}`
-        : by?.kind === "ttl"
-          ? " after 3 days without activity"
-          : "";
+    by === undefined ? "" : by === null ? " after 3 days without activity" : ` by @${by.handle}`;
   const parts = [`Terminated${who}`];
   if (agent.terminatedAt) parts.push(formatInboxTime(new Date(agent.terminatedAt), now));
   if (agent.workspaceDeletedAt) parts.push("workspace deleted");
@@ -103,8 +96,8 @@ export function LiveLine({ fact, sessionOf }: { fact: LiveFact | null; sessionOf
       {sessionOf !== undefined && (
         // From the Chat: the fact's detail is in the session. Never shown in the Session itself.
         <Link
-          to="/agents/$slug/session"
-          params={{ slug: sessionOf }}
+          to="/agents/$ref/session"
+          params={{ ref: sessionOf }}
           className="hidden shrink-0 text-[0.8125rem] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline sm:block"
         >
           Open session
@@ -150,7 +143,7 @@ export function PinButton({
     Date.now() >= Date.parse(agent.workspaceGraceEndsAt);
 
   const request = async (pin: boolean) => {
-    const a = await setWorkspacePin(agent.slug, pin);
+    const a = await setWorkspacePin(agent.ref, pin);
     onAgent?.(a);
     setOutcome({ tone: "success", text: pin ? "Workspace pinned." : "Workspace unpinned." });
   };
@@ -203,7 +196,7 @@ export function PinButton({
         </div>
       )}
       <UnpinDialog
-        slug={agent.slug}
+        handle={agent.handle}
         open={confirm}
         onOpenChange={setConfirm}
         onConfirm={() => request(false)}

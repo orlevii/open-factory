@@ -5,6 +5,7 @@ import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -185,7 +186,7 @@ test("an agent_status frame pushed through the ws onMessage updates the agent ro
   mockApi({
     "GET /api/agents?": () =>
       json({
-        agents: [agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" })],
+        agents: [agentSummary({ handle: "dev", displayName: "Dev agent", status: "working" })],
         running: { count: 1 },
       }),
   });
@@ -195,7 +196,7 @@ test("an agent_status frame pushed through the ws onMessage updates the agent ro
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "idle",
       turnOpen: false,
       restartPending: false,
@@ -212,11 +213,11 @@ const liveAgents = () =>
     "GET /api/agents?": () =>
       json({
         agents: [
-          agentSummary({ slug: "dev", displayName: "Dev agent" }),
+          agentSummary({ handle: "dev", displayName: "Dev agent" }),
           agentSummary({
-            slug: "qa",
+            handle: "qa",
             displayName: "QA agent",
-            reportsTo: { kind: "agent", handle: "dev" },
+            reportsTo: { kind: "agent", ref: refFor("dev"), handle: "dev" },
           }),
         ],
         running: { count: 0 },
@@ -241,7 +242,7 @@ test("nav order: Inbox, Tasks, Templates, Skills, Schedules, Usage, Settings, th
 
 test("on a live agent's session the Agents row is not active and the agent row is", async () => {
   liveAgents();
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
   expect(row).toHaveAttribute("aria-current", "page");
   // The list lands for the tree and the sidebar's liveness select in separate notifications.
@@ -252,15 +253,15 @@ test("on a live agent's session the Agents row is not active and the agent row i
 
 test("a live agent's row is active on its Chat too, and links to the Chat", async () => {
   liveAgents();
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
   expect(row).toHaveAttribute("aria-current", "page");
-  expect(row).toHaveAttribute("href", "/agents/dev/chat");
+  expect(row).toHaveAttribute("href", `/agents/${refFor("dev")}/chat`);
 });
 
 test("on an ended agent's session the Agents row is active", async () => {
   liveAgents();
-  renderApp("/agents/gone/session", alice);
+  renderApp(`/agents/${refFor("gone")}/session`, alice);
   await screen.findByRole("tree", { name: "Agents" });
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
@@ -274,12 +275,12 @@ test("the Agents row is not active while the agents list is still loading, then 
     "GET /api/agents?": async () => {
       await gate;
       return json({
-        agents: [agentSummary({ slug: "dev", displayName: "Dev agent" })],
+        agents: [agentSummary({ handle: "dev", displayName: "Dev agent" })],
         running: { count: 0 },
       });
     },
   });
-  renderApp("/agents/gone/session", alice);
+  renderApp(`/agents/${refFor("gone")}/session`, alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   expect(agents).not.toHaveAttribute("aria-current");
   await act(async () => release?.());
@@ -289,7 +290,7 @@ test("the Agents row is not active while the agents list is still loading, then 
 test("on a live session the Agents row is active while the tree is collapsed", async () => {
   liveAgents();
   localStorage.setItem("of-tree-collapsed", "true");
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
   expect(screen.queryByRole("tree")).toBeNull();
@@ -320,13 +321,13 @@ test("Agents row: label links /agents, chevron collapses the whole tree (of-tree
   expect(await screen.findByRole("tree", { name: "Agents" })).toBeInTheDocument();
 });
 
-test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/badge-worthy avatars; tooltip 'Name · @slug · Status'", async () => {
+test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/badge-worthy avatars; tooltip 'Name · @handle · Status'", async () => {
   mockApi({
     "GET /api/agents?": () =>
       json({
         agents: [
-          agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" }),
-          agentSummary({ slug: "idle", displayName: "Idle agent", status: "idle" }),
+          agentSummary({ handle: "dev", displayName: "Dev agent", status: "working" }),
+          agentSummary({ handle: "idle", displayName: "Idle agent", status: "idle" }),
         ],
         running: { count: 1 },
       }),
@@ -339,7 +340,7 @@ test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/ba
     within(rail)
       .getAllByRole("link")
       .map((l) => l.getAttribute("href")),
-  ).toEqual(["/agents/dev/chat"]);
+  ).toEqual([`/agents/${refFor("dev")}/chat`]);
   const nav = screen.getByRole("navigation", { name: "Main" });
   const agentsIcon = screen.getByRole("link", { name: "Agents" });
   expect(agentsIcon).toHaveAttribute("href", "/agents");

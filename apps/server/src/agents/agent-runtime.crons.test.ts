@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -16,8 +16,8 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -25,7 +25,7 @@ let driver: FakeDriver;
 let rt: AgentRuntime;
 async function make(runtime: "local" | "docker" = "local") {
   n += 1;
-  await insertAgent(t.sql, { id: `c${n}`, slug: `cron${n}` });
+  await insertAgent(t.sql, { id: `c${n}`, handle: `cron${n}` });
   if (runtime === "docker") await t.sql`update agents set runtime = 'docker' where id = ${`c${n}`}`;
   driver = new FakeDriver();
   const agent = await store.agentById(`c${n}`);
@@ -40,7 +40,7 @@ async function make(runtime: "local" | "docker" = "local") {
     prepareStart: async (a) => ({
       credentialId: liveCredentialId(a),
       agentId: a.id,
-      slug: a.slug,
+      ref: a.id,
       cwd: "/w",
       env: {},
       claudeBin: "claude",

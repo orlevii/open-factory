@@ -3,8 +3,10 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
+import { principal } from "@/test/chat-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { hostGroup, library, skill, source, sourceGroup } from "../fixtures";
 
@@ -91,6 +93,7 @@ async function open(
     "GET /api/library/sources/skills": () => json(view),
     "GET /api/library/sources/other": () => json(detail("other", { skills: ["lint"] })),
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
+    "GET /api/principals": () => json({ principals: [principal(refFor("ana"), "ana")] }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
   });
   extra(mocks);
@@ -301,7 +304,10 @@ test("a refused update shows in the outcome line with its users as links", async
   expect(line?.textContent).toMatch(
     /^Update would remove skill gone, used by template dev, @ana\.$/,
   );
-  expect(screen.getByRole("link", { name: "@ana" })).toHaveAttribute("href", "/agents/ana");
+  expect(await screen.findByRole("link", { name: "@ana" })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("ana")}`,
+  );
 });
 
 test("Remove source is aria-disabled while the source is used, pointing at the reason, and stays focusable", async () => {

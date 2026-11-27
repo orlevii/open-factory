@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { sendMessagesBodySchema } from "@open-factory/shared";
+import { type Db, schema } from "@open-factory/db";
+import { refOf, sendMessagesBodySchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
@@ -8,17 +8,26 @@ import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { spawnerHolds } from "../agents/start.ts";
 import type { Config } from "../config.ts";
-import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
-import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
+import {
+  type AgentRecord,
+  agentRecords,
+  createPrincipal,
+  HandleTakenError,
+  mentionOfPrincipal,
+  principalById,
+  principalsByHandles,
+} from "../principals/principal-store.ts";
+import { resolveText, UnknownMentionsError } from "../principals/principal-text.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import { spawnHandle } from "./handle.ts";
 import { droppedNote, type Inherited, inheritFrom, readDenyRules } from "./inherit.ts";
 import { maySpawn } from "./may-spawn.ts";
-import { spawnSlug } from "./slug.ts";
 
 type Template = Awaited<ReturnType<TemplateIndex["loadValid"]>>;
 type Granted = Extract<Inherited, { ok: true }>;
@@ -27,9 +36,9 @@ type Refused = { ok: false; message: string };
 const SHUTTING_DOWN = "The factory is shutting down; spawn again after it restarts.";
 const CANT_SPAWN = "You can't spawn agents.";
 const fail = (message: string): Refused => ({ ok: false, message });
-const taken = (slug: string) => fail(`@${slug} is taken; pick another suffix or leave it out.`);
+const taken = (handle: string) => fail(`@${handle} is taken; pick another suffix or leave it out.`);
 /** I2 §6.2: spawning follows the running process's config; a tool call always has one, so this is a guard. */
-const notRunning = (slug: string) => fail(`@${slug} isn't running.`);
+const notRunning = (handle: string) => fail(`@${handle} isn't running.`);
 
 /**
  * `spawn_agent` (S7 §5.2): pre-checks without a lock, materialize outside any lock, then one locked transaction that
@@ -53,6 +62,8 @@ export class SpawnService {
       log: RuntimeLog;
       /** The closing latch (spec §5.2 step 1). */
       closing(): boolean;
+      /** Tells the browsers about the new agent once its transaction has committed. */
+      publishPrincipal: PublishPrincipal;
       random?: () => string;
       now?: () => number;
     },
@@ -66,7 +77,7 @@ export class SpawnService {
     if (!caller) return fail(CANT_SPAWN);
     // I2 §6.2: can_spawn is what the running process started with.
     const started = this.d.runtimes.startedOf(caller.id);
-    if (!started) return notRunning(caller.slug);
+    if (!started) return notRunning(caller.handle);
     if (!maySpawn(caller, started.config)) return fail(CANT_SPAWN);
     if (!started.config.canSpawn.includes(args.template))
       return fail(`You can't spawn template ${args.template}.`);
@@ -74,14 +85,29 @@ export class SpawnService {
     try {
       current = await this.d.resolver.effective(caller);
     } catch (err) {
-      this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
+      this.d.log.warn({ err, agent: caller.handle }, "resolving the spawner's config failed");
       return fail(`Your configuration can't be read; ask your manager to fix it.`);
     }
-    const desc = args.description.trim();
-    if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
+    const rawDesc = args.description.trim();
+    if (!rawDesc || rawDesc.length > 500) return fail("Give a description of 1 to 500 characters.");
     const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
     if (!body.success) return fail(body.error.issues[0]?.message ?? "The prompt is invalid.");
-    const prompt = body.data;
+    // Spec §4.3: mentions in the description and the brief are stored as `<@ref>`; an unknown ref refuses the spawn.
+    let desc: string;
+    let prompt: string;
+    const warnings: string[] = [];
+    try {
+      const [d, p] = await Promise.all([
+        resolveText(this.d.db, rawDesc, "agent"),
+        resolveText(this.d.db, body.data, "agent"),
+      ]);
+      desc = d.text;
+      prompt = p.text;
+      warnings.push(...new Set([...d.warnings, ...p.warnings]));
+    } catch (e) {
+      if (e instanceof UnknownMentionsError) return fail(e.message);
+      throw e;
+    }
     let tpl: Template;
     try {
       tpl = await this.d.templates.loadValid(args.template);
@@ -92,29 +118,31 @@ export class SpawnService {
     const pre = await this.check(caller, started, current, tpl, this.d.db);
     if (!pre.ok) return pre;
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
-      const named = spawnSlug(args.template, args.suffix, this.d.random);
+      const named = spawnHandle(args.template, args.suffix, this.d.random);
       if (!named.ok) return fail(named.message);
-      if (await handleKind(this.d.db, named.slug)) {
-        if (named.explicit) return taken(named.slug);
+      if ((await principalsByHandles(this.d.db, [named.handle])).size) {
+        if (named.explicit) return taken(named.handle);
         continue;
       }
+      // The folder is named by the ref, which the id fixes before any row exists (spec §4.4); the principal is
+      // created from this id only once nothing can refuse any more.
+      const id = randomUUID();
+      const ref = refOf(id);
       const made = await this.materialize(
-        named.slug,
+        ref,
+        named.handle,
         args.template,
         desc,
         tpl,
         caller,
         pre.inherited,
       );
-      if (made === "taken") {
-        if (named.explicit) return taken(named.slug);
-        continue;
-      }
       if (made !== "ok") return made;
       const done = await this.insert(
         caller,
         current,
-        named.slug,
+        id,
+        named.handle,
         args.template,
         desc,
         prompt,
@@ -122,10 +150,10 @@ export class SpawnService {
         toolUseId,
       );
       if (done === "taken") {
-        if (named.explicit) return taken(named.slug);
+        if (named.explicit) return taken(named.handle);
         continue;
       }
-      return done;
+      return done.ok && warnings.length ? { ...done, warnings } : done;
     }
     return fail(`Couldn't find a free name for ${args.template}-xxxx; pass a suffix.`);
   }
@@ -136,7 +164,7 @@ export class SpawnService {
    * `spawnerHolds`).
    */
   private async check(
-    spawner: AgentRow,
+    spawner: AgentRecord,
     started: Effective,
     current: Effective,
     tpl: Template,
@@ -167,44 +195,59 @@ export class SpawnService {
     return { ok: true, inherited };
   }
 
-  /** S4's materialize under the workspace lock. `folder_exists` is a collision; any other failure removes the folder. */
+  /** S4's materialize under the workspace lock. `folder_exists` leaves the folder alone; any other failure removes it. */
   private async materialize(
-    slug: string,
+    ref: string,
+    handle: string,
     template: string,
     description: string,
     tpl: Template,
-    caller: AgentRow,
+    caller: AgentRecord,
     inherited: Granted,
-  ): Promise<"ok" | "taken" | Refused> {
+  ): Promise<"ok" | Refused> {
     const { workspace } = this.d;
     try {
-      await workspace.lock.run(slug, () =>
-        workspace.materialize(slug, slug, tpl, {
-          slug,
-          displayName: displayName(tpl, slug, template),
+      const spawner = await principalById(this.d.db, caller.id);
+      if (!spawner) throw new Error(`No principal ${caller.id}`);
+      await workspace.lock.run(ref, () =>
+        workspace.materialize(ref, tpl, {
+          handle,
+          displayName: displayName(tpl, handle, template),
           description,
           template,
           config: tpl.config,
-          manager: { kind: "agent", slug: caller.slug, displayName: caller.displayName },
+          manager: {
+            kind: "agent",
+            ref: spawner.ref,
+            handle: spawner.handle,
+            displayName: caller.displayName,
+          },
           grants: inherited.grants.map((g) => ({ name: g.name, hostPath: g.hostPath })),
         }),
       );
       return "ok";
     } catch (err) {
       // folder_exists: the folder isn't ours (a crash's leftover or a human's); never remove it.
-      if (err instanceof FieldError && err.code === "folder_exists") return "taken";
-      await this.discard(slug);
+      if (!(err instanceof FieldError && err.code === "folder_exists")) await this.discard(ref);
+      if (err instanceof FieldError && err.code === "folder_exists") {
+        this.d.log.error(
+          { err, agent: handle },
+          "a spawned agent's folder already exists; leaving it",
+        );
+        return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
+      }
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
-      this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
+      this.d.log.error({ err, agent: handle }, "materializing a spawned agent failed");
+      return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
     }
   }
 
   /** §5.2 step 4: one transaction under the spawner's row lock; a failed re-check removes the folder. */
   private async insert(
-    caller: AgentRow,
+    caller: AgentRecord,
     current: Effective,
-    slug: string,
+    newId: string,
+    handle: string,
     template: string,
     description: string,
     prompt: string,
@@ -212,11 +255,10 @@ export class SpawnService {
     toolUseId: string | null,
   ): Promise<SpawnResult | "taken"> {
     const { db, store, router } = this.d;
-    const id = randomUUID();
     const at = new Date(this.now());
     type Done = {
       ok: true;
-      child: AgentRow;
+      child: AgentRecord;
       brief: PendingRow;
       peers: PendingRow[];
       inherited: Granted;
@@ -225,16 +267,14 @@ export class SpawnService {
     try {
       out = await db.transaction(async (tx): Promise<Done | Refused | "taken"> => {
         // Lock order (§5.7): the spawner's row first, FOR NO KEY UPDATE (never FOR UPDATE), then message rows.
-        const [spawner] = await tx
-          .select()
-          .from(schema.agents)
+        const [spawner] = await agentRecords(tx)
           .where(eq(schema.agents.id, caller.id))
-          .for("no key update");
+          .for("no key update", { of: schema.agents });
         if (this.d.closing()) return fail(SHUTTING_DOWN);
         if (!spawner) return fail(CANT_SPAWN);
         // Re-read `started` too: the process may have exited or restarted on another config during materialize.
         const started = this.d.runtimes.startedOf(spawner.id);
-        if (!started) return notRunning(spawner.slug);
+        if (!started) return notRunning(caller.handle);
         if (!maySpawn(spawner, started.config)) return fail(CANT_SPAWN);
         if (!started.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
@@ -244,14 +284,18 @@ export class SpawnService {
         // own start re-derives everything from its spawner (`deriveInheritance`, the stricter of started and current).
         const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
-        // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.
-        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
-        const [child] = await tx
+        // Create the principal only once nothing can refuse any more: a refusal returns and commits, which would orphan it.
+        const principal = await createPrincipal(tx, "agent", handle, () => newId).catch((e) => {
+          if (e instanceof HandleTakenError) return null;
+          throw e;
+        });
+        if (!principal) return "taken";
+        const id = principal.id;
+        const [inserted] = await tx
           .insert(schema.agents)
           .values({
             id,
-            slug,
-            displayName: displayName(tpl, slug, template),
+            displayName: displayName(tpl, handle, template),
             description,
             template,
             // A spawned agent can't be configured: its overlay is always empty (I2 §6.1).
@@ -264,7 +308,8 @@ export class SpawnService {
             createdAt: at,
           })
           .returning();
-        if (!child) throw new Error("inserting the spawned agent returned no row");
+        if (!inserted) throw new Error("inserting the spawned agent returned no row");
+        const child = { ...inserted, handle, ref: refOf(id) };
         if (c.inherited.grants.length)
           await tx
             .insert(schema.agentProjectGrants)
@@ -273,14 +318,19 @@ export class SpawnService {
           {
             from: { agentId: spawner.id },
             toAgentId: id,
-            recipients: [`@${slug}`],
+            recipientIds: [id],
             body: prompt,
             urgent: false,
             fromToolUseId: toolUseId,
           },
           tx,
         );
-        await store.append(id, null, { type: "spawned", by: spawner.slug, template }, tx);
+        await store.append(
+          id,
+          null,
+          { type: "spawned", by: await mentionOfPrincipal(tx, spawner.id), template },
+          tx,
+        );
         const peers = await router.persistPeerEvents(
           tx,
           id,
@@ -291,46 +341,43 @@ export class SpawnService {
         return { ok: true, child, brief, peers, inherited: c.inherited };
       });
     } catch (err) {
-      // Lost the agents.slug unique index to a concurrent claimer that committed first: the workspace is theirs now.
-      if (isSlugUnique(err)) {
-        await this.discardUnlessWon(slug);
-        return "taken";
-      }
-      await this.discard(slug);
-      this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
+      await this.discard(refOf(newId));
+      this.d.log.error({ err, agent: handle }, "inserting a spawned agent failed");
+      return fail(`Setting up @${handle} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
-      // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.
-      await this.discardUnlessWon(slug);
+      // The folder is named by this spawn's own ref, so it is ours whoever won the handle.
+      await this.discard(refOf(newId));
       return out;
     }
     if (!out.ok) {
-      await this.discard(slug);
+      await this.discard(refOf(newId));
       return out;
     }
+    await this.d.publishPrincipal(out.child.id);
     // §5.2 step 5: the status before the hand-off; both hand-offs are enqueued after boot, never awaited.
     const status = await router.handOffBrief(out.brief, out.child);
     router.handOffRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
-    return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
-  }
-
-  /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */
-  private async discardUnlessWon(slug: string): Promise<void> {
-    if (await this.d.store.agentBySlug(slug)) return;
-    await this.discard(slug);
+    return {
+      ok: true,
+      handle,
+      mention: await store.agentMention(out.child.id),
+      agentId: out.child.id,
+      status,
+      ...(note ? { note } : {}),
+    };
   }
 
   /** Best effort: the folder was made by this spawn's materialize. */
-  private async discard(slug: string): Promise<void> {
+  private async discard(ref: string): Promise<void> {
     try {
-      await this.d.workspace.lock.run(slug, () => this.d.workspace.discard(slug));
+      await this.d.workspace.lock.run(ref, () => this.d.workspace.discard(ref));
     } catch (err) {
-      this.d.log.error({ err, agent: slug }, "removing a refused spawn's folder failed");
+      this.d.log.error({ err, agent: ref }, "removing a refused spawn's folder failed");
     }
   }
 }
 
-const displayName = (tpl: Template, slug: string, template: string) =>
-  `${tpl.config.displayName} · ${slug.slice(template.length + 1)}`;
+const displayName = (tpl: Template, handle: string, template: string) =>
+  `${tpl.config.displayName} · ${handle.slice(template.length + 1)}`;

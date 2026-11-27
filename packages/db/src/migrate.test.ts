@@ -11,7 +11,7 @@ afterAll(async () => {
   await tdb.drop();
 });
 
-test("migrate creates auth tables and is idempotent; handle is unique", async () => {
+test("migrate creates auth tables and is idempotent; a principal's handle and ref are unique", async () => {
   await migrate(tdb.url, MIGRATIONS_DIR);
   await migrate(tdb.url, MIGRATIONS_DIR); // second run is a no-op
   const { sql, close } = createDb(tdb.url);
@@ -21,11 +21,13 @@ test("migrate creates auth tables and is idempotent; handle is unique", async ()
     expect(rows.map((r) => r.table_name)).toEqual(
       expect.arrayContaining(["accounts", "sessions", "users", "verifications"]),
     );
-    await sql`insert into handles (handle, kind) values ('dup','user')`;
-    await sql`insert into users (id, name, email, handle) values ('1', 'A', 'a@x.io', 'dup')`;
+    await sql`insert into principals (id, kind, handle, ref) values ('1', 'human', 'dup', 'aaaaaaaa')`;
     await expect(
-      sql`insert into users (id, name, email, handle) values ('2', 'B', 'b@x.io', 'dup')`,
-    ).rejects.toThrow(/users_handle_unique/);
+      sql`insert into principals (id, kind, handle, ref) values ('2', 'human', 'dup', 'bbbbbbbb')`,
+    ).rejects.toThrow(/principals_handle_unique/);
+    await expect(
+      sql`insert into principals (id, kind, handle, ref) values ('3', 'human', 'other', 'aaaaaaaa')`,
+    ).rejects.toThrow(/principals_ref_unique/);
   } finally {
     await close();
   }

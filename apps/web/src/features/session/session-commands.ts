@@ -3,29 +3,29 @@
  * doesn't import the session's components (they stay in the session route's chunk).
  */
 
-/** Each mounted composer's focus, by slug; and a request for a composer not mounted yet. */
+/** Each mounted composer's focus, by agentRef; and a request for a composer not mounted yet. */
 const composerFocus = new Map<string, () => void>();
-let wanted: { slug: string; at: number } | null = null;
+let wanted: { agentRef: string; at: number } | null = null;
 /** A request waits this long for its composer to mount (a session page still loading). */
 const WANTED_MS = 5000;
 
 /** Focuses the agent's composer: now if it is mounted, else as soon as it mounts (the palette's
  *  ⇧Enter opens the session and focuses the box). */
-export function requestComposerFocus(slug: string) {
-  const focus = composerFocus.get(slug);
-  wanted = focus ? null : { slug, at: Date.now() };
+export function requestComposerFocus(agentRef: string) {
+  const focus = composerFocus.get(agentRef);
+  wanted = focus ? null : { agentRef, at: Date.now() };
   focus?.();
 }
 
 /** Registers a mounted composer's focus (and honours a pending request); returns the remover. */
-export function registerComposerFocus(slug: string, focus: () => void): () => void {
-  composerFocus.set(slug, focus);
-  if (wanted?.slug === slug) {
+export function registerComposerFocus(agentRef: string, focus: () => void): () => void {
+  composerFocus.set(agentRef, focus);
+  if (wanted?.agentRef === agentRef) {
     if (Date.now() - wanted.at < WANTED_MS) focus();
     wanted = null;
   }
   return () => {
-    if (composerFocus.get(slug) === focus) composerFocus.delete(slug);
+    if (composerFocus.get(agentRef) === focus) composerFocus.delete(agentRef);
   };
 }
 
@@ -44,17 +44,17 @@ export function registerAgentDetailsOpener(open: () => void): () => void {
   };
 }
 
-/** Each mounted timeline's re-pin, by slug: sending from the composer follows the bottom again. */
+/** Each mounted timeline's re-pin, by agentRef: sending from the composer follows the bottom again. */
 const timelineRepin = new Map<string, () => void>();
 
 /** Scrolls the agent's timeline to the bottom and pins it (U3 §8.1); a no-op if none is mounted. */
-export function repinTimeline(slug: string) {
-  timelineRepin.get(slug)?.();
+export function repinTimeline(agentRef: string) {
+  timelineRepin.get(agentRef)?.();
 }
 
-export function registerTimelineRepin(slug: string, repin: () => void): () => void {
-  timelineRepin.set(slug, repin);
+export function registerTimelineRepin(agentRef: string, repin: () => void): () => void {
+  timelineRepin.set(agentRef, repin);
   return () => {
-    if (timelineRepin.get(slug) === repin) timelineRepin.delete(slug);
+    if (timelineRepin.get(agentRef) === repin) timelineRepin.delete(agentRef);
   };
 }

@@ -3,14 +3,14 @@ import { type Db, schema } from "@open-factory/db";
 import type { ProjectSummary } from "@open-factory/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
-import { inUseViolation, pgCode, tags } from "../db-errors.ts";
+import { inUseViolation, mentions, pgCode } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { resolveHostFolder } from "../host-path.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 
 type ProjectRow = typeof schema.projects.$inferSelect;
-type Holder = { id: string; slug: string; spawnedBy?: string };
+type Holder = { id: string; handle: string; spawnedBy?: string };
 interface Grants {
   active: Holder[];
   archived: Holder[];
@@ -30,13 +30,14 @@ export class ProjectService {
     const rows = await this.d.db
       .select({
         id: schema.agents.id,
-        slug: schema.agents.slug,
+        handle: schema.principals.handle,
         archivedAt: schema.agents.archivedAt,
         kind: schema.agents.kind,
         reportsTo: schema.agents.reportsTo,
       })
       .from(schema.agentProjectGrants)
       .innerJoin(schema.agents, eq(schema.agents.id, schema.agentProjectGrants.agentId))
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(
         and(
           eq(schema.agentProjectGrants.projectId, projectId),
@@ -51,24 +52,25 @@ export class ProjectService {
       spawnerIds.length
         ? (
             await this.d.db
-              .select({ id: schema.agents.id, slug: schema.agents.slug })
+              .select({ id: schema.agents.id, handle: schema.principals.handle })
               .from(schema.agents)
+              .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
               .where(inArray(schema.agents.id, spawnerIds))
-          ).map((a) => [a.id, a.slug])
+          ).map((a) => [a.id, a.handle])
         : [],
     );
     const holders: (Holder & { archivedAt: Date | null })[] = rows.map((r) => ({
       id: r.id,
-      slug: r.slug,
+      handle: r.handle,
       archivedAt: r.archivedAt,
       ...(r.kind === "ephemeral" && r.reportsTo && spawners.get(r.reportsTo)
         ? { spawnedBy: spawners.get(r.reportsTo) }
         : {}),
     }));
-    const bySlug = (a: Holder, b: Holder) => a.slug.localeCompare(b.slug);
+    const byHandle = (a: Holder, b: Holder) => a.handle.localeCompare(b.handle);
     return {
-      active: holders.filter((r) => !r.archivedAt).sort(bySlug),
-      archived: holders.filter((r) => r.archivedAt).sort(bySlug),
+      active: holders.filter((r) => !r.archivedAt).sort(byHandle),
+      archived: holders.filter((r) => r.archivedAt).sort(byHandle),
     };
   }
 
@@ -88,8 +90,8 @@ export class ProjectService {
     return {
       name: row.name,
       hostPath: row.hostPath,
-      grantedTo: g.active.map((a) => a.slug),
-      archivedGrantedTo: g.archived.map((a) => a.slug),
+      grantedTo: g.active.map((a) => a.handle),
+      archivedGrantedTo: g.archived.map((a) => a.handle),
       templates: all
         .filter((t) => t.projects.includes(row.name))
         .map((t) => t.name)
@@ -176,7 +178,7 @@ export class ProjectService {
     );
     results.forEach((r, i) => {
       if (r.status === "rejected")
-        this.d.log?.warn({ slug: holders[i]?.slug }, "restart after project change failed");
+        this.d.log?.warn({ handle: holders[i]?.handle }, "restart after project change failed");
     });
     return this.summarize(updated);
   }
@@ -188,19 +190,19 @@ export class ProjectService {
       .filter((t) => t.projects.includes(name))
       .map((t) => t.name)
       .sort();
-    const grantedTo = g.active.map((a) => a.slug);
-    const archivedGrantedTo = g.archived.map((a) => a.slug);
-    const direct = g.active.filter((a) => !a.spawnedBy).map((a) => a.slug);
+    const grantedTo = g.active.map((a) => a.handle);
+    const archivedGrantedTo = g.archived.map((a) => a.handle);
+    const direct = g.active.filter((a) => !a.spawnedBy).map((a) => a.handle);
     const message = [
-      direct.length ? `Granted to ${tags(direct)}. Remove the grant first.` : "",
+      direct.length ? `Granted to ${mentions(direct)}. Remove the grant first.` : "",
       ...g.active
         .filter((a) => a.spawnedBy)
         .map(
           (a) =>
-            `Granted to @${a.slug} (spawned by @${a.spawnedBy}); change @${a.spawnedBy}'s grants or terminate it first.`,
+            `Granted to @${a.handle} (spawned by @${a.spawnedBy}); change @${a.spawnedBy}'s grants or terminate it first.`,
         ),
       archivedGrantedTo.length
-        ? `Archived agents ${tags(archivedGrantedTo)} still hold a grant.`
+        ? `Archived agents ${mentions(archivedGrantedTo)} still hold a grant.`
         : "",
     ]
       .filter(Boolean)

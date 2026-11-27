@@ -1,20 +1,19 @@
 import type postgres from "postgres";
-import { claimTestHandleSql, testManagerUserIdSql } from "../../test/handles.ts";
+import { principalSql, testManagerUserIdSql } from "../../test/principals.ts";
 
 /** A minimal agent row (plus a credential row with a dummy blob) for tests that don't start real agents. */
 export async function insertAgent(
   sql: postgres.Sql,
   a: {
     id: string;
-    slug: string;
+    handle: string;
     sessionId?: string | null;
     status?: string;
     /** Pins the warm window in the overlay (I2: `agents.config` is the overlay); omitted by default. */
     warmWindowMinutes?: number;
     displayName?: string;
-    reportsTo?: string | null;
-    /** A persistent agent without a `reportsTo` reports to this user; the oldest user when omitted. */
-    reportsToUser?: string;
+    /** The manager's principal id: the spawner of an ephemeral agent; the oldest user when omitted. */
+    reportsTo?: string;
     archived?: boolean;
     archivedAt?: Date | string | null;
     errorKind?: string | null;
@@ -27,16 +26,13 @@ export async function insertAgent(
   const credId = `cred-${a.id}`;
   await sql`insert into credentials (id, name, kind, value_enc)
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
-  await claimTestHandleSql(sql, a.slug, "agent");
+  await sql.unsafe(principalSql(a.id, "agent", a.handle));
   const kind = a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent");
-  const reportsToUser =
-    kind === "persistent" && !a.reportsTo
-      ? (a.reportsToUser ?? (await testManagerUserIdSql(sql)))
-      : null;
-  await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, reports_to_user, archived_at, error_kind, kind, terminated_at, terminated_by)
-            values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
+  const reportsTo = a.reportsTo ?? (await testManagerUserIdSql(sql));
+  await sql`insert into agents (id, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
+            values (${a.id}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
                     'test', ${JSON.stringify(a.warmWindowMinutes !== undefined ? { template: { warm_window_minutes: a.warmWindowMinutes } } : {})}::jsonb, 'local', ${credId},
-                    ${a.reportsTo ?? null}, ${reportsToUser}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${kind}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
+                    ${reportsTo}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${kind}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, null)`;
 }
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
@@ -68,7 +64,7 @@ export async function insertTurn(
                     ${t.credentialId ?? null})`;
 }
 
-/** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are user `u1` unless given. */
+/** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are principal `u1` unless given. */
 export async function insertSchedule(
   sql: postgres.Sql,
   s: {
@@ -78,19 +74,17 @@ export async function insertSchedule(
     runAt?: Date;
     timezone?: string;
     body?: string;
-    createdByUserId?: string | null;
-    createdByAgentId?: string | null;
+    createdById?: string;
     nextRunAt?: Date | null;
     pausedAt?: Date | null;
     deletedAt?: Date | null;
   },
 ): Promise<void> {
-  const byAgent = s.createdByAgentId ?? null;
-  const byUser = byAgent ? null : (s.createdByUserId ?? "u1");
-  await sql`insert into schedules (id, target_agent_id, cron, run_at, timezone, body, created_by_agent_id, created_by_user_id,
-                                   body_author_agent_id, body_author_user_id, next_run_at, paused_at, deleted_at)
+  const by = s.createdById ?? "u1";
+  await sql`insert into schedules (id, target_agent_id, cron, run_at, timezone, body, created_by_id, body_author_id,
+                                   next_run_at, paused_at, deleted_at)
             values (${s.id}, ${s.targetAgentId}, ${s.cron ?? (s.runAt ? null : "0 9 * * *")}, ${iso(s.runAt)},
-                    ${s.timezone ?? "UTC"}, ${s.body ?? "Review"}, ${byAgent}, ${byUser}, ${byAgent}, ${byUser},
+                    ${s.timezone ?? "UTC"}, ${s.body ?? "Review"}, ${by}, ${by},
                     ${iso(s.nextRunAt)}, ${iso(s.pausedAt)}, ${iso(s.deletedAt)})`;
 }
 
@@ -102,8 +96,7 @@ export async function insertScheduledMessage(
     toAgentId: string;
     scheduleId: string;
     body?: string;
-    authorUserId?: string | null;
-    authorAgentId?: string | null;
+    authorId?: string;
     dueAt?: Date;
     firings?: number;
     late?: boolean;
@@ -111,10 +104,8 @@ export async function insertScheduledMessage(
     createdAt?: Date;
   },
 ): Promise<void> {
-  const byAgent = m.authorAgentId ?? null;
-  const byUser = byAgent ? null : (m.authorUserId ?? "u1");
-  await sql`insert into messages (id, kind, to_agent_id, schedule_id, author_agent_id, author_user_id, due_at, firings, late, body, state, created_at)
-            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${byAgent}, ${byUser},
+  await sql`insert into messages (id, kind, to_id, schedule_id, author_id, due_at, firings, late, body, state, created_at)
+            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${m.authorId ?? "u1"},
                     ${iso(m.dueAt ?? new Date("2026-11-23T08:00:00Z"))}, ${m.firings ?? 1}, ${m.late ?? false},
                     ${m.body ?? "Review"}, ${m.state ?? "pending"}, ${iso(m.createdAt ?? new Date())})`;
 }

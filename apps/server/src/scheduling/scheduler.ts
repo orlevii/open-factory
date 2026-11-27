@@ -5,6 +5,7 @@ import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type GuardResult, type LoopGuard, pairOf } from "../messaging/loop-guard.ts";
+import { principalById } from "../principals/principal-store.ts";
 import { backoffMs, DUE_BATCH, LATE_MS, TICK_MAX_MS, TICK_MIN_MS } from "./limits.ts";
 import type { ScheduleStore } from "./schedule-store.ts";
 
@@ -275,7 +276,10 @@ export class Scheduler {
       }
       await this.d.schedules.update(tx, row.id, { ...base, lastFiredAt: now });
       // I8 §6.3: an agent-authored firing into another agent counts toward the pair; only a new row is checked.
-      const author = row.bodyAuthorAgentId;
+      const author =
+        (await principalById(tx, row.bodyAuthorId))?.kind === "agent"
+          ? row.bodyAuthorId
+          : undefined;
       let guard: GuardResult | undefined;
       if (author && author !== row.targetAgentId)
         await this.d.loopGuard.lockPairs(tx, [pairOf(author, row.targetAgentId)]);

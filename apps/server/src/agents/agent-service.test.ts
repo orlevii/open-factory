@@ -13,13 +13,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
+import { refOf } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import * as principals from "../messaging/principals.ts";
+import { agentRecords, principalById, principalsByHandles } from "../principals/principal-store.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
-import { claimTestHandleSql, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { principalSql, seedTestPrincipal, seedTestUser } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
@@ -38,17 +39,21 @@ function writeTemplate(name: string, y: string) {
   writeFileSync(path.join(d, "template.yaml"), y);
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
 }
-const idOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const idOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r.id;
 };
+
+const refFor = async (handle: string) => refOf(await idOf(handle));
+const workdirOf = async (handle: string) => path.join(home, "agents", await refFor(handle));
+const stateOf = async (handle: string) => path.join(home, "state", "agents", await refFor(handle));
 
 beforeAll(async () => {
   fake = createFakeClaude({ scenario: "reply" });
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
   home = t.factoryHome;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -69,16 +74,17 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
   const a = await svc.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   expect(a).toMatchObject({
-    slug: "lead",
+    ref: await refFor("lead"),
+    handle: "lead",
     template: "lead",
     runtime: "local",
     credential: "work",
@@ -86,21 +92,22 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
     depth: 0,
     archivedAt: null,
   });
-  expect(existsSync(path.join(home, "agents/lead/AGENTS.md"))).toBe(true);
+  expect(existsSync(path.join(await workdirOf("lead"), "AGENTS.md"))).toBe(true);
+  expect(existsSync(path.join(home, "agents", "lead"))).toBe(false);
   const b = await svc.create(
     {
       template: "lead",
-      slug: "dev-1",
+      handle: "dev-1",
       displayName: "Dev",
       description: "",
       reportsTo: "lead",
       credential: "work",
       projects: [],
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   expect(b).toMatchObject({ projects: [], depth: 1 });
-  expect((await svc.list("exclude")).agents.map((x) => x.slug)).toEqual(["lead", "dev-1"]);
+  expect((await svc.list("exclude")).agents.map((x) => x.handle)).toEqual(["lead", "dev-1"]);
 });
 
 test("summaries carry the template avatarVersion", async () => {
@@ -114,17 +121,17 @@ test("summaries carry the template avatarVersion", async () => {
   const [v, w] = await versions();
   expect(v).toMatch(/^\d+-6$/);
   expect(w).toBe(v);
-  expect((await svc.summary("dev-1")).avatarVersion).toBe(v);
+  expect((await svc.summary(await refFor("dev-1"))).avatarVersion).toBe(v);
   rmSync(avatar);
   symlinkSync(path.join(home, "templates/lead/AGENTS.md"), avatar);
   expect(await versions()).toEqual([null, null]);
   rmSync(avatar);
   expect(await versions()).toEqual([null, null]);
-  expect((await svc.summary("lead")).avatarVersion).toBeNull();
+  expect((await svc.summary(await refFor("lead"))).avatarVersion).toBeNull();
 });
 
 test.each([
-  ["slug taken", { slug: "lead" }, { code: "slug_taken" }],
+  ["handle taken", { handle: "lead" }, { code: "handle_taken" }],
   [
     "unknown credential",
     { credential: "nope" },
@@ -142,80 +149,92 @@ test.each([
     svc.create(
       {
         template: "lead",
-        slug: "x-new",
+        handle: "x-new",
         displayName: "X",
         description: "",
         reportsTo: "or",
         credential: "work",
         ...patch,
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   ).rejects.toMatchObject(err);
 });
 
-test("create with a reserved slug is refused before any claim", async () => {
-  const spy = vi.spyOn(principals, "claimHandle");
-  try {
-    for (const slug of ["humans", "me", "scheduler"])
-      await expect(
-        svc.create(
-          {
-            template: "lead",
-            slug,
-            displayName: "X",
-            description: "",
-            reportsTo: "or",
-            credential: "work",
-          },
-          { kind: "human", handle: "or" },
-        ),
-      ).rejects.toMatchObject({ code: "validation_error" });
-    expect(spy).not.toHaveBeenCalled();
-  } finally {
-    spy.mockRestore();
-  }
+test("create with a reserved handle is refused and creates no principal", async () => {
+  const handles = ["humans", "me", "scheduler"];
+  for (const handle of handles)
+    await expect(
+      svc.create(
+        {
+          template: "lead",
+          handle,
+          displayName: "X",
+          description: "",
+          reportsTo: "or",
+          credential: "work",
+        },
+        { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      ),
+    ).rejects.toMatchObject({ code: "validation_error" });
+  expect((await principalsByHandles(t.db, handles)).size).toBe(0);
 });
 
-test("create: an existing folder → folder_exists, untouched", async () => {
-  mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
-  writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
-  await expect(
-    svc.create(
-      {
-        template: "lead",
-        slug: "occupied",
-        displayName: "O",
-        description: "",
-        reportsTo: "or",
-        credential: "work",
-      },
-      { kind: "human", handle: "or" },
-    ),
-  ).rejects.toMatchObject({ code: "folder_exists" });
-  expect(existsSync(path.join(home, "agents/occupied/keep.txt"))).toBe(true);
+test("create: a folder that carries the handle's name is no collision and stays untouched", async () => {
+  const named = path.join(home, "agents", "occupied");
+  mkdirSync(named, { recursive: true });
+  writeFileSync(path.join(named, "keep.txt"), "k");
+  await svc.create(
+    {
+      template: "lead",
+      handle: "occupied",
+      displayName: "O",
+      description: "",
+      reportsTo: "or",
+      credential: "work",
+    },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
+  expect(existsSync(path.join(named, "keep.txt"))).toBe(true);
+  expect(existsSync(path.join(await workdirOf("occupied"), "AGENTS.md"))).toBe(true);
 });
 
 test("update: cycle rejected", async () => {
   await expect(
-    svc.update("lead", { reportsTo: "dev-1" }, { kind: "human", handle: "or" }),
+    svc.update(
+      await refFor("lead"),
+      { reportsTo: "dev-1" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    ),
   ).rejects.toMatchObject({
     message: FIELD_MSG.reportsCycle,
   });
 });
 
-test("update: a rename restarts the agent and exactly its direct reports", async () => {
+test("update: a display-name change restarts the agent and exactly its direct reports", async () => {
   const spy = vi.spyOn(runtimes, "requestRestart");
   try {
-    await svc.update("lead", { displayName: "Lead 2" }, { kind: "human", handle: "or" });
+    await svc.update(
+      await refFor("lead"),
+      { displayName: "Lead 2" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    );
     expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(
       [await idOf("lead"), await idOf("dev-1")].sort(),
     );
     spy.mockClear();
     // A feed-only change (grants) restarts the agent itself and leaves its reports alone.
-    await svc.update("lead", { projects: [] }, { kind: "human", handle: "or" });
+    await svc.update(
+      await refFor("lead"),
+      { projects: [] },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    );
     expect(spy.mock.calls.map((c) => c[0])).toEqual([await idOf("lead")]);
-    await svc.update("lead", { projects: ["app"] }, { kind: "human", handle: "or" });
+    await svc.update(
+      await refFor("lead"),
+      { projects: ["app"] },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    );
   } finally {
     spy.mockRestore();
   }
@@ -224,10 +243,24 @@ test("update: a rename restarts the agent and exactly its direct reports", async
 test("update: a colour-only change never restarts, shows in the summary, and null returns to Auto", async () => {
   const spy = vi.spyOn(runtimes, "requestRestart");
   try {
-    expect((await svc.update("lead", { color: 7 }, { kind: "human", handle: "or" })).color).toBe(7);
-    expect((await svc.summary("lead")).color).toBe(7);
     expect(
-      (await svc.update("lead", { color: null }, { kind: "human", handle: "or" })).color,
+      (
+        await svc.update(
+          await refFor("lead"),
+          { color: 7 },
+          { kind: "human", ref: "k7x2m9qd", handle: "or" },
+        )
+      ).color,
+    ).toBe(7);
+    expect((await svc.summary(await refFor("lead"))).color).toBe(7);
+    expect(
+      (
+        await svc.update(
+          await refFor("lead"),
+          { color: null },
+          { kind: "human", ref: "k7x2m9qd", handle: "or" },
+        )
+      ).color,
     ).toBeNull();
     expect(spy).not.toHaveBeenCalled();
   } finally {
@@ -239,17 +272,17 @@ test("the agents_color CHECK rejects 13 and 0 on its own row", async () => {
   await svc.create(
     {
       template: "lead",
-      slug: "colour-check",
+      handle: "colour-check",
       displayName: "C",
       description: "",
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   for (const bad of [13, 0])
     await expect(
-      t.sql`update agents set color = ${bad} where slug = 'colour-check'`,
+      t.sql`update agents set color = ${bad} where id = (select id from principals where handle = 'colour-check')`,
     ).rejects.toThrow(/agents_color|check/i);
 });
 
@@ -257,39 +290,48 @@ test("projects: duplicate names are deduped (order kept) on create and PATCH", a
   const made = await svc.create(
     {
       template: "lead",
-      slug: "dupe",
+      handle: "dupe",
       displayName: "D",
       description: "",
       reportsTo: "or",
       credential: "work",
       projects: ["app", "app"],
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   expect(made.projects).toEqual(["app"]);
-  await svc.update("dupe", { projects: [] }, { kind: "human", handle: "or" });
+  await svc.update(
+    await refFor("dupe"),
+    { projects: [] },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   expect(
-    (await svc.update("dupe", { projects: ["app", "app"] }, { kind: "human", handle: "or" }))
-      .projects,
+    (
+      await svc.update(
+        await refFor("dupe"),
+        { projects: ["app", "app"] },
+        { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      )
+    ).projects,
   ).toEqual(["app"]);
 });
 
-async function makeStageAgent(slug: string) {
-  writeTemplate(slug, yaml(slug));
+async function makeStageAgent(handle: string) {
+  writeTemplate(handle, yaml(handle));
   await svc.create(
     {
-      template: slug,
-      slug,
-      displayName: slug,
+      template: handle,
+      handle,
+      displayName: handle,
       description: "",
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
 }
-async function startAndStop(slug: string, start: boolean) {
-  const rt = await runtimes.bySlug(slug);
+async function startAndStop(handle: string, start: boolean) {
+  const rt = await runtimes.byRef(await t.refOf(handle));
   if (!rt) throw new Error("no runtime");
   if (start) {
     const u = await t.signUpUser();
@@ -305,29 +347,31 @@ async function startAndStop(slug: string, start: boolean) {
 }
 
 /** The pending `config_changed` notice lines of an agent. */
-async function pendingConfigLines(slug: string): Promise<string[]> {
+async function pendingConfigLines(handle: string): Promise<string[]> {
   const rows = await t.sql`
-    select body from messages where to_agent_id = ${await idOf(slug)} and notice = 'config_changed' and state = 'pending'`;
+    select body from messages where to_id = ${await idOf(handle)} and notice = 'config_changed' and state = 'pending'`;
   return rows.flatMap((r) =>
     String(r.body)
       .split("\n")
       .filter((l) => l.startsWith("- ")),
   );
 }
-const personaBackups = (slug: string) => {
-  const dir = path.join(home, "state/agents", slug, "persona");
+const personaBackups = async (handle: string) => {
+  const dir = path.join(await stateOf(handle), "persona");
   return existsSync(dir) ? readdirSync(dir) : [];
 };
 
 test("reset persona of a hibernated agent applies at once, saves the old file and records the notice line", async () => {
   await makeStageAgent("persona-a");
-  const agentsMd = path.join(home, "agents/persona-a/AGENTS.md");
+  const agentsMd = path.join(await workdirOf("persona-a"), "AGENTS.md");
   writeFileSync(agentsMd, "edited");
   const restart = vi.spyOn(runtimes, "requestRestart");
   try {
-    const r = await svc.resetPersona("persona-a", "@or");
+    const r = await svc.resetPersona(await refFor("persona-a"), "@or");
     expect(r.applied).toBe("now");
-    expect(r.backupDir).toMatch(/^state\/agents\/persona-a\/persona\/\d{4}-/);
+    expect(r.backupDir).toMatch(
+      new RegExp(`^state/agents/${await refFor("persona-a")}/persona/\\d{4}-`),
+    );
     expect(readFileSync(agentsMd, "utf8")).toBe("# persona-a\n");
     expect(readFileSync(path.join(home, r.backupDir ?? "", "AGENTS.md"), "utf8")).toBe("edited");
     await vi.waitFor(async () =>
@@ -337,8 +381,8 @@ test("reset persona of a hibernated agent applies at once, saves the old file an
     );
     expect(restart).not.toHaveBeenCalled();
     // Nothing differs now: no second backup, no change.
-    expect(await svc.resetPersona("persona-a", "@or")).toEqual({ applied: "now" });
-    expect(personaBackups("persona-a")).toHaveLength(1);
+    expect(await svc.resetPersona(await refFor("persona-a"), "@or")).toEqual({ applied: "now" });
+    expect(await personaBackups("persona-a")).toHaveLength(1);
   } finally {
     restart.mockRestore();
   }
@@ -346,18 +390,18 @@ test("reset persona of a hibernated agent applies at once, saves the old file an
 
 test("reset persona of a running agent stages the file, asks for a restart and applies at the next prepare", async () => {
   await makeStageAgent("persona-b");
-  const agentsMd = path.join(home, "agents/persona-b/AGENTS.md");
+  const agentsMd = path.join(await workdirOf("persona-b"), "AGENTS.md");
   const OLD = readFileSync(agentsMd, "utf8");
   await startAndStop("persona-b", true);
   writeFileSync(path.join(home, "templates/persona-b/AGENTS.md"), "# NEW\n");
   // Keep the process running: the restart request would otherwise stop it before the assertions.
   const restart = vi.spyOn(runtimes, "requestRestart").mockResolvedValue(undefined);
   try {
-    const r = await svc.resetPersona("persona-b", "@or");
+    const r = await svc.resetPersona(await refFor("persona-b"), "@or");
     expect(r).toEqual({ applied: "on_restart" });
     expect(readFileSync(agentsMd, "utf8")).toBe(OLD);
     expect(
-      readFileSync(path.join(home, "state/agents/persona-b/persona-pending/AGENTS.md"), "utf8"),
+      readFileSync(path.join(await stateOf("persona-b"), "persona-pending/AGENTS.md"), "utf8"),
     ).toBe("# NEW\n");
     const id = await idOf("persona-b");
     await vi.waitFor(() =>
@@ -369,11 +413,11 @@ test("reset persona of a running agent stages the file, asks for a restart and a
   await startAndStop("persona-b", false);
   await startAndStop("persona-b", true);
   expect(readFileSync(agentsMd, "utf8")).toBe("# NEW\n");
-  expect(existsSync(path.join(home, "state/agents/persona-b/persona-pending"))).toBe(false);
-  const [stamp] = personaBackups("persona-b");
+  expect(existsSync(path.join(await stateOf("persona-b"), "persona-pending"))).toBe(false);
+  const [stamp] = await personaBackups("persona-b");
   expect(
     readFileSync(
-      path.join(home, "state/agents/persona-b/persona", stamp ?? "", "AGENTS.md"),
+      path.join(await stateOf("persona-b"), "persona", stamp ?? "", "AGENTS.md"),
       "utf8",
     ),
   ).toBe(OLD);
@@ -385,23 +429,23 @@ test("reset persona of a Docker agent stages while its container runs, or when D
   await svc.create(
     {
       template: "dock-p",
-      slug: "dock-p",
+      handle: "dock-p",
       displayName: "Dock",
       description: "",
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   const running = vi.spyOn(ContainerManager.prototype, "isRunning");
   try {
     running.mockResolvedValue(true);
-    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
-    expect(running).toHaveBeenCalledWith(await idOf("dock-p"), "dock-p");
+    expect((await svc.resetPersona(await refFor("dock-p"), "@or")).applied).toBe("on_restart");
+    expect(running).toHaveBeenCalledWith(await idOf("dock-p"), await refFor("dock-p"));
     running.mockRejectedValue(new Error("connect ECONNREFUSED /var/run/docker.sock"));
-    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
+    expect((await svc.resetPersona(await refFor("dock-p"), "@or")).applied).toBe("on_restart");
     running.mockResolvedValue(false);
-    expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("now");
+    expect((await svc.resetPersona(await refFor("dock-p"), "@or")).applied).toBe("now");
   } finally {
     running.mockRestore();
   }
@@ -409,16 +453,18 @@ test("reset persona of a Docker agent stages while its container runs, or when D
 
 test("reset persona: an archived agent is allowed (no notice), a broken or AGENTS.md-less template is 409", async () => {
   await makeStageAgent("persona-c");
-  writeFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "edited");
-  await svc.archive("persona-c", { kind: "human", handle: "or" });
-  expect((await svc.resetPersona("persona-c", "@or")).applied).toBe("now");
-  expect(readFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "utf8")).toBe("# persona-c\n");
+  writeFileSync(path.join(await workdirOf("persona-c"), "AGENTS.md"), "edited");
+  await svc.archive(await refFor("persona-c"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  expect((await svc.resetPersona(await refFor("persona-c"), "@or")).applied).toBe("now");
+  expect(readFileSync(path.join(await workdirOf("persona-c"), "AGENTS.md"), "utf8")).toBe(
+    "# persona-c\n",
+  );
   expect(await pendingConfigLines("persona-c")).toEqual([]);
   // Unarchived again so the archived list stays the later archive tests' own.
-  await svc.unarchive("persona-c", { kind: "human", handle: "or" });
+  await svc.unarchive(await refFor("persona-c"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
 
   rmSync(path.join(home, "templates/persona-c/AGENTS.md"));
-  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+  await expect(svc.resetPersona(await refFor("persona-c"), "@or")).rejects.toMatchObject({
     status: 409,
     code: "template_invalid",
   });
@@ -426,29 +472,29 @@ test("reset persona: an archived agent is allowed (no notice), a broken or AGENT
     path.join(home, "templates/persona-c/template.yaml"),
     "name: persona-c\nruntime: nonsense\n",
   );
-  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+  await expect(svc.resetPersona(await refFor("persona-c"), "@or")).rejects.toMatchObject({
     code: "template_invalid",
   });
   rmSync(path.join(home, "templates/persona-c"), { recursive: true });
-  await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
+  await expect(svc.resetPersona(await refFor("persona-c"), "@or")).rejects.toMatchObject({
     code: "template_missing",
   });
 });
 
 test("reset persona: a symlinked template AGENTS.md is refused, and an unloaded agent still gets the event", async () => {
   await makeStageAgent("persona-e");
-  writeFileSync(path.join(home, "agents/persona-e/AGENTS.md"), "edited");
+  writeFileSync(path.join(await workdirOf("persona-e"), "AGENTS.md"), "edited");
   const real = path.join(home, "templates/persona-e/real.md");
   writeFileSync(real, "# linked\n");
   rmSync(path.join(home, "templates/persona-e/AGENTS.md"));
   symlinkSync(real, path.join(home, "templates/persona-e/AGENTS.md"));
-  await expect(svc.resetPersona("persona-e", "@or")).rejects.toMatchObject({
+  await expect(svc.resetPersona(await refFor("persona-e"), "@or")).rejects.toMatchObject({
     status: 409,
     code: "template_invalid",
   });
   rmSync(path.join(home, "templates/persona-e/AGENTS.md"));
   writeFileSync(path.join(home, "templates/persona-e/AGENTS.md"), "# NEW\n");
-  await svc.resetPersona("persona-e", "@or");
+  await svc.resetPersona(await refFor("persona-e"), "@or");
   const id = await idOf("persona-e");
   await vi.waitFor(async () => {
     const ev =
@@ -461,8 +507,8 @@ test("reset persona: a symlinked template AGENTS.md is refused, and an unloaded 
 
 test("reset persona: a recreated (missing) AGENTS.md records the notice without a saved-file claim", async () => {
   await makeStageAgent("persona-f");
-  rmSync(path.join(home, "agents/persona-f/AGENTS.md"));
-  expect(await svc.resetPersona("persona-f", "@or")).toEqual({ applied: "now" });
+  rmSync(path.join(await workdirOf("persona-f"), "AGENTS.md"));
+  expect(await svc.resetPersona(await refFor("persona-f"), "@or")).toEqual({ applied: "now" });
   await vi.waitFor(async () =>
     expect(await pendingConfigLines("persona-f")).toEqual([
       "- AGENTS.md reset from template persona-f.",
@@ -472,11 +518,11 @@ test("reset persona: a recreated (missing) AGENTS.md records the notice without 
 
 test("reset persona refuses an agent whose workdir is a link, writing nothing through it", async () => {
   await makeStageAgent("persona-d");
-  const wd = path.join(home, "agents/persona-d");
+  const wd = await workdirOf("persona-d");
   const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
   rmSync(wd, { recursive: true });
   symlinkSync(outside, wd);
-  await expect(svc.resetPersona("persona-d", "@or")).rejects.toMatchObject({
+  await expect(svc.resetPersona(await refFor("persona-d"), "@or")).rejects.toMatchObject({
     status: 409,
     code: "workdir_unusable",
   });
@@ -485,7 +531,7 @@ test("reset persona refuses an agent whose workdir is a link, writing nothing th
 
 test("hasProcess is true while a start waits in prepare, before the spawn", async () => {
   await makeStageAgent("stage-e");
-  const rt = await runtimes.bySlug("stage-e");
+  const rt = await runtimes.byRef(await t.refOf("stage-e"));
   if (!rt) throw new Error("no runtime");
   expect(rt.hasProcess()).toBe(false);
   const u = await t.signUpUser();
@@ -507,125 +553,143 @@ test("hasProcess is true while a start waits in prepare, before the spawn", asyn
 });
 
 test("archive is blocked while active reports exist", async () => {
-  await expect(svc.archive("lead", { kind: "human", handle: "or" })).rejects.toMatchObject({
+  await expect(
+    svc.archive(await refFor("lead"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({
     code: "has_reports",
     message: "@dev-1 reports to this agent. Change their manager first.",
   });
 });
 
 test("archive hides and allows PATCH; unarchive restores", async () => {
-  await svc.archive("dev-1", { kind: "human", handle: "or" });
-  expect((await svc.list("only")).agents.map((a) => a.slug)).toEqual(["dev-1"]);
-  expect((await svc.list("exclude")).agents.map((a) => a.slug)).not.toContain("dev-1");
+  await svc.archive(await refFor("dev-1"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  expect((await svc.list("only")).agents.map((a) => a.handle)).toEqual(["dev-1"]);
+  expect((await svc.list("exclude")).agents.map((a) => a.handle)).not.toContain("dev-1");
   expect(
-    (await svc.update("dev-1", { description: "parked" }, { kind: "human", handle: "or" }))
-      .description,
+    (
+      await svc.update(
+        await refFor("dev-1"),
+        { description: "parked" },
+        { kind: "human", ref: "k7x2m9qd", handle: "or" },
+      )
+    ).description,
   ).toBe("parked");
-  expect((await svc.unarchive("dev-1", { kind: "human", handle: "or" })).archivedAt).toBeNull();
+  expect(
+    (await svc.unarchive(await refFor("dev-1"), { kind: "human", ref: "k7x2m9qd", handle: "or" }))
+      .archivedAt,
+  ).toBeNull();
 });
 
 test("unarchive is refused while the manager is archived", async () => {
-  await svc.update("dev-1", { reportsTo: "or" }, { kind: "human", handle: "or" });
+  await svc.update(
+    await refFor("dev-1"),
+    { reportsTo: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   await svc.create(
     {
       template: "lead",
-      slug: "helper",
+      handle: "helper",
       displayName: "Helper",
       description: "",
       reportsTo: "dev-1",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  await svc.archive("helper", { kind: "human", handle: "or" });
-  await svc.archive("dev-1", { kind: "human", handle: "or" });
-  await expect(svc.unarchive("helper", { kind: "human", handle: "or" })).rejects.toMatchObject({
+  await svc.archive(await refFor("helper"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await svc.archive(await refFor("dev-1"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await expect(
+    svc.unarchive(await refFor("helper"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({
     code: "manager_archived",
     message: "Its manager @dev-1 is archived. Change its manager first.",
   });
 });
 
-test("create refuses a slug that is a human handle", async () => {
+test("create refuses a handle that is a human handle", async () => {
   await t.signUpUser({ handle: "sam" });
   await expect(
     svc.create(
       {
         template: "lead",
-        slug: "sam",
+        handle: "sam",
         displayName: "Sam",
         description: "",
         reportsTo: "or",
         credential: "work",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
-  ).rejects.toMatchObject({ code: "slug_taken" });
+  ).rejects.toMatchObject({ code: "handle_taken" });
 });
 
-const createBody = (slug: string) => ({
+const createBody = (handle: string) => ({
   template: "lead",
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
 });
-const agentRows = async (slug: string) =>
-  t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+const agentRows = async (handle: string) =>
+  agentRecords(t.db).where(eq(schema.principals.handle, handle));
 
-test("create refuses a slug whose user claim is in flight (claim, no user row yet)", async () => {
-  await claimTestHandleSql(t.sql, "inflight", "user");
+test("create refuses a handle held by a human principal that has no user row yet", async () => {
+  await seedTestPrincipal(t.db, "human", "inflight");
+  const folders = readdirSync(path.join(home, "agents"));
   await expect(
-    svc.create(createBody("inflight"), { kind: "human", handle: "or" }),
-  ).rejects.toMatchObject({ code: "slug_taken" });
+    svc.create(createBody("inflight"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({ code: "handle_taken" });
   expect(await agentRows("inflight")).toEqual([]);
-  expect(existsSync(path.join(home, "agents/inflight"))).toBe(false);
+  expect(readdirSync(path.join(home, "agents"))).toEqual(folders);
 });
 
-test("create claims the slug in its transaction: the claim is an agent claim", async () => {
-  await svc.create(createBody("claimed-one"), { kind: "human", handle: "or" });
-  const [h] = await t.sql`select kind from handles where handle = 'claimed-one'`;
-  expect(h?.kind).toBe("agent");
+test("creating an agent with a taken handle is refused on the handle field", async () => {
+  await svc.create(createBody("twin-one"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await expect(
+    svc.create(createBody("twin-one"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({
+    status: 409,
+    code: "handle_taken",
+    extra: { fields: { handle: expect.any(String) } },
+  });
+  expect(await agentRows("twin-one")).toHaveLength(1);
 });
 
-test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate, the winner's folder intact", async () => {
+test("creating an agent creates its principal with the agent's id and handle", async () => {
+  await svc.create(createBody("claimed-one"), { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  const [agent] = await agentRows("claimed-one");
+  const principal = await principalById(t.db, agent?.id ?? "");
+  expect(principal).toMatchObject({ kind: "agent", handle: "claimed-one" });
+  expect(principal?.ref).toBe(refOf(agent?.id ?? ""));
+});
+
+test("two concurrent creates of one handle: one succeeds, the other is handle_taken, no duplicate, the winner's folder intact", async () => {
   const results = await Promise.allSettled([
-    svc.create(createBody("dup-race"), { kind: "human", handle: "or" }),
-    svc.create(createBody("dup-race"), { kind: "human", handle: "or" }),
+    svc.create(createBody("dup-race"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+    svc.create(createBody("dup-race"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ]);
   expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   const failed = results.find((r) => r.status === "rejected");
-  expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
+  expect(failed).toMatchObject({ reason: { code: "handle_taken" } });
   expect(await agentRows("dup-race")).toHaveLength(1);
-  expect(existsSync(path.join(home, "agents/dup-race/AGENTS.md"))).toBe(true);
+  expect(existsSync(path.join(await workdirOf("dup-race"), "AGENTS.md"))).toBe(true);
 });
 
-test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
-  const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
-    await claimTestHandleSql(t.sql, "late-dup", "agent");
-    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to_user from agents where slug = 'lead'`;
-  });
-  await expect(
-    svc.create(createBody("late-dup"), { kind: "human", handle: "or" }),
-  ).rejects.toMatchObject({ code: "slug_taken" });
-  spy.mockRestore();
-  expect(await agentRows("late-dup")).toHaveLength(1);
-});
-
-async function createSpawner(slug: string) {
+async function createSpawner(handle: string) {
   await svc.create(
     {
       template: "lead",
-      slug,
-      displayName: slug,
+      handle,
+      displayName: handle,
       description: "",
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  return idOf(slug);
+  return idOf(handle);
 }
 /**
  * A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). Like a real spawn it holds the
@@ -634,14 +698,14 @@ async function createSpawner(slug: string) {
 const insertChild = async (
   q: typeof t.sql,
   spawnerId: string,
-  slug: string,
+  handle: string,
   terminated = false,
 ) => {
-  await claimTestHandleSql(q, slug, "agent");
   const id = randomUUID();
-  await q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-       select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
-              ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
+  await q.unsafe(principalSql(id, "agent", handle));
+  await q`insert into agents (id, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+       select ${id}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+              ${terminated ? new Date().toISOString() : null}::timestamptz, null
        from agents where id = ${spawnerId}`;
   await q`insert into agent_project_grants (agent_id, project_id)
        select ${id}, project_id from agent_project_grants where agent_id = ${spawnerId}`;
@@ -685,10 +749,12 @@ test("archive takes the spawner's row lock first, then counts live reports in th
   // A spawn's transaction stand-in: holds the row lock, inserts a live child, commits when released.
   const lock = holdRowLock(id, (tx) => insertChild(tx, id, "spawner-ab12"));
   const holder = await lock.holder;
-  const archive = svc.archive("spawner", { kind: "human", handle: "or" }).then(
-    () => "archived",
-    (e: unknown) => e,
-  );
+  const archive = svc
+    .archive(await refFor("spawner"), { kind: "human", ref: "k7x2m9qd", handle: "or" })
+    .then(
+      () => "archived",
+      (e: unknown) => e,
+    );
   await archivesWaiting(holder, 1);
   lock.release();
   await lock.done;
@@ -705,24 +771,25 @@ test("two concurrent archives: the second sees the first's commit under the lock
   const lock = holdRowLock(id);
   const holder = await lock.holder;
   const both = Promise.all([
-    svc.archive("twice", { kind: "human", handle: "or" }),
-    svc.archive("twice", { kind: "human", handle: "or" }),
+    svc.archive(await refFor("twice"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+    svc.archive(await refFor("twice"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ]);
   await archivesWaiting(holder, 2);
   lock.release();
   await lock.done;
   for (const a of await both) expect(a.archivedAt).not.toBeNull();
   const rows =
-    await t.sql`select to_agent_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
+    await t.sql`select to_id from messages where subject_agent_id = ${id} and kind = 'peer_left'`;
   expect(rows.length).toBeGreaterThan(0);
-  expect(new Set(rows.map((r) => r.to_agent_id)).size).toBe(rows.length);
+  expect(new Set(rows.map((r) => r.to_id)).size).toBe(rows.length);
 });
 
 test("archive counts only live reports: a terminated spawned agent doesn't block it", async () => {
   const id = await createSpawner("spawner-2");
   await insertChild(t.sql, id, "spawner-2-cd34", true);
   expect(
-    (await svc.archive("spawner-2", { kind: "human", handle: "or" })).archivedAt,
+    (await svc.archive(await refFor("spawner-2"), { kind: "human", ref: "k7x2m9qd", handle: "or" }))
+      .archivedAt,
   ).not.toBeNull();
 });
 
@@ -730,7 +797,9 @@ test("archive names every live spawned agent", async () => {
   const id = await createSpawner("spawner-3");
   await insertChild(t.sql, id, "spawner-3-bb22");
   await insertChild(t.sql, id, "spawner-3-aa11");
-  await expect(svc.archive("spawner-3", { kind: "human", handle: "or" })).rejects.toMatchObject({
+  await expect(
+    svc.archive(await refFor("spawner-3"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+  ).rejects.toMatchObject({
     code: "has_reports",
     message:
       "@spawner-3 has live spawned agents: @spawner-3-aa11, @spawner-3-bb22. Terminate them first.",
@@ -747,19 +816,30 @@ test("a spawned agent can't be edited, reset, archived or unarchived: 409 epheme
     message: "Spawned agents can't be edited; terminate it instead.",
   };
   await expect(
-    svc.update("spawner-4-ee11", { displayName: "X" }, { kind: "human", handle: "or" }),
+    svc.update(
+      await refFor("spawner-4-ee11"),
+      { displayName: "X" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    ),
   ).rejects.toMatchObject(refused);
   await expect(
-    svc.update("spawner-4-ee11", { color: 3 }, { kind: "human", handle: "or" }),
+    svc.update(
+      await refFor("spawner-4-ee11"),
+      { color: 3 },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    ),
   ).rejects.toMatchObject(refused);
-  await expect(svc.resetPersona("spawner-4-ee11", "@or")).rejects.toMatchObject(refused);
+  await expect(svc.resetPersona(await refFor("spawner-4-ee11"), "@or")).rejects.toMatchObject(
+    refused,
+  );
   await expect(
-    svc.archive("spawner-4-ee11", { kind: "human", handle: "or" }),
+    svc.archive(await refFor("spawner-4-ee11"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject(refused);
   await expect(
-    svc.unarchive("spawner-4-ee11", { kind: "human", handle: "or" }),
+    svc.unarchive(await refFor("spawner-4-ee11"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject(refused);
-  const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
+  const [r] =
+    await t.sql`select display_name from agents where id = (select id from principals where handle = 'spawner-4-ee11')`;
   expect(r?.display_name).toBe("Kid");
 });
 
@@ -774,31 +854,43 @@ test("a spawned agent can't be a manager on create or edit", async () => {
     svc.create(
       {
         template: "lead",
-        slug: "under-kid",
+        handle: "under-kid",
         displayName: "Under",
         description: "",
         reportsTo: "spawner-5-ff11",
         credential: "work",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   ).rejects.toMatchObject(field);
   await expect(
-    svc.update("spawner-5", { reportsTo: "spawner-5-ff11" }, { kind: "human", handle: "or" }),
+    svc.update(
+      await refFor("spawner-5"),
+      { reportsTo: "spawner-5-ff11" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    ),
   ).rejects.toMatchObject(field);
   await createSpawner("spawner-6");
   await expect(
-    svc.update("spawner-6", { reportsTo: "spawner-5-ff11" }, { kind: "human", handle: "or" }),
+    svc.update(
+      await refFor("spawner-6"),
+      { reportsTo: "spawner-5-ff11" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    ),
   ).rejects.toMatchObject(field);
 });
 
-test("renaming a spawner restarts its live spawned agents, never a terminated one", async () => {
+test("a display-name change on a spawner restarts its live spawned agents, never a terminated one", async () => {
   const id = await createSpawner("spawner-7");
   await insertChild(t.sql, id, "spawner-7-aa11");
   await insertChild(t.sql, id, "spawner-7-dd44", true);
   const spy = vi.spyOn(runtimes, "requestRestart");
   try {
-    await svc.update("spawner-7", { displayName: "Seven" }, { kind: "human", handle: "or" });
+    await svc.update(
+      await refFor("spawner-7"),
+      { displayName: "Seven" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    );
     expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(
       [id, await idOf("spawner-7-aa11")].sort(),
     );
@@ -806,4 +898,26 @@ test("renaming a spawner restarts its live spawned agents, never a terminated on
     spy.mockRestore();
   }
   expect(await runtimes.get(await idOf("spawner-7-dd44"))).toBeUndefined();
+});
+
+test("a human-managed agent reports its manager as a human", async () => {
+  const created = await svc.create(
+    {
+      template: "lead",
+      handle: "human-led",
+      displayName: "Human led",
+      description: "",
+      reportsTo: "or",
+      credential: "work",
+      projects: [],
+    },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
+  const or = (await principalsByHandles(t.db, ["or"])).get("or");
+  expect(created.reportsTo).toEqual({ kind: "human", ref: or?.ref, handle: "or" });
+  expect((await svc.summary(await refFor("human-led"))).reportsTo).toEqual({
+    kind: "human",
+    ref: or?.ref,
+    handle: "or",
+  });
 });

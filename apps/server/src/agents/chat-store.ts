@@ -1,6 +1,7 @@
 import { type Db, schema } from "@open-factory/db";
 import type { ChatEntry } from "@open-factory/shared";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
+import { principalsByIds } from "../principals/principal-store.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { isCursorInstant } from "./event-store.ts";
 
@@ -21,7 +22,6 @@ function decode(cursor: string): { at: string; id: string } {
 export interface ChatThread {
   agent: {
     id: string;
-    slug: string;
     archivedAt: Date | null;
     terminatedAt: Date | null;
   };
@@ -45,8 +45,8 @@ export class ChatStore {
   /** Both directions, cancelled rows left out (the client's cancel overlay covers them). */
   private threadWhere(t: ChatThread): SQL {
     return sql`${messages.kind} = 'message' and ${messages.state} <> 'cancelled' and (
-      (${messages.toAgentId} = ${t.agent.id} and ${messages.fromUserId} = ${t.user.id})
-      or (${messages.fromAgentId} = ${t.agent.id} and ${messages.toUserId} = ${t.user.id}))`;
+      (${messages.toId} = ${t.agent.id} and ${messages.fromId} = ${t.user.id})
+      or (${messages.fromId} = ${t.agent.id} and ${messages.toId} = ${t.user.id}))`;
   }
 
   private rows(where: SQL, order: "asc" | "desc", limit: number) {
@@ -111,15 +111,28 @@ export class ChatStore {
       : t.agent.archivedAt
         ? "the agent is archived"
         : "the agent isn't available";
+    const refs = await principalsByIds(this.db, [
+      t.agent.id,
+      t.user.id,
+      ...picked.flatMap(({ m }) => m.recipientIds ?? []),
+    ]);
+    // The foreign keys make a missing principal impossible: fail loudly rather than write a blank ref.
+    const refOf = (id: string) => {
+      const ref = refs.get(id)?.ref;
+      if (ref === undefined) throw new Error(`No principal for ${id}`);
+      return ref;
+    };
     const entries: Array<{ at: string; entry: ChatEntry }> = picked.map(({ m, iso }) => ({
       at: iso,
       entry: {
         kind: "message",
         id: m.id,
-        from: `@${m.fromUserId ? t.user.handle : t.agent.slug}`,
-        fromKind: m.fromUserId ? "human" : "agent",
+        from:
+          m.fromId === t.user.id
+            ? { kind: "human", ref: refOf(t.user.id) }
+            : { kind: "agent", ref: refOf(t.agent.id) },
         body: m.body,
-        recipients: m.recipients ?? [],
+        recipients: (m.recipientIds ?? []).map((id) => ({ ref: refOf(id) })),
         urgent: m.urgent,
         createdAt: iso,
         state: state(m),
@@ -174,11 +187,11 @@ export class ChatStore {
              t.end_event_seq as seq, t.is_error, t.terminal_reason as reason
       from turns t
       join messages m on m.delivered_turn_id = t.id and m.kind = 'message'
-        and m.from_user_id = ${t.user.id} and m.to_agent_id = ${t.agent.id}
+        and m.from_id = ${t.user.id} and m.to_id = ${t.agent.id}
       where t.agent_id = ${t.agent.id} and t.ended_at is not null ${window[0]} ${window[1]}
         and not exists (
           select 1 from messages r
-          where r.kind = 'message' and r.from_agent_id = ${t.agent.id} and r.to_user_id = ${t.user.id}
+          where r.kind = 'message' and r.from_id = ${t.agent.id} and r.to_id = ${t.user.id}
             and r.created_at between t.started_at and t.ended_at)
       group by t.id
       order by t.ended_at, t.id`);

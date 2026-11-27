@@ -3,7 +3,9 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -38,7 +40,7 @@ const task = (n: number, o: Record<string, unknown> = {}) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: new Date(2026, 10, 19, 14, 32).toISOString(),
   ...o,
 });
@@ -46,8 +48,8 @@ const page = (tasks: unknown[], nextCursor: string | null = null) => ({ tasks, n
 const agents = (_body?: unknown, url?: string) =>
   json({
     agents: url?.includes("ended=only")
-      ? [agentSummary({ slug: "old", displayName: "Old", terminatedAt: "2026-11-01T00:00:00Z" })]
-      : [agentSummary({ slug: "dev" }), agentSummary({ slug: "lead", displayName: "Lead" })],
+      ? [agentSummary({ handle: "old", displayName: "Old", terminatedAt: "2026-11-01T00:00:00Z" })]
+      : [agentSummary({ handle: "dev" }), agentSummary({ handle: "lead", displayName: "Lead" })],
     more: false,
     running: { count: 0 },
   });
@@ -63,11 +65,21 @@ test("a row is one link with a complete name; status, assignee, blocked marker a
           task(42, {
             title: "Plan the billing migration",
             status: "in_progress",
-            assignee: { slug: "dev", displayName: "Dev" },
+            assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev" },
             blockedBy: ["T-41"],
           }),
-          task(41, { title: "Add usage export", createdBy: { kind: "agent", slug: "lead" } }),
-          task(40, { assignee: { slug: "gone", displayName: "Gone", ended: "terminated" } }),
+          task(41, {
+            title: "Add usage export",
+            createdBy: { kind: "agent", ref: refFor("lead"), handle: "lead" },
+          }),
+          task(40, {
+            assignee: {
+              ref: refFor("gone"),
+              handle: "gone",
+              displayName: "Gone",
+              ended: "terminated",
+            },
+          }),
         ]),
       ),
   });
@@ -103,7 +115,9 @@ test("the filters live in the URL: changing Status refetches with that status", 
   await pickComboOption(screen.getByLabelText("Created by"), /^Me$/);
   await waitFor(() => expect(tasksUrls(api).at(-1)).toContain("creator=me"));
   await pickComboOption(screen.getByLabelText("Assignee"), /Lead/);
-  await waitFor(() => expect(router.state.location.search).toMatchObject({ assignee: "lead" }));
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({ assignee: refFor("lead") }),
+  );
   expect(router.state.location.search).not.toHaveProperty("unassigned");
   await pickComboOption(screen.getByLabelText("Assignee"), /^Anyone/);
   await waitFor(() => expect(router.state.location.search).not.toHaveProperty("assignee"));
@@ -143,11 +157,14 @@ test("filters from the URL are applied and an ended assignee shows while selecte
   const api = mockApi({
     "GET /api/agents?": agents,
     "GET /api/tasks?": () => json(page([task(1)])),
+    "GET /api/principals": () => json({ principals: [principal(refFor("ghost"), "ghost")] }),
   });
-  renderApp("/tasks?status=all&assignee=ghost&creator=@sam", alice);
+  renderApp(`/tasks?status=all&assignee=${refFor("ghost")}&creator=@sam`, alice);
   await screen.findByRole("link", { name: /^T-1,/ });
-  expect(tasksUrls(api)[0]).toBe("/api/tasks?limit=50&status=all&assignee=ghost&creator=%40sam");
-  expect(screen.getByLabelText("Assignee")).toHaveTextContent("@ghost");
+  expect(tasksUrls(api)[0]).toBe(
+    `/api/tasks?limit=50&status=all&assignee=${refFor("ghost")}&creator=%40sam`,
+  );
+  await waitFor(() => expect(screen.getByLabelText("Assignee")).toHaveTextContent("@ghost"));
   expect(screen.getByLabelText("Created by")).toHaveTextContent("@sam");
 });
 
@@ -234,8 +251,8 @@ test("rows carry no nested anchors, even for an agent creator", async () => {
       json(
         page([
           task(41, {
-            assignee: { slug: "dev", displayName: "Dev" },
-            createdBy: { kind: "agent", slug: "lead" },
+            assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev" },
+            createdBy: { kind: "agent", ref: refFor("lead"), handle: "lead" },
           }),
         ]),
       ),
@@ -251,8 +268,15 @@ test("the assignee shows as a chip (avatar and name), a human creator as @handle
     "GET /api/tasks?": () =>
       json(
         page([
-          task(50, { assignee: { slug: "dev", displayName: "Dev" } }),
-          task(51, { assignee: { slug: "gone", displayName: "Gone", ended: "terminated" } }),
+          task(50, { assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev" } }),
+          task(51, {
+            assignee: {
+              ref: refFor("gone"),
+              handle: "gone",
+              displayName: "Gone",
+              ended: "terminated",
+            },
+          }),
         ]),
       ),
   });
@@ -291,4 +315,31 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   const all = within(three).getByText(blockedLabel("Blocked by T-1, T-2, T-3"));
   expect(all).not.toHaveAttribute("title");
   expect(three).not.toHaveTextContent("more");
+});
+
+test("a task title with a mention shows the mention's current handle in the row and its name, as plain text", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p1",
+            ref: "k7x2m9qd",
+            kind: "agent",
+            handle: "builder",
+            name: "Builder",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
+    "GET /api/tasks?": () => json(page([task(7, { title: "Review <@k7x2m9qd> output" })])),
+  });
+  renderApp("/tasks", alice);
+  const row = await screen.findByRole("link", {
+    name: /^T-7, Review @builder output, Open/,
+  });
+  expect(within(row).getByText("Review @builder output")).toBeInTheDocument();
+  expect(row.querySelector("a")).toBeNull();
 });

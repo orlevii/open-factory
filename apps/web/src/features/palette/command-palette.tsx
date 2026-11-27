@@ -75,9 +75,9 @@ const AGENT_PAGE = /^\/agents\/(?!new\/)([^/]+)\/(chat|session)\/?$/;
 /** The agent and the view of an agent page's path (the Chat or the Session), else undefined. */
 export function agentPageOf(
   pathname: string,
-): { slug: string; view: "chat" | "session" } | undefined {
+): { agentRef: string; view: "chat" | "session" } | undefined {
   const m = AGENT_PAGE.exec(pathname);
-  return m ? { slug: safeDecode(m[1] as string), view: m[2] as "chat" | "session" } : undefined;
+  return m ? { agentRef: safeDecode(m[1] as string), view: m[2] as "chat" | "session" } : undefined;
 }
 
 /** An action with no `on` is offered everywhere; `agent` on either view; `chat` or `session` on that one. */
@@ -91,7 +91,7 @@ const treeOrders = new WeakMap<AgentSummary[], string[]>();
 function treeOrderOf(live: AgentSummary[]): string[] {
   let order = treeOrders.get(live);
   if (!order) {
-    order = treeOrder(live).map((r) => r.slug);
+    order = treeOrder(live).map((r) => r.ref);
     treeOrders.set(live, order);
   }
   return order;
@@ -258,15 +258,15 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   };
   /** A new page: focus is not sent back to the page being left. */
   const leave = (go: () => void) => commit(go, NOTHING);
-  const openAgent = (slug: string) => {
+  const openAgent = (agentRef: string) => {
     // ⇧Enter opens the session and focuses its composer.
     commit(
       () =>
         void navigate({
-          to: shift.current ? "/agents/$slug/session" : "/agents/$slug/chat",
-          params: { slug },
+          to: shift.current ? "/agents/$ref/session" : "/agents/$ref/chat",
+          params: { ref: agentRef },
         }),
-      shift.current ? () => requestComposerFocus(slug) : NOTHING,
+      shift.current ? () => requestComposerFocus(agentRef) : NOTHING,
     );
   };
   const runAction = (a: ActionItem) => {
@@ -289,8 +289,8 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
         return leave(
           () =>
             void navigate({
-              to: page.view === "chat" ? "/agents/$slug/session" : "/agents/$slug/chat",
-              params: { slug: page.slug },
+              to: page.view === "chat" ? "/agents/$ref/session" : "/agents/$ref/chat",
+              params: { ref: page.agentRef },
             }),
         );
       }
@@ -335,12 +335,12 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
           <Command.Group heading="Agents" className={groupClass}>
             {agents.map(({ agent, ended }) => (
               <Command.Item
-                key={agent.slug}
-                value={`agent:${agent.slug}`}
-                onSelect={() => openAgent(agent.slug)}
+                key={agent.ref}
+                value={`agent:${agent.ref}`}
+                onSelect={() => openAgent(agent.ref)}
                 className={itemClass}
               >
-                <AgentChip agent={agent} size={16} showSlug className="min-w-0 flex-1" />
+                <AgentChip agent={agent} size={16} showHandle className="min-w-0 flex-1" />
                 {ended && <span className="shrink-0 text-xs text-muted-foreground">Ended</span>}
               </Command.Item>
             ))}

@@ -15,21 +15,22 @@ const clock = (iso: string) => {
  *  the session), Recipients when the message went to others too, and the time on touch. */
 export function chatMenuItems(
   entry: MessageEntry,
-  slug: string,
+  agentRef: string,
   others: readonly string[],
+  recipientsText: string,
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [
     { kind: "copy", label: "Copy text", text: entry.body },
     {
       kind: "copy",
       label: "Copy link",
-      text: `${location.origin}/agents/${encodeURIComponent(slug)}/chat?message=${encodeURIComponent(entry.id)}`,
+      text: `${location.origin}/agents/${encodeURIComponent(agentRef)}/chat?message=${encodeURIComponent(entry.id)}`,
     },
   ];
   if (entry.state === "delivered")
-    items.push({ kind: "session", label: "View in session", to: slug, messageId: entry.id });
+    items.push({ kind: "session", label: "View in session", to: agentRef, messageId: entry.id });
   if (others.length > 0)
-    items.push({ kind: "recipients", label: "Recipients", text: entry.recipients.join(", ") });
+    items.push({ kind: "recipients", label: "Recipients", text: recipientsText });
   items.push({ kind: "time", label: `Sent ${clock(entry.createdAt)}` });
   return items;
 }
@@ -37,21 +38,31 @@ export function chatMenuItems(
 /** The one ⋯ of a chat row, built from the shared row menu. The list is built when the menu first opens. */
 export function ChatRowMenu({
   entry,
-  slug,
+  agentRef,
   others,
+  recipientsText,
+  sender,
   tabbable,
   menuRef,
 }: {
   entry: MessageEntry;
-  slug: string;
+  agentRef: string;
+  /** The refs of everyone else the message went to. */
   others: readonly string[];
+  /** Every recipient's handle, for Copy of the Recipients item. */
+  recipientsText: string;
+  /** The sender's current handle. */
+  sender: string;
   tabbable: boolean;
   menuRef: Ref<RowMenuHandle>;
 }) {
-  const items = useCallback(() => chatMenuItems(entry, slug, others), [entry, slug, others]);
+  const items = useCallback(
+    () => chatMenuItems(entry, agentRef, others, recipientsText),
+    [entry, agentRef, others, recipientsText],
+  );
   const title = useCallback(
-    () => `Message from ${entry.from} · ${formatTime(entry.createdAt)}`,
-    [entry.from, entry.createdAt],
+    () => `Message from @${sender} · ${formatTime(entry.createdAt)}`,
+    [sender, entry.createdAt],
   );
   return <RowMenu ref={menuRef} items={items} title={title} focusable={tabbable} />;
 }

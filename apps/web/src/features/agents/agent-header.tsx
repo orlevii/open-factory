@@ -64,7 +64,7 @@ export const AgentHeader = memo(function AgentHeader({
       leading={
         <span data-header-avatar className={"contents @max-[22rem]:hidden"}>
           <AgentAvatar
-            slug={agent.slug}
+            agentRef={agent.ref}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
             color={agent.color}
@@ -88,10 +88,10 @@ export const AgentHeader = memo(function AgentHeader({
           <span className="shrink-0 md:hidden">
             <StatusBadge status={agent.status} size="short" />
           </span>
-          <LiveLine fact={fact} sessionOf={view === "chat" ? agent.slug : undefined} />
+          <LiveLine fact={fact} sessionOf={view === "chat" ? agent.ref : undefined} />
           {/* A sibling of the status line, never inside its role="status". */}
           {fact?.kind === "restart" && (
-            <RestartNowButton slug={agent.slug} className="shrink-0 max-sm:hidden" />
+            <RestartNowButton agent={agent} className="shrink-0 max-sm:hidden" />
           )}
         </>
       }
@@ -149,7 +149,7 @@ function AgentActions({
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
       {live && <RecoveryActions agent={agent} />}
-      <ViewSwitch slug={agent.slug} view={view} inMenu />
+      <ViewSwitch agentRef={agent.ref} view={view} inMenu />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

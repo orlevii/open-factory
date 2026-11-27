@@ -5,6 +5,7 @@ import { Router } from "../messaging/router.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TerminateService } from "../spawning/terminate-service.ts";
+import { seedTestUser } from "../test/principals.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { AgentRuntime, DockerDeps } from "./agent-runtime.ts";
 import { AgentTerminatedError } from "./errors.ts";
@@ -272,7 +273,7 @@ test("a committed latch drops what was queued and cancels a pending apply-restar
   // Dropped from memory and rejected in the DB (a row committed after the transaction's update still says so).
   const [queued] = await h.t.sql<
     { state: string }[]
-  >`select state from messages where to_agent_id = ${h.agentId}`;
+  >`select state from messages where to_id = ${h.agentId}`;
   expect(queued?.state).toBe("rejected");
   h.rt.unmarkTerminated(); // a committed latch is never undone
   expect(h.rt.isTerminated()).toBe(true);
@@ -288,7 +289,7 @@ test("reload never clears the latch", async () => {
 test("reload latches a row terminated elsewhere", async () => {
   await h.makeRuntime();
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, reports_to_user = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
+    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, terminated_at = now(), terminated_by = null where id = ${h.agentId}`;
   await h.rt.reload();
   expect(h.rt.isTerminated()).toBe(true);
   expect(h.rt.live().status).toBe("terminated");
@@ -297,12 +298,12 @@ test("reload latches a row terminated elsewhere", async () => {
 test("compact, interrupt, restart and reset-session are refused once terminated", async () => {
   await h.makeRuntime({ errorKind: "resume", status: "errored" });
   h.rt.markTerminated({ committed: true });
-  await expect(h.rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
-  await expect(h.rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
   await expect(
     h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true }),
   ).rejects.toBeInstanceOf(AgentTerminatedError);
-  await expect(h.rt.resetSession({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.resetSession({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
   expect(h.driver.starts).toHaveLength(0);
 });
 
@@ -420,8 +421,8 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
   worldSeq += 1;
   const leadId = `lead-${worldSeq}`;
   const id = `kid-${worldSeq}`;
-  await insertAgent(h.t.sql, { id: leadId, slug: `lead${worldSeq}` });
-  await insertAgent(h.t.sql, { id, slug: `kid${worldSeq}`, reportsTo: leadId });
+  await insertAgent(h.t.sql, { id: leadId, handle: `lead${worldSeq}` });
+  await insertAgent(h.t.sql, { id, handle: `kid${worldSeq}`, reportsTo: leadId });
   await h.t.sql`update agents set kind = 'ephemeral', runtime = 'docker' where id = ${id}`;
   const driver = new FakeDriver();
   const docker = new Docker(driver);
@@ -482,6 +483,7 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     runtimes,
     router,
     log: silentLog,
+    publishPrincipal: async () => {},
   });
   const load = async (agentId: string) => {
     const r = await runtimes.load(agentId);
@@ -514,7 +516,8 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     procsOf,
     liveProcesses: (agentId = id) => procsOf(agentId).filter((p) => !p.exited),
     held: (agentId = id) => (holders().has(agentId) ? 1 : 0),
-    terminate: (by = "@or") => terminator.terminate(id, by),
+    /** Terminates as the human `by` (a handle). */
+    terminate: async (by = "or") => terminator.terminate(id, await seedTestUser(h.t.db, by)),
     /** Every gate opens: a start or pull they held resumes now, after the latch. */
     releaseGates: () => {
       gates.prepare?.resolve();
@@ -542,21 +545,21 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
       (
         await h.t.sql<
           { id: string }[]
-        >`select id from messages where to_agent_id = ${id} and state = 'pending'`
+        >`select id from messages where to_id = ${id} and state = 'pending'`
       ).map((r) => r.id),
     /** Anything the child sent after its termination committed: member updates (forwards) included. */
     sentAfterTermination: async () =>
       (
         await h.t.sql<{ kind: string; body: string }[]>`select m.kind, m.body from messages m
-          join agents a on a.id = m.from_agent_id
-          where m.from_agent_id = ${id} and m.created_at >= a.terminated_at`
+          join agents a on a.id = m.from_id
+          where m.from_id = ${id} and m.created_at >= a.terminated_at`
       ).map((r) => `${r.kind}: ${r.body}`),
     /** Every member update the child sent (its forwards to the spawner). */
     updatesFromChild: async () =>
       (
         await h.t.sql<
           { body: string }[]
-        >`select body from messages where from_agent_id = ${id} and kind = 'member_update' order by created_at`
+        >`select body from messages where from_id = ${id} and kind = 'member_update' order by created_at`
       ).map((r) => r.body),
     events: async () => (await h.store.after(id, 0, 1000)).map((e) => e.event),
     /** A started, idle child (its first turn ended). */
@@ -667,14 +670,14 @@ const states: {
       w.docker.removeError = new Error("the daemon refused");
     },
   },
-  { name: "already terminated", setup: async (w) => void (await w.terminate("@lead")) },
+  { name: "already terminated", setup: async (w) => void (await w.terminate("lead")) },
 ];
 
 test.each(states)("terminate from $name", async ({ setup, stuck = false }) => {
   const w = await world();
   await setup(w);
   const startsBefore = w.procsOf(w.id).length;
-  expect(await w.terminate("@or")).toEqual({ status: "terminated" });
+  expect(await w.terminate("or")).toEqual({ status: "terminated" });
   w.releaseGates(); // prepare/pull gates resolve now: the latch must refuse the launch
   await w.settled();
 
@@ -823,7 +826,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
-    recipients: ["@test"],
+    recipientIds: [w.id],
     body: "mid-batch",
     urgent: false,
   });
@@ -901,7 +904,7 @@ test("a stuck terminated agent records stop_escalated once, however many sweeps 
   const w = await world();
   await makeStopFailed(w);
   w.docker.removeError = new Error("the daemon refused");
-  await w.terminate("@or");
+  await w.terminate("or");
   await w.settled();
   const escalations = async () => (await w.events()).filter((e) => e.type === "stop_escalated");
   const before = (await escalations()).length;
@@ -958,7 +961,7 @@ test("last_activity_at is written after the batch commits, as its own statement 
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
-    recipients: ["@test"],
+    recipientIds: [w.id],
     body: "mid-batch",
     urgent: false,
   });

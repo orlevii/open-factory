@@ -4,6 +4,7 @@ import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ColourField, colourName } from "@/features/agents/colour-field";
+import { refFor } from "@/test/refs";
 
 function Harness({
   start = null,
@@ -15,7 +16,12 @@ function Harness({
   const [v, setV] = useState<number | null>(start);
   return (
     <TooltipProvider>
-      <ColourField slug="lead" value={v} onChange={setV} avatarVersion={avatarVersion} />
+      <ColourField
+        agentRef={refFor("lead")}
+        value={v}
+        onChange={setV}
+        avatarVersion={avatarVersion}
+      />
     </TooltipProvider>
   );
 }

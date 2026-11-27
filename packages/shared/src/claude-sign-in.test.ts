@@ -39,7 +39,7 @@ describe("schemas", () => {
       messageId: "m",
       kind: "credential",
       read: false,
-      from: { kind: "factory", name: "factory" },
+      from: { kind: "factory" },
       to: "everyone",
       preview: "work expires on 2027-11-12.",
       urgent: false,

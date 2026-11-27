@@ -4,6 +4,7 @@ import type { ServerMessage, UserAdminItem } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
 /** S10 §9.4, §13, AC6: disable and enable users. */
@@ -65,9 +66,9 @@ describe("disable", () => {
   });
 
   test("a user who manages agents is refused with 409 manages_agents naming them; nothing is disabled or signed out", async () => {
-    await h.seedAgent({ slug: "ada", reportsToUser: al.user.id });
-    await h.seedAgent({ slug: "bob", reportsToUser: al.user.id });
-    await h.seedAgent({ slug: "cy", reportsToUser: or.user.id });
+    await h.seedAgent({ handle: "ada", reportsTo: al.user.id });
+    await h.seedAgent({ handle: "bob", reportsTo: al.user.id });
+    await h.seedAgent({ handle: "cy", reportsTo: or.user.id });
     const res = await as(or, "POST", `/api/users/${al.user.id}/disable`);
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatchObject({ code: "manages_agents", agents: ["ada", "bob"] });
@@ -77,9 +78,9 @@ describe("disable", () => {
   });
 
   test("once the agents are moved to another manager, the human can be disabled", async () => {
-    await h.seedAgent({ slug: "ada", reportsToUser: al.user.id });
+    await h.seedAgent({ handle: "ada", reportsTo: al.user.id });
     expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(409);
-    await h.sql`update agents set reports_to_user = ${or.user.id} where slug = 'ada'`;
+    await h.sql`update agents set reports_to = ${or.user.id} where id = (select id from principals where handle = 'ada')`;
     expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(200);
   });
 
@@ -258,6 +259,7 @@ test("GET /api/users lists every user with disabledAt", async () => {
   expect(users.map((u) => u.handle).sort()).toEqual(["al", "or"]);
   expect(users.find((u) => u.handle === "or")).toEqual({
     id: or.user.id,
+    ref: or.user.ref,
     name: or.input.name,
     handle: "or",
     email: or.input.email,
@@ -273,7 +275,7 @@ test.each([
   ["POST", "/api/users/x/enable"],
 ] as const)("%s %s: no session and an agent token get 401", async (method, url) => {
   expect((await h.app.inject({ method, url })).statusCode).toBe(401);
-  const agent = await h.seedAgent({ slug: "lead" });
+  const agent = await h.seedAgent({ handle: "lead" });
   const { token } = h.app.agentTokens.mint(agent.id);
   const res = await h.app.inject({ method, url, headers: { authorization: `Bearer ${token}` } });
   expect(res.statusCode).toBe(401);
@@ -290,7 +292,10 @@ describe("disabledAt can't be set by the user (V2)", () => {
     } catch {
       // Rejected outright (FIELD_NOT_ALLOWED) is fine too.
     }
-    const rows = await h.db.select().from(schema.users).where(eq(schema.users.handle, "eve"));
+    const eve = (await principalsByHandles(h.db, ["eve"])).get("eve");
+    const rows = eve
+      ? await h.db.select().from(schema.users).where(eq(schema.users.id, eve.id))
+      : [];
     expect(rows.every((r) => r.disabledAt === null)).toBe(true);
     if (created) expect(await meStatus({ cookie: created.cookie })).toBe(200);
   });

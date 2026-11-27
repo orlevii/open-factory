@@ -30,7 +30,7 @@ let n = 0;
 async function agent(o: { docker?: boolean } = {}) {
   n += 1;
   const id = `rc${n}`;
-  await insertAgent(h.t.sql, { id, slug: `rc-${n}` });
+  await insertAgent(h.t.sql, { id, handle: `rc-${n}` });
   if (o.docker) await h.t.sql`update agents set runtime = 'docker' where id = ${id}`;
   return id;
 }
@@ -115,7 +115,7 @@ function world(
     const row = await h.store.createMessage({
       from: { userId: "u1" },
       toAgentId: agentId,
-      recipients: [`@x`],
+      recipientIds: [agentId],
       body,
       urgent: false,
     });
@@ -127,7 +127,7 @@ function world(
 const configRows = (agentId: string) =>
   h.t.sql<{ body: string; state: string }[]>`
     select body, state from messages
-    where to_agent_id = ${agentId} and kind = 'system' and notice = 'config_changed'`;
+    where to_id = ${agentId} and kind = 'system' and notice = 'config_changed'`;
 
 test("every start gets `loaded`: a running agent's started config, undefined once it exits or when not loaded", async () => {
   const w = world();

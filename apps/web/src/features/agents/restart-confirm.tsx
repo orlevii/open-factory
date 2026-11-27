@@ -9,7 +9,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
  */
 
 type Open = {
-  slug: string;
+  ref: string;
+  handle: string;
   tasks: string[];
   crons: string[];
   /** "Restart anyway": the forced restart, run by the lifecycle (which holds the query client). */
@@ -29,7 +30,7 @@ const subscribe = (l: () => void) => {
 };
 const getState = () => state;
 
-/** Opens the confirm for `slug`. Focus returns to what has it now (the ⋯ the menu handed back to), if it's still there. */
+/** Opens the confirm for the agent. Focus returns to what has it now (the ⋯ the menu handed back to), if it's still there. */
 export function showRestartConfirm(o: Open): void {
   const at = document.activeElement;
   set({ open: true, shown: o, returnTo: at instanceof HTMLElement ? at : null });
@@ -39,14 +40,14 @@ const MAX_LISTED = 5;
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /** The dialog's sentence and its lists: at most 5 each, then how many more. Nothing is said about an empty list. */
-export function lostWorkBody(slug: string, tasks: string[], crons: string[]) {
+export function lostWorkBody(handle: string, tasks: string[], crons: string[]) {
   const named = tasks.length <= MAX_LISTED ? ` (${tasks.join(", ")})` : "";
   const parts = [
     ...(tasks.length > 0 ? [`${count(tasks.length, "background task")}${named}`] : []),
     ...(crons.length > 0 ? [count(crons.length, "cron")] : []),
   ];
   return {
-    text: `@${slug} has ${parts.join(" and ")}. Restarting stops them.`,
+    text: `@${handle} has ${parts.join(" and ")}. Restarting stops them.`,
     tasks: tasks.slice(0, MAX_LISTED),
     crons: crons.slice(0, MAX_LISTED),
     moreTasks: Math.max(0, tasks.length - MAX_LISTED),
@@ -54,13 +55,14 @@ export function lostWorkBody(slug: string, tasks: string[], crons: string[]) {
   };
 }
 
-const OUTCOME: Record<RestartStatus, (slug: string) => string> = {
+const OUTCOME: Record<RestartStatus, (handle: string) => string> = {
   restarting: (s) => `Restarting @${s}.`,
   restart_pending: (s) => `Restarts @${s} when its task results are in.`,
   restarted_idle: (s) => `@${s} restarted; its next start uses the latest config.`,
   not_running: (s) => `@${s} isn't running; its next start uses the latest config.`,
 };
-export const restartOutcomeText = (slug: string, status: RestartStatus) => OUTCOME[status](slug);
+export const restartOutcomeText = (handle: string, status: RestartStatus) =>
+  OUTCOME[status](handle);
 
 function List({ items, more, kind }: { items: string[]; more: number; kind: string }) {
   if (items.length === 0) return null;
@@ -80,13 +82,13 @@ function List({ items, more, kind }: { items: string[]; more: number; kind: stri
 export function RestartConfirmHost() {
   const { open, shown, returnTo } = useSyncExternalStore(subscribe, getState, getState);
   if (!shown) return null;
-  const { slug } = shown;
-  const body = lostWorkBody(slug, shown.tasks, shown.crons);
+  const { handle } = shown;
+  const body = lostWorkBody(handle, shown.tasks, shown.crons);
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={(o) => set({ ...state, open: o })}
-      title={`Restart @${slug} now?`}
+      title={`Restart @${handle} now?`}
       body={body.text}
       detail={
         <>

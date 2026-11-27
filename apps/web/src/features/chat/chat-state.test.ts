@@ -15,10 +15,9 @@ const at = (i: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, i)).toISOString(
 const msg = (i: number, o: Partial<Extract<ChatEntry, { kind: "message" }>> = {}): ChatEntry => ({
   kind: "message",
   id: `m${i}`,
-  from: "@ada",
-  fromKind: "agent",
+  from: { kind: "agent", ref: "ada00000" },
   body: `body ${i}`,
-  recipients: ["@or"],
+  recipients: [{ ref: "0r000000" }],
   urgent: false,
   createdAt: at(i),
   state: "delivered",
@@ -56,7 +55,7 @@ test("the union never drops a cached entry the refetch lacks", () => {
 });
 
 test("pending to delivered replaces the entry under the same key", () => {
-  const pending = msg(1, { from: "@or", fromKind: "human", state: "pending" });
+  const pending = msg(1, { from: { kind: "human", ref: "0r000000" }, state: "pending" });
   const delivered = { ...pending, state: "delivered" as const };
   const next = unionEntries([pending, msg(2)], [delivered]);
   expect(entryKey(next[0] as ChatEntry)).toBe(entryKey(pending));
@@ -124,7 +123,7 @@ test("flattenPages lists older pages first and each entry once", () => {
 
 test("live keys: an agent's new message, never yours or a held one or the working line's outcome", () => {
   const cursor = new Set(["m1"]);
-  const mine = msg(3, { from: "@or", fromKind: "human" });
+  const mine = msg(3, { from: { kind: "human", ref: "0r000000" } });
   const outcome: ChatEntry = {
     kind: "turn_outcome",
     key: "m3",
@@ -138,11 +137,20 @@ test("live keys: an agent's new message, never yours or a held one or the workin
 });
 
 const sending = (i: number) =>
-  msg(i, { id: "c1", clientMessageId: "c1", fromKind: "human", state: "pending" });
+  msg(i, {
+    id: "c1",
+    clientMessageId: "c1",
+    from: { kind: "human", ref: "0r000000" },
+    state: "pending",
+  });
 
 test("your send is its server row's key: the row replaces it in the union, one entry", () => {
   const optimistic = sending(5);
-  const server = msg(5, { id: "srv", clientMessageId: "c1", fromKind: "human" });
+  const server = msg(5, {
+    id: "srv",
+    clientMessageId: "c1",
+    from: { kind: "human", ref: "0r000000" },
+  });
   expect(entryKey(optimistic)).toBe(entryKey(server));
   const merged = unionEntries([msg(1), optimistic], [server]);
   expect(merged).toHaveLength(2);

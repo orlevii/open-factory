@@ -21,6 +21,7 @@ import {
   UNCONFIRMED,
 } from "@/components/composer/composer";
 import { Button } from "@/components/ui/button";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { readDraft, sessionDraftKey, writeDraft } from "@/lib/drafts";
 import { postInput, postInterrupt } from "./api";
 import { useCommandSource } from "./commands";
@@ -54,14 +55,15 @@ export function focusReadOnly(preferPin: boolean) {
   (pin ?? document.querySelector<HTMLElement>("[data-readonly-line]"))?.focus();
 }
 
-export const terminatedNotSent = (slug: string) => `@${slug} was terminated, so this wasn't sent.`;
+export const terminatedNotSent = (handle: string) =>
+  `@${handle} was terminated, so this wasn't sent.`;
 
 /**
  * A terminated agent's composer (S7 UI design §5.3): one muted, focusable line. An unsent draft can
  * be copied out (then it is cleared); `notice` is a send that raced the termination.
  */
-export function TerminatedComposer({ slug, notice }: { slug: string; notice?: string }) {
-  const [draft, setDraft] = useState(() => readDraft(sessionDraftKey(slug)));
+export function TerminatedComposer({ agentRef, notice }: { agentRef: string; notice?: string }) {
+  const [draft, setDraft] = useState(() => readDraft(sessionDraftKey(agentRef)));
   const [copyFailed, setCopyFailed] = useState(false);
   const lineRef = useRef<HTMLParagraphElement>(null);
   async function copy() {
@@ -70,7 +72,7 @@ export function TerminatedComposer({ slug, notice }: { slug: string; notice?: st
       const write = navigator.clipboard?.writeText(draft);
       if (!write) throw new Error("no clipboard");
       await write;
-      writeDraft(sessionDraftKey(slug), "");
+      writeDraft(sessionDraftKey(agentRef), "");
       setDraft("");
       lineRef.current?.focus(); // the button is gone
     } catch {
@@ -117,7 +119,7 @@ function checkBody(text: string): string | undefined {
 
 type SessionComposerProps = {
   ref?: Ref<ComposerHandle>;
-  slug: string;
+  agentRef: string;
   agent: AgentSummary;
   /** The session's `stopEpoch`: Stop resets on every turn edge (U3 §6.1) and when a stop went
    *  unconfirmed. Without one the composer shows no Stop. */
@@ -145,7 +147,7 @@ type SessionComposerProps = {
 /** The props compared by identity: every prop but `agent` (keep this list in step with the type). */
 const IDENTITY_KEYS = [
   "ref",
-  "slug",
+  "agentRef",
   "stopEpoch",
   "waiting",
   "onQueued",
@@ -180,7 +182,7 @@ function sameProps(a: SessionComposerProps, b: SessionComposerProps): boolean {
  */
 export const Composer = memo(function SessionComposer({
   ref,
-  slug,
+  agentRef,
   agent,
   stopEpoch,
   waiting = false,
@@ -205,7 +207,8 @@ export const Composer = memo(function SessionComposer({
     }),
     [],
   );
-  useEffect(() => registerComposerFocus(slug, () => inner.current?.focus()), [slug]);
+  useEffect(() => registerComposerFocus(agentRef, () => inner.current?.focus()), [agentRef]);
+  const handle = useHandle(agentRef);
   // Read when a POST settles, long after the render that started it.
   const landedRef = useRef(landed);
   useEffect(() => {
@@ -223,11 +226,11 @@ export const Composer = memo(function SessionComposer({
         raw: true,
         at: new Date().toISOString(),
       });
-      repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
+      repinTimeline(agentRef); // sending follows the conversation again (U3 §8.1)
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
       try {
-        const item = await postInput(slug, { text: body, clientMessageId }, abort.signal);
+        const item = await postInput(agentRef, { text: body, clientMessageId }, abort.signal);
         // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
         if (item) onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
         onSent?.();
@@ -251,19 +254,19 @@ export const Composer = memo(function SessionComposer({
         onSendFailed?.(clientMessageId);
         if (e instanceof ApiError && e.code === "agent_terminated") {
           // The draft stays: the read-only line that replaces the composer offers to copy it.
-          onTerminated?.(terminatedNotSent(slug));
-          throw new SubmitError(terminatedNotSent(slug));
+          onTerminated?.(terminatedNotSent(handle));
+          throw new SubmitError(terminatedNotSent(handle));
         }
         throw new SubmitError(e instanceof ApiError ? e.message : NETWORK_ERROR);
       } finally {
         clearTimeout(timer);
       }
     },
-    [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
+    [agentRef, handle, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
-  const onStop = useCallback(() => postInterrupt(slug), [slug]);
+  const onStop = useCallback(() => postInterrupt(agentRef), [agentRef]);
   // The raw session has no `@` or files: what it sends is what Claude reads.
-  const slash = useCommandSource(slug);
+  const slash = useCommandSource(agentRef);
   // The session view prefetches the list; an opening menu fetches it if that hasn't (`watch`).
   const completions = useMemo(() => ({ slash }), [slash]);
 
@@ -279,13 +282,13 @@ export const Composer = memo(function SessionComposer({
       text: (
         <>
           Goes to Claude as typed ·{" "}
-          <Link to="/agents/$slug/chat" params={{ slug }} className={LINK_CLASS}>
+          <Link to="/agents/$ref/chat" params={{ ref: agentRef }} className={LINK_CLASS}>
             Message {displayName} in Chat
           </Link>
         </>
       ),
     }),
-    [slug, displayName],
+    [agentRef, displayName],
   );
   const note = waitsForNewSession ? WAITS_NOTE : agent.turnOpen ? RAW_TURN_NOTE : restNote;
   return (
@@ -294,7 +297,7 @@ export const Composer = memo(function SessionComposer({
       ref={inner}
       id="composer"
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"
-      draftKey={sessionDraftKey(slug)}
+      draftKey={sessionDraftKey(agentRef)}
       label={`Message to ${agent.displayName}`}
       placeholder="Raw input to Claude · / for commands"
       onSubmit={onSubmit}

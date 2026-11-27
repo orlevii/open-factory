@@ -1,5 +1,5 @@
 import websocket from "@fastify/websocket";
-import { clientMessageSchema, type ServerMessage } from "@open-factory/shared";
+import { clientMessageSchema, normaliseRef, type ServerMessage } from "@open-factory/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { trustedOrigins } from "../auth/origins.ts";
 import { getUser } from "../auth/require-user.ts";
@@ -85,11 +85,11 @@ export async function wsRoutes(app: FastifyInstance) {
         throw err;
       };
       const rt = await app.runtimes
-        .bySlug(agent)
+        .byRef(agent)
         .catch((err) => (current() ? failed(err) : undefined));
       if (!current()) return;
       if (!rt)
-        return send({ type: "error", code: "agent_not_found", message: `No agent named ${agent}` });
+        return send({ type: "error", code: "agent_not_found", message: "No agent at this ref" });
       let live = false;
       let cancelled = false;
       let lastSent = afterSeq;
@@ -103,7 +103,7 @@ export async function wsRoutes(app: FastifyInstance) {
         send(m);
       };
       // U3 §11.3: live frames that arrive during the replay are dropped; the snapshot sent after it supersedes them.
-      const off = app.bus.subscribe(agent, (m) => {
+      const off = app.bus.subscribe(rt.agent.id, (m) => {
         if (live) forward(m);
         else if (m.type !== "live") buffer.push(m);
       });
@@ -147,17 +147,24 @@ export async function wsRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return send({ type: "error", code: "bad_message", message: "Unknown message" });
       const m = parsed.data;
-      if (m.type === "ping") send({ type: "pong" });
-      else if (m.type === "subscribe")
-        void subscribe(m.agent, m.afterSeq).catch((err) =>
+      if (m.type === "ping") return send({ type: "pong" });
+      // The canonical (lowercase) ref keys every map and appears in every frame sent back.
+      const agent = normaliseRef(m.agent);
+      if (!agent) {
+        if (m.type === "subscribe")
+          send({ type: "error", code: "agent_not_found", message: "No agent at this ref" });
+        return;
+      }
+      if (m.type === "subscribe")
+        void subscribe(agent, m.afterSeq).catch((err) =>
           request.log.error({ err }, "subscribe failed"),
         );
       else if (m.type === "unsubscribe") {
-        nextGeneration(m.agent);
-        stop(m.agent);
+        nextGeneration(agent);
+        stop(agent);
       } else if (m.type === "live_snapshot") {
         // Only for an agent this socket is subscribed to and caught up on: the same reach as its live frames.
-        const snapshot = snapshots.get(m.agent)?.();
+        const snapshot = snapshots.get(agent)?.();
         if (snapshot) send(snapshot);
       }
     });

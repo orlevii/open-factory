@@ -72,7 +72,7 @@ test("a status event updates the credential's rl_* columns, appends nothing and 
 
 test("the status is recorded on the credential the process was launched with, not the row's current one", async () => {
   await busy();
-  await insertAgent(h.t.sql, { id: `${h.agentId}-other`, slug: `${h.agentId}-other` });
+  await insertAgent(h.t.sql, { id: `${h.agentId}-other`, handle: `${h.agentId}-other` });
   await h.t
     .sql`update agents set credential_id = ${`cred-${h.agentId}-other`} where id = ${h.agentId}`;
   await h.rt.reload();

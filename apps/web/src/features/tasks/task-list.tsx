@@ -5,6 +5,7 @@ import { type KeyboardEvent, memo, useEffect, useMemo, useRef, useState } from "
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
 import { onRowKeyDown, skipFocusPreload } from "@/lib/row-nav";
@@ -17,7 +18,7 @@ import { isDefault } from "./task-filters";
 
 function Assignee({ t }: { t: TaskSummary }) {
   if (!t.assignee) return <span className="text-muted-foreground">Unassigned</span>;
-  const chip = <AgentChip slug={t.assignee.slug} name={t.assignee.displayName} size={20} />;
+  const chip = <AgentChip agentRef={t.assignee.ref} name={t.assignee.displayName} size={20} />;
   if (t.assignee.ended)
     return (
       <span data-assignee className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
@@ -34,9 +35,9 @@ function Assignee({ t }: { t: TaskSummary }) {
 
 const BLOCKERS_SHOWN = 3;
 
-function label(t: TaskSummary) {
+function label(t: TaskSummary, title: string) {
   const assignee = t.assignee
-    ? `assigned to @${t.assignee.slug}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
+    ? `assigned to @${t.assignee.handle}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
     : "unassigned";
   const blocked = t.blockedBy.length
     ? `, blocked by ${t.blockedBy.slice(0, BLOCKERS_SHOWN).join(", ")}${
@@ -45,7 +46,7 @@ function label(t: TaskSummary) {
           : ""
       }`
     : "";
-  return `${t.key}, ${t.title}, ${STATUS[t.status].label}${blocked}, ${assignee}`;
+  return `${t.key}, ${title}, ${STATUS[t.status].label}${blocked}, ${assignee}`;
 }
 
 /** Space peeks only when the list keeps 24rem beside the 30rem sheet (spec §12); else the page opens. */
@@ -83,6 +84,7 @@ const Row = memo(function Row({
   /** The peek shows this task. */
   selected: boolean;
 }) {
+  const title = usePlainMentions(t.title);
   const at = new Date(t.updatedAt);
   const time = formatInboxTime(at, now);
   return (
@@ -91,7 +93,7 @@ const Row = memo(function Row({
         to="/tasks/$key"
         params={{ key: t.key }}
         search={{}}
-        aria-label={label(t)}
+        aria-label={label(t, title)}
         aria-current={selected ? "true" : undefined}
         onFocus={skipFocusPreload}
         data-task-key={t.key}
@@ -99,7 +101,7 @@ const Row = memo(function Row({
         className="of-row grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
       >
         <span className="font-mono text-[0.8125rem] leading-5 text-foreground">{t.key}</span>
-        <span className="min-w-0 truncate leading-5 text-foreground">{t.title}</span>
+        <span className="min-w-0 truncate leading-5 text-foreground">{title}</span>
         {/* One element tree for both layouts: below md the status, assignee and meta flow on line 2; from md the
             status and assignee take their columns on line 1 and the meta sits under the title. */}
         <span className="col-start-2 flex flex-wrap items-center gap-x-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground md:contents">

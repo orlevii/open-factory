@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { seedTestPrincipal, seedTestUser, testManagerUserId } from "../test/principals.ts";
 import { LibraryIndex } from "./library-index.ts";
 
 let tdb: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   tdb = await createTestDb();
+  await seedTestUser(tdb.db, "or");
 });
 afterAll(async () => {
   await tdb.close();
@@ -25,7 +26,7 @@ test("the database store reads live sources and live agents, and usedBy counts t
     commit: "a".repeat(40),
     state: "ready" as const,
     startedAt: new Date(),
-    addedBy: "@or",
+    addedById: "u-or",
     addedAt: new Date(),
   };
   await db.insert(schema.skillSources).values([
@@ -36,17 +37,16 @@ test("the database store reads live sources and live agents, and usedBy counts t
     .insert(schema.credentials)
     .values({ id: randomUUID(), name: "c", kind: "api_key", valueEnc: Buffer.from("x") })
     .returning();
-  const agent = async (slug: string, o: { archivedAt?: Date; config?: object } = {}) => {
-    await claimTestHandle(db, slug, "agent");
+  const agent = async (handle: string, o: { archivedAt?: Date; config?: object } = {}) => {
+    const principal = await seedTestPrincipal(db, "agent", handle);
     await db.insert(schema.agents).values({
-      id: randomUUID(),
-      slug,
-      displayName: slug,
+      id: principal.id,
+      displayName: handle,
       template: "dev",
       config: o.config ?? {},
       runtime: "local",
       credentialId: cred?.id,
-      reportsToUser: await testManagerUserId(db),
+      reportsTo: await testManagerUserId(db),
       archivedAt: o.archivedAt,
     });
   };

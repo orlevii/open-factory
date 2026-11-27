@@ -38,16 +38,19 @@ function once<T>(key: string, run: () => Promise<T>): Promise<T> {
   return p;
 }
 
-const refresh = (qc: QueryClient, slug: string) =>
+/** What the lifecycle actions need of an agent: its ref keys requests and caches, its handle names it in toasts. */
+export type AgentKey = Pick<AgentSummary, "ref" | "handle">;
+
+const refresh = (qc: QueryClient, ref: string) =>
   Promise.all([
     qc.invalidateQueries({ queryKey: ["agents"] }),
-    qc.invalidateQueries({ queryKey: ["agent", slug] }),
+    qc.invalidateQueries({ queryKey: ["agent", ref] }),
   ]);
 
 /** " Pending messages are sent with the next message." when the restored agent has some queued. */
-async function pendingNote(qc: QueryClient, slug: string): Promise<string> {
+async function pendingNote(qc: QueryClient, ref: string): Promise<string> {
   try {
-    const d = await qc.fetchQuery(agentDetailQueryOptions(slug));
+    const d = await qc.fetchQuery(agentDetailQueryOptions(ref));
     return d.queue.some((q) => q.kind === "message")
       ? " Pending messages are sent with the next message."
       : "";
@@ -61,22 +64,22 @@ async function pendingNote(qc: QueryClient, slug: string): Promise<string> {
  * the menu is gone by the time the server answers. A staged reset is not presented as applied.
  */
 export async function resetPersona(
-  slug: string,
+  agent: AgentKey,
   qc: QueryClient,
   template?: string,
 ): Promise<void> {
-  await once(`reset-persona:${slug}`, async () => {
+  await once(`reset-persona:${agent.ref}`, async () => {
     try {
-      const r = await api.resetPersona(slug);
+      const r = await api.resetPersona(agent.ref);
       notify({
         text:
           r.applied === "on_restart"
-            ? `Persona resets when @${slug} restarts.`
+            ? `Persona resets when @${agent.handle} restarts.`
             : r.backupDir
               ? "Persona reset. Previous file saved."
               : "Persona reset.",
       });
-      void refresh(qc, slug);
+      void refresh(qc, agent.ref);
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
       let text = reason(err);
@@ -87,17 +90,17 @@ export async function resetPersona(
           text = templateProblemText(template, code === "template_invalid" ? "invalid" : "missing");
         void qc.invalidateQueries({ queryKey: ["templates", template] });
       }
-      notify({ text: `Couldn't reset the persona of @${slug}: ${text}` });
+      notify({ text: `Couldn't reset the persona of @${agent.handle}: ${text}` });
     }
   });
 }
 
 /**
- * Archives the agent and toasts "Archived @slug." with Undo. Today's behaviour has no confirmation;
+ * Archives the agent and toasts "Archived @handle." with Undo. Today's behaviour has no confirmation;
  * `confirm`, when given, is asked first and a false answer cancels.
  */
 export async function archiveAgent(
-  agent: Pick<AgentSummary, "slug">,
+  agent: AgentKey,
   qc: QueryClient,
   {
     confirm,
@@ -108,25 +111,25 @@ export async function archiveAgent(
     onChanged?: () => void;
   } = {},
 ): Promise<void> {
-  const slug = agent.slug;
+  const { ref, handle } = agent;
   if (confirm && !(await confirm())) return;
-  await once(`archive:${slug}`, async () => {
+  await once(`archive:${ref}`, async () => {
     try {
-      await api.archiveAgent(slug);
+      await api.archiveAgent(ref);
     } catch (err) {
       // The server's message, whatever the blocker: reports to move, or live spawned agents to
       // terminate (both `has_reports`), each with its own advice.
-      notify({ text: `Couldn't archive @${slug}: ${reason(err)}` });
+      notify({ text: `Couldn't archive @${handle}: ${reason(err)}` });
       return;
     }
-    void refresh(qc, slug);
+    void refresh(qc, ref);
     onChanged?.();
     notify({
-      text: `Archived @${slug}.`,
+      text: `Archived @${handle}.`,
       // A failure throws to the toaster, which toasts the server's message.
       undo: async () => {
-        await api.unarchiveAgent(slug);
-        await refresh(qc, slug);
+        await api.unarchiveAgent(ref);
+        await refresh(qc, ref);
         onChanged?.();
       },
     });
@@ -134,27 +137,27 @@ export async function archiveAgent(
 }
 
 /**
- * Restores an archived agent. From a menu it toasts "Restored @slug." or the failure; `inline` (a
+ * Restores an archived agent. From a menu it toasts "Restored @handle." or the failure; `inline` (a
  * Restore button still on screen) toasts nothing. Resolves to the failure text, or undefined when
  * the agent was restored; a call made while a restore is in flight gets that restore's result.
  */
 export async function restoreAgent(
-  slug: string,
+  agent: AgentKey,
   qc: QueryClient,
   { inline = false, onChanged }: { inline?: boolean; onChanged?: () => void } = {},
 ): Promise<string | undefined> {
-  return once(`restore:${slug}`, async () => {
+  return once(`restore:${agent.ref}`, async () => {
     try {
-      await api.unarchiveAgent(slug);
+      await api.unarchiveAgent(agent.ref);
     } catch (err) {
-      const text = `Couldn't restore @${slug}: ${reason(err)}`;
+      const text = `Couldn't restore @${agent.handle}: ${reason(err)}`;
       if (!inline) notify({ text });
       return text;
     }
-    const note = inline ? "" : await pendingNote(qc, slug);
-    await refresh(qc, slug);
+    const note = inline ? "" : await pendingNote(qc, agent.ref);
+    await refresh(qc, agent.ref);
     onChanged?.();
-    if (!inline) notify({ text: `Restored @${slug}.${note}` });
+    if (!inline) notify({ text: `Restored @${agent.handle}.${note}` });
     return undefined;
   });
 }
@@ -163,9 +166,9 @@ export async function restoreAgent(
 // and it outlives the menu or button that started it.
 const latch = new Map<string, { responded: boolean; framed: boolean }>();
 const latchListeners = new Set<() => void>();
-function setLatch(slug: string, next: { responded: boolean; framed: boolean } | undefined) {
-  if (next) latch.set(slug, next);
-  else if (!latch.delete(slug)) return;
+function setLatch(ref: string, next: { responded: boolean; framed: boolean } | undefined) {
+  if (next) latch.set(ref, next);
+  else if (!latch.delete(ref)) return;
   for (const l of latchListeners) l();
 }
 const subscribeLatch = (l: () => void) => {
@@ -175,10 +178,10 @@ const subscribeLatch = (l: () => void) => {
 
 /** Pending from the click until both the response and the next status frame for the agent are in, or an
  *  `error` event arrives, whichever comes first. */
-export const useRestartPending = (slug: string): boolean =>
+export const useRestartPending = (ref: string): boolean =>
   useSyncExternalStore(
     subscribeLatch,
-    () => latch.has(slug),
+    () => latch.has(ref),
     () => false,
   );
 
@@ -203,24 +206,24 @@ export function resetRestartLatch(): void {
 }
 
 /** The request is in: toast the outcome, end the latch unless a status frame is still due, refresh. */
-function settleRestart(slug: string, qc: QueryClient, status: RestartStatus): void {
-  notify({ text: restartOutcomeText(slug, status) });
-  const l = latch.get(slug);
+function settleRestart(agent: AgentKey, qc: QueryClient, status: RestartStatus): void {
+  notify({ text: restartOutcomeText(agent.handle, status) });
+  const l = latch.get(agent.ref);
   // Only a restart that is starting is followed by a status frame.
-  if (status !== "restarting" || l?.framed) setLatch(slug, undefined);
+  if (status !== "restarting" || l?.framed) setLatch(agent.ref, undefined);
   else if (l) l.responded = true;
-  void refresh(qc, slug);
+  void refresh(qc, agent.ref);
 }
 
 /** The confirm's "Restart anyway": the same latch, dedupe and refresh as Restart now. A failure throws
  *  to the dialog, which shows it and stays open. */
-function forceRestart(slug: string, qc: QueryClient): Promise<void> {
-  return once(`restart:${slug}`, async () => {
-    setLatch(slug, { responded: false, framed: false });
+function forceRestart(agent: AgentKey, qc: QueryClient): Promise<void> {
+  return once(`restart:${agent.ref}`, async () => {
+    setLatch(agent.ref, { responded: false, framed: false });
     try {
-      settleRestart(slug, qc, await postRestart(slug, { force: true }));
+      settleRestart(agent, qc, await postRestart(agent.ref, { force: true }));
     } catch (err) {
-      setLatch(slug, undefined);
+      setLatch(agent.ref, undefined);
       throw err;
     }
   });
@@ -231,21 +234,21 @@ function forceRestart(slug: string, qc: QueryClient): Promise<void> {
  * failure toasts. The result lands on the agent it was asked for, wherever the asking menu has gone.
  * Resolves whether the restart request succeeded.
  */
-export function restartAgentNow(slug: string, qc: QueryClient): Promise<boolean> {
-  return once(`restart:${slug}`, async () => {
-    setLatch(slug, { responded: false, framed: false });
+export function restartAgentNow(agent: AgentKey, qc: QueryClient): Promise<boolean> {
+  return once(`restart:${agent.ref}`, async () => {
+    setLatch(agent.ref, { responded: false, framed: false });
     try {
-      settleRestart(slug, qc, await postRestart(slug));
+      settleRestart(agent, qc, await postRestart(agent.ref));
       return true;
     } catch (err) {
-      setLatch(slug, undefined);
+      setLatch(agent.ref, undefined);
       const data =
         err instanceof ApiError && err.code === "lost_work"
           ? lostWorkData.safeParse(err.body.data)
           : undefined;
       if (data?.success)
-        showRestartConfirm({ slug, ...data.data, force: () => forceRestart(slug, qc) });
-      else notify({ text: `Couldn't restart @${slug}: ${reason(err)}` });
+        showRestartConfirm({ ...agent, ...data.data, force: () => forceRestart(agent, qc) });
+      else notify({ text: `Couldn't restart @${agent.handle}: ${reason(err)}` });
       return false;
     }
   });

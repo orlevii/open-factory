@@ -2,6 +2,7 @@ import type { AgentSummary } from "@open-factory/shared";
 import { agentSummarySchema } from "@open-factory/shared";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { LiveLine, liveFact } from "./live-line";
 
 const now = new Date(2026, 10, 21, 15, 0);
@@ -10,7 +11,8 @@ const at = (h: number, m: number, dayOffset = 0) =>
 
 function agent(over: Partial<AgentSummary> = {}): AgentSummary {
   return agentSummarySchema.parse({
-    slug: "dev",
+    ref: refFor("dev"),
+    handle: "dev",
     displayName: "Dev",
     description: "",
     status: "idle",
@@ -18,7 +20,7 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     runtime: "local",
     kind: "persistent",
     template: "dev",
-    reportsTo: { kind: "user", handle: "or" },
+    reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
     model: { value: null, source: null },
     effort: { value: null, source: null },
     credential: null,
@@ -37,7 +39,7 @@ const ctx = { now };
 const terminated = {
   status: "terminated" as const,
   terminatedAt: at(14, 32),
-  terminatedBy: "lead",
+  terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
 };
 
 describe("liveFact priority", () => {
@@ -155,7 +157,7 @@ describe("terminated wording", () => {
     );
   });
   test("by the inactivity TTL", () => {
-    expect(liveFact(agent({ ...terminated, terminatedBy: "@factory" }), ctx)?.text).toMatch(
+    expect(liveFact(agent({ ...terminated, terminatedBy: null }), ctx)?.text).toMatch(
       /^Terminated after 3 days without activity · 14:32/,
     );
   });

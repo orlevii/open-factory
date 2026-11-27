@@ -25,8 +25,8 @@ export class AlreadyDeliveredError extends Error {
 /** U3 §6.4: a restore to a terminated or archived agent. `409 agent_ended`. */
 export class AgentEndedError extends Error {
   readonly code = "agent_ended";
-  constructor(slug: string) {
-    super(`@${slug} has ended and can't receive messages.`);
+  constructor(handle: string) {
+    super(`@${handle} has ended and can't receive messages.`);
     this.name = "AgentEndedError";
   }
 }
@@ -36,6 +36,6 @@ export function assertSender(
   row: MessageRow | undefined,
   o: { agentId: string; userId: string },
 ): asserts row is MessageRow {
-  if (row?.kind !== "message" || row.toAgentId !== o.agentId || row.fromUserId !== o.userId)
+  if (row?.kind !== "message" || row.toId !== o.agentId || row.fromId !== o.userId)
     throw new NotSenderError();
 }

@@ -14,6 +14,7 @@ export interface ReaperDeps {
     | "terminatedAmong"
     | "workspaceCandidates"
     | "agentById"
+    | "refOfAgent"
     | "setWorkspaceDeleted"
   >;
   runtimes: Pick<AgentRuntimes, "load">;
@@ -86,16 +87,16 @@ export class Reaper {
         const rt = await this.d.runtimes.load(a.id);
         if (!rt || !(await rt.reaperCheck(cutoff))) continue;
       } catch (err) {
-        this.d.log.error({ err, agent: a.slug }, "checking an idle spawned agent failed");
+        this.d.log.error({ err, agent: a.handle }, "checking an idle spawned agent failed");
         continue;
       }
       // Latched inside the check job; terminate runs from step 2, outside the agent's jobs. On failure the service
       // itself undoes this latch (provisional latches are counted): never undo it here too.
       await this.d.terminator
-        .terminate(a.id, "@factory", { latched: true })
+        .terminate(a.id, null, { latched: true })
         .catch((err: unknown) =>
           this.d.log.error(
-            { err, agent: a.slug },
+            { err, agent: a.handle },
             "terminating an idle spawned agent failed; retrying next sweep",
           ),
         );
@@ -134,7 +135,7 @@ export class Reaper {
           still.add(a.id);
       } catch (err) {
         still.add(a.id);
-        this.d.log.error({ err, agent: a.slug }, "cleaning up a stuck termination failed");
+        this.d.log.error({ err, agent: a.handle }, "cleaning up a stuck termination failed");
       }
     }
     return { still, dockerUnchecked };
@@ -151,7 +152,7 @@ export class Reaper {
       if (dockerUnchecked && a.runtime === "docker") continue;
       try {
         await this.d.workspace.deleteWorkspace(
-          a.slug,
+          await this.d.store.refOfAgent(a.id),
           async () => {
             const r = await this.d.store.agentById(a.id);
             return Boolean(r && !r.workspacePinned && !r.workspaceDeletedAt);
@@ -160,7 +161,7 @@ export class Reaper {
         );
       } catch (err) {
         this.d.log.error(
-          { err, agent: a.slug },
+          { err, agent: a.handle },
           "deleting a workspace failed; retrying next sweep",
         );
       }

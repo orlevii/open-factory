@@ -6,11 +6,12 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentName } from "@/features/agents/agent-tree";
 import { useAgent, useEndedAgent } from "@/features/agents/use-agent-index";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { cn } from "@/lib/utils";
 
 export type AgentChipAgent = Pick<
   AgentSummary,
-  "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion" | "color"
+  "ref" | "handle" | "displayName" | "template" | "status" | "kind" | "avatarVersion" | "color"
 >;
 
 type Size = 16 | 20 | 24;
@@ -72,45 +73,46 @@ export function TruncTooltip({
 
 /** What a chip shows: a full summary, or a projection of one (a speaker index, U3 §7.2). */
 export type ChipAgent = {
-  slug: string;
+  ref: string;
+  handle: string;
   displayName: string;
   kind?: AgentSummary["kind"];
   template?: string;
   avatarVersion?: string | null;
   color?: number | null;
   status?: AgentSummary["status"];
-  /** The name is the `@slug` stand-in: never repeat it as the slug. */
+  /** The name is the `@handle` stand-in: never repeat it as the handle. */
   stub?: boolean;
 };
 
 /** The chip's handle is hidden (a narrow speaker line hides it below 20rem): the name's tooltip
  *  carries it instead. */
-const slugHidden = (name: HTMLElement) => {
+const handleHidden = (name: HTMLElement) => {
   // The chip's second line: the name's line comes first.
-  const slug = name.closest("[data-chip]")?.children[1];
-  return !!slug && slug.getClientRects().length === 0;
+  const handle = name.closest("[data-chip]")?.children[1];
+  return !!handle && handle.getClientRects().length === 0;
 };
 
 function ChipView({
   a,
   size,
-  showSlug,
+  showHandle,
   badge,
   link,
   inline,
   handleInTooltip,
   className,
-  slugClassName,
+  handleClassName,
 }: {
   a: ChipAgent;
   size: Size;
-  showSlug: boolean;
+  showHandle: boolean;
   badge: boolean;
   link: boolean;
   inline: boolean;
   handleInTooltip: boolean;
   className?: string;
-  slugClassName?: string;
+  handleClassName?: string;
 }) {
   const classes = cn(
     "inline-flex min-w-0 items-center gap-1.5",
@@ -118,16 +120,16 @@ function ChipView({
     link && "rounded-sm hover:underline",
     className,
   );
-  const slugShown = showSlug && !a.stub;
+  const handleShown = showHandle && !a.stub;
   // The handle without its own line: only in the name's tooltip.
-  const tipHandle = handleInTooltip && !slugShown && !a.stub;
+  const tipHandle = handleInTooltip && !handleShown && !a.stub;
   // Each line is capped at the chip's width: stacked (items-start), a line would otherwise size to
   // its content and the name would never truncate.
   const body = (
     <>
       <span className="flex min-w-0 max-w-full items-center gap-1.5">
         <AgentAvatar
-          slug={a.slug}
+          agentRef={a.ref}
           template={a.template}
           avatarVersion={a.avatarVersion}
           color={a.color ?? null}
@@ -135,31 +137,35 @@ function ChipView({
           status={badge ? a.status : undefined}
         />
         <TruncTooltip
-          text={slugShown || tipHandle ? `${a.displayName} @${a.slug}` : a.displayName}
+          text={handleShown || tipHandle ? `${a.displayName} @${a.handle}` : a.displayName}
           dir="auto"
           className="min-w-[min(8rem,45%)]"
-          {...(slugShown ? { alsoWhen: slugHidden } : tipHandle ? { alsoWhen: () => true } : {})}
+          {...(handleShown
+            ? { alsoWhen: handleHidden }
+            : tipHandle
+              ? { alsoWhen: () => true }
+              : {})}
         >
           <AgentName agent={{ displayName: a.displayName, kind: a.kind ?? "persistent" }} />
         </TruncTooltip>
       </span>
-      {slugShown ? (
+      {handleShown ? (
         <TruncTooltip
-          text={`@${a.slug}`}
+          text={`@${a.handle}`}
           className={cn(
             "max-w-full font-mono text-muted-foreground",
             !inline && "@max-[24rem]:text-xs",
-            slugClassName,
+            handleClassName,
           )}
         >
-          <MiddleTruncate text={`@${a.slug}`} />
+          <MiddleTruncate text={`@${a.handle}`} />
         </TruncTooltip>
       ) : null}
     </>
   );
-  if (link)
+  if (link && a.ref)
     return (
-      <Link data-chip to="/agents/$slug/chat" params={{ slug: a.slug }} className={classes}>
+      <Link data-chip to="/agents/$ref/chat" params={{ ref: a.ref }} className={classes}>
         {body}
       </Link>
     );
@@ -172,13 +178,13 @@ function ChipView({
 
 type ChipProps = {
   size?: Size;
-  showSlug?: boolean;
+  showHandle?: boolean;
   badge?: boolean;
   /** Wrap the chip in a link to the agent's page. Never inside another link (a task-list row). */
   link?: boolean;
   className?: string;
-  /** Extra classes for the `@slug` (a speaker line hides it below a 20rem container). */
-  slugClassName?: string;
+  /** Extra classes for the `@handle` (a speaker line hides it below a 20rem container). */
+  handleClassName?: string;
   /** Name and handle stay on one line at any width, truncating (a speaker line); otherwise the
    *  chip stacks them below a 24rem container. */
   inline?: boolean;
@@ -186,69 +192,83 @@ type ChipProps = {
   handleInTooltip?: boolean;
 };
 
-function SlugChip({
-  slug,
+/** An agent no list holds (one named by a mention, or by a row from another page): the principals cache names it. */
+function UnlistedChip({
+  agentRef,
   name,
+  ...view
+}: ChipProps & { agentRef: string; name?: string }) {
+  const p = usePrincipal(agentRef).principal;
+  const handle = p?.handle ?? "…";
+  const a: ChipAgent = {
+    ref: agentRef,
+    handle,
+    displayName: name ?? p?.name ?? `@${handle}`,
+    stub: !name && !p,
+  };
+  return <ChipView a={a} {...chipViewProps(view)} />;
+}
+
+const chipViewProps = ({
   size = 20,
-  showSlug = false,
+  showHandle = false,
   badge = false,
   link = false,
   inline = false,
   handleInTooltip = false,
   className,
-  slugClassName,
-}: ChipProps & { slug: string; name?: string }) {
-  const live = useAgent(slug);
-  const ended = useEndedAgent(slug);
+  handleClassName,
+}: ChipProps) => ({
+  size,
+  showHandle,
+  badge,
+  link,
+  inline,
+  handleInTooltip,
+  className,
+  handleClassName,
+});
+
+function RefChip({ agentRef, name, ...props }: ChipProps & { agentRef: string; name?: string }) {
+  const live = useAgent(agentRef);
+  const ended = useEndedAgent(agentRef);
   const found = live ?? ended;
-  const a: ChipAgent = found ?? { slug, displayName: name ?? `@${slug}`, stub: !name };
-  return (
-    <ChipView
-      a={a}
-      size={size}
-      showSlug={showSlug}
-      badge={badge}
-      link={link}
-      inline={inline}
-      handleInTooltip={handleInTooltip}
-      className={className}
-      slugClassName={slugClassName}
-    />
-  );
+  if (found) return <ChipView a={found} {...chipViewProps(props)} />;
+  return <UnlistedChip agentRef={agentRef} name={name} {...props} />;
 }
 
-/** Avatar, display name and optionally the muted `@slug`. Pass the agent when you have it; pass
- *  `slug` to resolve it from the cached lists (live, then ended), else the slug stands in. */
+/** Avatar, display name and optionally the muted `@handle`. Pass the agent when you have it; pass
+ *  `agentRef` to resolve it from the cached lists (live, then ended), else the principals cache names it. */
 export function AgentChip(
-  props: ({ agent: AgentChipAgent | ChipAgent } | { slug: string; name?: string }) & ChipProps,
+  props: ({ agent: AgentChipAgent | ChipAgent } | { agentRef: string; name?: string }) & ChipProps,
 ) {
   if ("agent" in props) {
     const {
       agent,
       size = 20,
-      showSlug = false,
+      showHandle = false,
       badge = false,
       link = false,
       inline = false,
       handleInTooltip = false,
       className,
-      slugClassName,
+      handleClassName,
     } = props;
     return (
       <ChipView
         a={agent}
         size={size}
-        showSlug={showSlug}
+        showHandle={showHandle}
         badge={badge}
         link={link}
         inline={inline}
         handleInTooltip={handleInTooltip}
         className={className}
-        slugClassName={slugClassName}
+        handleClassName={handleClassName}
       />
     );
   }
-  return <SlugChip {...props} />;
+  return <RefChip {...props} />;
 }
 
 export function PrincipalChip({
@@ -256,12 +276,12 @@ export function PrincipalChip({
   size,
   link,
 }: {
-  principal: { kind: "agent"; slug: string } | { kind: "user"; handle: string };
+  principal: { kind: "agent" | "human"; ref: string; handle: string };
   size?: Size;
   /** Links an agent to its page; a human has none. */
   link?: boolean;
 }) {
   if (principal.kind === "agent")
-    return <AgentChip slug={principal.slug} size={size} link={link} />;
+    return <AgentChip agentRef={principal.ref} size={size} link={link} />;
   return <span className="min-w-0 truncate">@{principal.handle}</span>;
 }

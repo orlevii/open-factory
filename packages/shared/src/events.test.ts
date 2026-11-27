@@ -18,7 +18,7 @@ describe("event schemas", () => {
   test("session event DTO nests the event", () => {
     const dto = {
       seq: 3,
-      agentSlug: "dev",
+      agentRef: "devdevde",
       turnId: null,
       at: "2026-11-18T00:00:00.000Z",
       event: { type: "turn_started" },

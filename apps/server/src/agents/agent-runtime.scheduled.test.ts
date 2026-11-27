@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -16,8 +16,8 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -31,7 +31,7 @@ async function makeRuntime(opts: { status?: string; sessionId?: string } = {}) {
   agentId = `a${n}`;
   await insertAgent(t.sql, {
     id: agentId,
-    slug: `dev${n}`,
+    handle: `dev${n}`,
     ...(opts.status ? { status: opts.status } : {}),
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
   });
@@ -48,7 +48,7 @@ async function makeRuntime(opts: { status?: string; sessionId?: string } = {}) {
     prepareStart: async (a) => ({
       credentialId: liveCredentialId(a),
       agentId: a.id,
-      slug: a.slug,
+      ref: a.id,
       cwd: "/w",
       env: {},
       claudeBin: "claude",
@@ -108,7 +108,7 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
     from: "@scheduler",
     kind: "scheduled",
     scheduleKey: row.scheduleKey,
-    by: "@or",
+    by: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     byKind: "human",
     due: "2026-11-23T09:00:00+01:00",
     firings: 3,
@@ -116,12 +116,12 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
   });
 });
 
-test("an agent author is the @slug in by", async () => {
-  await claimTestHandleSql(t.sql, "author1", "agent");
-  await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-              select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to_user from agents where id = ${agentId}`;
-  const row = await scheduled({ authorAgentId: "auth1" });
-  expect(row.authorLabel).toBe("@author1");
+test("an agent author is its mention in by", async () => {
+  await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
+  await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+              select 'auth1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
+  const row = await scheduled({ authorId: "auth1" });
+  expect(row.authorMention).toBe(`<@${testRef("auth1")}>`);
   expect(row.authorKind).toBe("agent");
 });
 
@@ -171,7 +171,7 @@ const humanSend = async (body: string) => {
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body,
     urgent: false,
   });

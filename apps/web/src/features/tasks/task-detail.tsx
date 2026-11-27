@@ -5,6 +5,7 @@ import {
   taskBodySchema,
   taskTitleSchema,
 } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -18,6 +19,7 @@ import {
   useState,
 } from "react";
 import { PrincipalChip } from "@/components/agent-chip";
+import { MentionInput } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
 import {
   FormOutcome,
@@ -28,10 +30,14 @@ import {
 import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
+import { InlineMentions } from "@/components/mention/inline-mentions";
+import { usePlainMentions } from "@/components/mention/plain-mentions";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAgent } from "@/features/agents/use-agent-index";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { usePrincipalLookup } from "@/features/principals/use-principal";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { LINK_CLASS } from "@/features/session/message-block";
@@ -279,7 +285,7 @@ export function TaskDetailView({
     const c = task.activity.find((a) => a.type === "comment" && a.id === commentId);
     if (c?.type !== "comment") return setMissing(true);
     setHighlight(commentId);
-    if (c.author.kind === "agent") composer.current?.prefill(authorMention(c.author));
+    if (c.author.kind === "agent") composer.current?.prefill(mentionOf(c.author.ref));
     requestAnimationFrame(() => {
       const el = document.getElementById(`comment-${commentId}`);
       el?.scrollIntoView?.({ block: "center" });
@@ -306,7 +312,7 @@ export function TaskDetailView({
         (a) =>
           a.type === "comment" &&
           !seen.current?.has(a.id) &&
-          !(a.author.kind === "user" && a.author.handle === me),
+          !(a.author.kind === "human" && a.author.handle === me),
       );
       if (fresh && fresh.type === "comment")
         setAnnounce(`${authorMention(fresh.author)} commented`);
@@ -315,7 +321,7 @@ export function TaskDetailView({
   }, [task, placeholder, me]);
 
   if (!task) return null;
-  const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
+  const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.handle : undefined;
   return (
     // A container (spec §12): two columns when the view itself is wide (the page), stacked in a peek.
     <div className="@container/task min-w-0">
@@ -400,7 +406,7 @@ function TitleBlock({
       ) : (
         <div className="flex min-w-0 items-start gap-2">
           <h2 className="min-w-0 font-heading text-xl leading-7 font-[650] tracking-[-0.015em] [overflow-wrap:anywhere]">
-            {task.title}
+            <InlineMentions text={task.title} />
           </h2>
           <Button
             ref={edit}
@@ -431,6 +437,7 @@ function TitleEditor({
   onClose(): void;
 }) {
   const [text, setText] = useState(title);
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const [pending, setPending] = useState(false);
   const o = useOutcome();
   const form = useRef<HTMLDivElement>(null);
@@ -461,15 +468,16 @@ function TitleEditor({
       {/* The heading's place already names it: the label is for assistive tech. */}
       <FieldShell name="task-title" label="Title" hideLabel error={f.errors.title}>
         {(a) => (
-          <Input
+          <MentionInput
             ref={input}
             id={a.id}
             value={text}
+            source={at}
             autoComplete="off"
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
-            onChange={(e) => {
-              setText(e.target.value);
+            onValueChange={(next) => {
+              setText(next);
               f.change("title");
               o.clear();
             }}
@@ -554,6 +562,7 @@ function BodyEditor({
   save: Save;
   onClose(): void;
 }) {
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const [text, setText] = useState(body);
   const [pending, setPending] = useState(false);
   const [view, setView] = useState<"write" | "preview">("write");
@@ -595,6 +604,7 @@ function BodyEditor({
           <MarkdownEditor
             id={a.id}
             value={text}
+            mentionSource={at}
             invalid={a.invalid}
             view={view}
             onViewChange={setView}
@@ -642,6 +652,7 @@ function StatusAndAssignee({
   }>({});
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const lookup = usePrincipalLookup();
   async function apply(body: PatchTaskBody, say: string, shown: typeof optimistic) {
     setError(undefined);
     setOptimistic(shown);
@@ -657,12 +668,17 @@ function StatusAndAssignee({
     }
   }
   const status = optimistic.status ?? task.status;
+  const chosen = useAgent(optimistic.assignee ?? "");
   const assignee =
     optimistic.assignee === undefined
       ? task.assignee
       : optimistic.assignee === null
         ? null
-        : { slug: optimistic.assignee, displayName: optimistic.assignee };
+        : {
+            ref: optimistic.assignee,
+            handle: chosen?.handle ?? "…",
+            displayName: chosen?.displayName ?? optimistic.assignee,
+          };
   return (
     <>
       <SideSection label="Status" flush>
@@ -680,10 +696,12 @@ function StatusAndAssignee({
           value={assignee}
           disabled={disabled}
           pending={pending}
-          onCommit={(slug) =>
-            void apply({ assignee: slug }, slug ? `Assigned to @${slug}` : "Unassigned", {
-              assignee: slug,
-            })
+          onCommit={(ref) =>
+            void apply(
+              { assignee: ref },
+              ref ? `Assigned to @${lookup(ref)?.handle ?? "…"}` : "Unassigned",
+              { assignee: ref },
+            )
           }
         />
         {error && (
@@ -942,7 +960,7 @@ function LinksEditor({ task, save, onClose }: { task: Detail; save: Save; onClos
     task.links.map((l) =>
       newLinkRow({
         kind: l.kind,
-        target: l.kind === "agent" ? `@${l.agent?.slug ?? ""}` : (l.target ?? ""),
+        target: l.kind === "agent" ? `@${l.agent?.handle ?? ""}` : (l.target ?? ""),
         title: l.title ?? "",
       }),
     ),
@@ -958,7 +976,7 @@ function LinksEditor({ task, save, onClose }: { task: Detail; save: Save; onClos
   const known = useMemo(
     () =>
       active.data && ended.data
-        ? new Set([...active.data, ...ended.data].map((a) => a.slug))
+        ? new Set([...active.data, ...ended.data].map((a) => a.handle))
         : undefined,
     [active.data, ended.data],
   );
@@ -1025,10 +1043,11 @@ export function TaskDetailHeader({
   taskKey: string;
   title?: string | undefined;
 }) {
+  const plain = usePlainMentions(title ?? "");
   return (
     <PageHeader
       title={taskKey}
-      documentTitle={title ? `${taskKey} · ${title}` : taskKey}
+      documentTitle={title ? `${taskKey} · ${plain}` : taskKey}
       heading={
         <>
           <Link

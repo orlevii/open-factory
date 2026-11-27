@@ -23,6 +23,8 @@ export * from "./models.ts";
 export * from "./names.ts";
 export * from "./org-tools.ts";
 export * from "./preview.ts";
+export * from "./principals.ts";
+export * from "./ref.ts";
 export * from "./schedules.ts";
 export * from "./schemas.ts";
 export * from "./settings.ts";

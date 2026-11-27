@@ -1,4 +1,5 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
@@ -9,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentActions, useAgentShell } from "@/features/agents/agent-layout";
 import { ArchivedNotice } from "@/features/agents/archived-notice";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { useAgentSummary } from "@/features/agents/use-agent-summary";
 import { sessionQueryOptions } from "@/lib/session";
 import { TurnActivity } from "./activity-line";
@@ -27,19 +29,20 @@ import { Timeline } from "./timeline";
 import { recallText, uploadsFor, uploadsUsedSince } from "./uploads";
 import { useReadFrom } from "./use-read-from";
 import { useSession } from "./use-session";
+import { refOfWho } from "./who";
 
 export function SessionView({
-  slug,
+  agentRef,
   eventSeq,
   messageId,
 }: {
-  slug: string;
+  agentRef: string;
   eventSeq?: number | undefined;
   messageId?: string | undefined;
 }) {
   const { panel, raceNotice, adopted } = useAgentShell();
   const actions = useAgentActions();
-  const s = useSession(slug, eventSeq, messageId);
+  const s = useSession(agentRef, eventSeq, messageId);
   // The highlighter's import lands in idle time while the session opens, before any stream (U3 §11.4).
   useEffect(() => warmHighlighter(), []);
   const { data: me } = useQuery(sessionQueryOptions);
@@ -66,13 +69,13 @@ export function SessionView({
     },
     [undoCancel],
   );
-  useReadFrom(slug, s.state.ordered.at(-1)?.at);
+  useReadFrom(agentRef, s.state.ordered.at(-1)?.at);
   const navigate = useNavigate();
   const qc = useQueryClient();
   // The `/` menu's list loads beside the session, never behind it (m11): an open menu reads the cache.
   useEffect(() => {
-    void qc.prefetchQuery(commandsQueryOptions(slug));
-  }, [qc, slug]);
+    void qc.prefetchQuery(commandsQueryOptions(agentRef));
+  }, [qc, agentRef]);
   const loaded = s.state.agent;
   // The turn open when the session loaded: its activity line never fades (only a later turn's does).
   const [loadedTurn, setLoadedTurn] = useState<string | null>();
@@ -81,7 +84,8 @@ export function SessionView({
   // The layout's agent (the cached list's summary until the detail loads) shows until the session has
   // loaded; its state takes over then. A summary the layout brought (a terminate, a pin, a refetch)
   // is adopted once, never an old one on a remount.
-  const summary = useAgentSummary(slug);
+  const summary = useAgentSummary(agentRef);
+  const handleNow = useHandle(agentRef);
   const agent = loaded ?? summary;
   const { adoptAgent } = s;
   const seenAdopted = useRef(adopted);
@@ -93,7 +97,7 @@ export function SessionView({
   // The announcer hears the loaded agent only: a stale summary's status turning into the real one
   // isn't a transition.
   // The unmerged rows: a repeated failure folded into one timeline row is still announced (U3 §7.6).
-  const announce = useAnnouncer(agent?.displayName ?? slug, loaded, s.rawRows, !!loaded);
+  const announce = useAnnouncer(agent?.displayName ?? handleNow, loaded, s.rawRows, !!loaded);
   // Terminated while viewing (S7 UI design §5.3): by the spawner, another human or the TTL, never
   // by this human's own confirmed Terminate (that focuses Pin workspace when the dialog closes).
   // Open popovers and dialogs close as their controls unmount; focus goes to the read-only line.
@@ -117,8 +121,8 @@ export function SessionView({
   }, [failed, sheetOpen, closePanel]);
   // Leaving `?event` remounts the view (the route keys it), which loads the newest page.
   const leaveWindow = useCallback(
-    () => void navigate({ to: "/agents/$slug/session", params: { slug }, search: {} }),
-    [navigate, slug],
+    () => void navigate({ to: "/agents/$ref/session", params: { ref: agentRef }, search: {} }),
+    [navigate, agentRef],
   );
   // A live frame changes only `state.live`: everything below is memoized on its own inputs, so the
   // header, Agent details, the queue and the composer never re-render for one (U3 §11.4, M1).
@@ -131,7 +135,9 @@ export function SessionView({
     },
     [setRaceNotice, refreshAgent],
   );
-  const self = me?.user.handle;
+  // Stored text names you by your mention (a command's sender, the operator input you typed).
+  const selfMention = me ? mentionOf(me.user.ref) : undefined;
+  const selfRef = me?.user.ref;
   const { queue, sending, cancelled, stopEpoch, landed } = s.state;
   const queueItems = useMemo(
     () =>
@@ -141,41 +147,41 @@ export function SessionView({
           sending={sending}
           agent={agent}
           cancelled={cancelled}
-          self={self}
+          selfMention={selfMention}
           onCancel={onCancel}
           onUndo={onUndo}
         />
       ) : null,
-    [queue, sending, agent, cancelled, self, onCancel, onUndo],
+    [queue, sending, agent, cancelled, selfMention, onCancel, onUndo],
   );
   const pendingRows = useMemo(
-    () => rawTailRows(queue, sending, cancelled, self, onCancel),
-    [queue, sending, cancelled, self, onCancel],
+    () => rawTailRows(queue, sending, cancelled, selfMention, onCancel),
+    [queue, sending, cancelled, selfMention, onCancel],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
   // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
   const orderedRef = useRef(s.state.ordered);
   // A delivered message of yours used its uploads: any chip still holding one goes (a send that landed
   // after its 15s abort and a remount, whose chips came back). Only events past the last look are read.
-  const lookedThrough = useRef({ slug, seq: 0 });
+  const lookedThrough = useRef({ agentRef, seq: 0 });
   const userId = me?.user.id;
   useEffect(() => {
     const ordered = s.state.ordered;
     orderedRef.current = ordered;
-    if (!self) return; // read again once you are known
-    const from = lookedThrough.current.slug === slug ? lookedThrough.current.seq : 0;
-    const used = uploadsUsedSince(ordered, from, self);
-    lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
-    if (used.length) uploadsFor(userId, slug).forgetUploads(used);
-  }, [s.state.ordered, slug, self, userId]);
-  const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
+    if (!selfRef) return; // read again once you are known
+    const from = lookedThrough.current.agentRef === agentRef ? lookedThrough.current.seq : 0;
+    const used = uploadsUsedSince(ordered, from, selfRef);
+    lookedThrough.current = { agentRef, seq: ordered.at(-1)?.seq ?? from };
+    if (used.length) uploadsFor(userId, agentRef).forgetUploads(used);
+  }, [s.state.ordered, agentRef, selfRef, userId]);
+  const recall = useCallback(() => recallText(orderedRef.current, selfMention), [selfMention]);
   const composer = useMemo(
     () =>
       agent ? (
         <Composer
           ref={composerRef}
           docked
-          slug={slug}
+          agentRef={agentRef}
           agent={agent}
           stopEpoch={stopEpoch}
           // A send before the session loads would be lost when the load replaces the queue.
@@ -190,7 +196,7 @@ export function SessionView({
         />
       ) : null,
     [
-      slug,
+      agentRef,
       agent,
       stopEpoch,
       loaded,
@@ -203,7 +209,7 @@ export function SessionView({
       recall,
     ],
   );
-  // The route only maps an unknown slug itself when nothing was cached; a cached one lands here.
+  // The route only maps an unknown agentRef itself when nothing was cached; a cached one lands here.
   if (s.error?.code === "agent_not_found")
     return (
       <ResourceNotFound title="Agent not found." backTo="/agents" backLabel="Back to agents" />
@@ -236,7 +242,7 @@ export function SessionView({
             changes nothing in it. Mounted while the events load, so the users and agents lists
             fetch alongside them and no name pops in after the first paint. */}
       <SpeakerProvider
-        slug={agent.slug}
+        agentRef={agent.ref}
         displayName={agent.displayName}
         template={agent.template}
         kind={agent.kind}
@@ -246,7 +252,7 @@ export function SessionView({
         {loaded ? (
           <Timeline
             ref={panel.timeline}
-            slug={slug}
+            agentRef={agentRef}
             spawned={agent.kind === "ephemeral"}
             rows={s.rows}
             failedIds={s.failedIds}
@@ -297,10 +303,10 @@ export function SessionView({
       <div role="status" aria-live="polite" className="sr-only">
         {announce}
       </div>
-      {archived ? (
-        <ArchivedNotice slug={slug} onRestored={() => void refreshAgent()} />
+      {archived && agent ? (
+        <ArchivedNotice agent={agent} onRestored={() => void refreshAgent()} />
       ) : terminated ? (
-        <TerminatedComposer slug={slug} notice={raceNotice} />
+        <TerminatedComposer agentRef={agentRef} notice={raceNotice} />
       ) : (
         composer
       )}
@@ -389,7 +395,7 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
   const baseSeq = useRef<number | undefined>(undefined);
   const pendingAtLoad = useRef(new Set<number>());
   const announced = useRef(new Set<number>());
-  const slug = agent?.slug;
+  const agentHandle = agent?.handle;
   const scan = useMemo(() => scanRows(rows), [rows]);
   useEffect(() => {
     if (!loaded) return;
@@ -401,15 +407,15 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
       const toMe =
         handle !== undefined &&
         parseSendResults(r.result)?.results.some(
-          (x) => "kind" in x && x.kind === "human" && x.to === `@${handle}`,
+          (x) => "kind" in x && x.kind === "human" && refOfWho(x.to) === me?.user.ref,
         ) === true;
       const fresh = r.seq > baseSeq.current || pendingAtLoad.current.has(r.seq);
       if (toMe && fresh && !announced.current.has(r.seq)) {
         announced.current.add(r.seq);
-        setMsg(`@${slug} messaged you`);
+        setMsg(`@${agentHandle} messaged you`);
       }
     }
-  }, [scan, loaded, handle, slug, setMsg]);
+  }, [scan, loaded, handle, me?.user.ref, agentHandle, setMsg]);
   const { errorCount, lastError } = scan;
   useEffect(() => {
     // The first render with rows (history load) announces nothing.
@@ -425,14 +431,14 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
  *  failed, or the recipient is older than its newest 200), "…is no longer available.", which never
  *  guesses. Nothing until it is known. */
 function RejectedReason({ to, viewed }: { to: string; viewed: AgentSummary }) {
-  const self = to === viewed.slug ? viewed : undefined;
+  const self = to === viewed.handle ? viewed : undefined;
   const ended = useQuery({
     ...agentsListQueryOptions("only"),
     enabled: !self,
     staleTime: 30_000,
   });
   if (!self && ended.isPending) return null;
-  const recipient = self ?? ended.data?.find((a) => a.slug === to);
+  const recipient = self ?? ended.data?.find((a) => a.handle === to);
   const why =
     recipient?.terminatedAt || recipient?.status === "terminated"
       ? "was terminated"

@@ -36,9 +36,11 @@ import {
   TOO_MANY,
   type UploadSummary,
 } from "./attachments";
-import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
+import { CaretMenu } from "./caret-menu";
+import { MentionHighlighter } from "./mention-highlighter";
 import { Recipients } from "./recipients";
 import { StopButton, type StopHandle } from "./stop-button";
+import { useMentionMenu } from "./use-mention-menu";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
@@ -49,7 +51,7 @@ export const UNCONFIRMED_EDITED =
 export const FILES_NOTE = "Files can be sent in an agent's session";
 /** A phone's composer controls are 40px (U4 §11.4). The coarse-pointer form too: `size="icon"` sets
  *  `pointer-coarse:size-9`, which would otherwise beat a bare `size-10` on a touch screen (evidence D1). */
-const PHONE_ICON = "size-10 pointer-coarse:size-10";
+export const PHONE_ICON = "size-10 pointer-coarse:size-10";
 
 const NO_LANDED: ReadonlySet<string> = new Set();
 const NO_UPLOADS: UploadSummary = { count: 0, pending: 0, failed: 0 };
@@ -95,11 +97,13 @@ export type CompletionItem = {
   disabled?: string;
   /** An agent row's face (16px). */
   avatar?: {
-    slug: string;
+    agentRef: string;
     template?: string;
     avatarVersion?: string | null;
     color?: number | null;
   };
+  /** A person's face (16px: their initials). */
+  human?: { name: string };
   /** A `/` row: `label` is `/name` in mono, `hint` the argument hint, `detail` the description. */
   kind?: "command";
   /** "alias: cost": the alias the query matched, on the canonical row. */
@@ -121,6 +125,13 @@ export type CompletionSource = {
     from: number,
     caret: number,
   ): { text: string; caret: number };
+  /** An `@` source that mentions: picking a row records a mention range for this principal instead of calling
+   *  `accept`. Its presence turns the box into a mention field (atomic ranges, sent as `<@ref>`). */
+  toMention?(item: CompletionItem): { ref: string; handle: string };
+  /** For a mention field: a principal's handle by ref (undefined while pending), to hydrate stored mentions. */
+  mentionHandle?(ref: string): string | undefined;
+  /** For a mention field: calls back when `mentionHandle` may answer differently. Returns the unsubscribe. */
+  watchMentions?(onChange: () => void): () => void;
   /** A line in the open menu, given how many rows it has: with none, the menu still opens for it (an
    *  empty state); undefined closes a menu with no rows. */
   menuNote?(rows: number): string | undefined;
@@ -192,13 +203,17 @@ export type ComposerProps = {
   noFilesNote?: string;
   /** Files can't go with this send: the paperclip is aria-disabled and says why on pressing it. */
   attachBlocked?: string;
-  /** The agents you added to the send (slugs; the chat's own is `recipientsTo`): the "To:" row shows
+  /** The agents you added to the send (agentRefs; the chat's own is `recipientsTo`): the "To:" row shows
    *  with one. Backspace in an empty box selects the last, then removes it. */
   recipients?: readonly string[];
   /** The agent the chat is with, first in "To:". */
   recipientsTo?: string;
   /** A stable setter. */
   onRecipientsChange?(next: readonly string[]): void;
+  /** A control at the start of the toolbar, left of `@` (the chat's "Add recipient"; a stable element). */
+  toolbarStart?: ReactNode;
+  /** The control that ends the "To:" row once it shows (a stable element). */
+  recipientsAdd?: ReactNode;
   /** The user edited the text: a note the caller holds goes (a stable callback). */
   onEdit?(): void;
   /** A note for the text as it stands (a leading `/` in the chat); cheap, it runs on every render. */
@@ -229,18 +244,7 @@ export type ComposerProps = {
   ref?: Ref<ComposerHandle>;
 };
 
-/** At most this many rows in a caret menu (U3 §13.3, §13.4). */
-const MAX_ROWS = 8;
-const NO_ITEMS: CompletionItem[] = [];
 const NO_SOURCES: CompletionSource[] = [];
-/** An open caret menu: its source, the trigger's index, the text typed after it, where it hangs. */
-type OpenMenu = { source: CompletionSource; from: number; query: string; anchor: CaretAnchor };
-
-/** Whether `text` still has the menu's token where it was typed. */
-function holds(m: OpenMenu, text: string): boolean {
-  const hit = m.source.opensAt(text, m.from + 1 + m.query.length);
-  return hit?.from === m.from && hit.query === m.query;
-}
 
 /** A send whose POST aborted: the box got `sent` back (as `box`, after `before`), and its files. */
 type Unconfirmed = { id: string; sent: string; box: string; before: string; taken?: TakenUploads };
@@ -268,6 +272,8 @@ export const Composer = memo(function Composer({
   recipients,
   recipientsTo = "",
   onRecipientsChange,
+  toolbarStart,
+  recipientsAdd,
   onEdit,
   noteFor,
   recall,
@@ -313,9 +319,9 @@ export const Composer = memo(function Composer({
   // The last added recipient chip is selected: the next Backspace in the empty box removes it.
   const [chipSelected, setChipSelected] = useState(false);
   const removeRecipient = useCallback(
-    (slug: string) => {
+    (agentRef: string) => {
       setChipSelected(false);
-      onRecipientsChange?.((recipientsRef.current ?? []).filter((r) => r !== slug));
+      onRecipientsChange?.((recipientsRef.current ?? []).filter((r) => r !== agentRef));
     },
     [onRecipientsChange],
   );
@@ -375,7 +381,7 @@ export const Composer = memo(function Composer({
     [],
   );
   const stopRef = useRef<StopHandle>(null);
-  const boxRef = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
   const uid = useId();
   const boxId = `${uid}-box`;
   const hintId = `${uid}-hint`;
@@ -389,80 +395,50 @@ export const Composer = memo(function Composer({
     () => (slash || at ? [slash, at].filter((c) => c !== undefined) : NO_SOURCES),
     [slash, at],
   );
-  // A paste never opens a menu (U3 §13.3): the change it makes is skipped, and so is the text it left
-  // until something is typed.
-  const pasted = useRef(false);
-  const pastedText = useRef<string | undefined>(undefined);
-  const [menuState, setMenu] = useState<OpenMenu | undefined>();
-  // The menu holds only while the text still has its token (a send, Reply or a draft change can
-  // replace the text without a keystroke): otherwise it is closed, whatever the state says.
-  const menu = menuState && holds(menuState, text) ? menuState : undefined;
-  // Bumped when the open menu's data changes (the users list arriving, a renamed agent).
-  const [dataVersion, setDataVersion] = useState(0);
-  const watched = menu?.source;
-  useEffect(() => watched?.watch?.(() => setDataVersion((v) => v + 1)), [watched]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: dataVersion re-reads the source's data
-  const items = useMemo(() => {
-    if (!menu) return NO_ITEMS;
-    const rows = menu.source.items(menu.query);
-    return menu.source.allRows ? rows : rows.slice(0, MAX_ROWS);
-  }, [menu, dataVersion]);
-  const menuNote = useMemo(() => menu?.source.menuNote?.(items.length), [menu, items]);
-  const menuOpen = items.length > 0 || menuNote !== undefined;
-  const menuRef = useRef<CaretMenuHandle>(null);
-  // The trigger whose menu Esc closed: typing on in that token doesn't bring it back.
-  const dismissedAt = useRef<number | undefined>(undefined);
   // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
-  const pendingCaret = useRef<{ at: number; look: boolean } | undefined>(undefined);
-
-  /** Opens, updates or closes the menu for the box's text and caret. */
-  const lookForMenu = (box: HTMLTextAreaElement) => {
-    if (box.value === pastedText.current) {
-      if (menuState) setMenu(undefined);
-      return;
-    }
-    const caret = box.selectionStart === box.selectionEnd ? box.selectionStart : null;
-    for (const source of caret === null ? NO_SOURCES : sources) {
-      const hit = source.opensAt(box.value, caret as number);
-      if (!hit) continue;
-      if (dismissedAt.current === hit.from) break;
-      dismissedAt.current = undefined;
-      if (menu?.source === source && menu.from === hit.from) {
-        if (menu.query !== hit.query) setMenu({ ...menu, query: hit.query });
-      } else setMenu({ source, ...hit, anchor: caretAnchor(box, hit.from) });
-      return;
-    }
-    if (caret !== null && !sources.some((c) => c.opensAt(box.value, caret))) {
-      dismissedAt.current = undefined;
-    }
-    if (menuState) setMenu(undefined);
-  };
-  const closeMenu = () => {
-    if (menu) dismissedAt.current = menu.from;
-    setMenu(undefined);
-  };
-  const pick = useCallback(
-    (item: CompletionItem) => {
-      const box = boxRef.current;
-      if (!box || !menu) return;
-      const caret = box.selectionStart ?? box.value.length;
-      const r = menu.source.accept(item, box.value, menu.from, caret);
-      setMenu(undefined);
+  /** `at: "end"` is the end of what the box shows: a stored text's length isn't the shown text's (mentions are hydrated). */
+  const pendingCaret = useRef<{ at: number | "end"; look: boolean } | undefined>(undefined);
+  // The caret menus and the mention field, one hook (use-mention-menu.tsx): a mentioning `@` source makes the box a mention field.
+  const {
+    mention,
+    menu,
+    menuOpen,
+    items,
+    menuNote,
+    menuRef,
+    combobox,
+    pick,
+    closeMenu,
+    clearMenu,
+    lookForMenu,
+    change,
+    select,
+    paste,
+    keyDown,
+    attach: setBox,
+  } = useMentionMenu({
+    value: text,
+    setValue: setText,
+    sources,
+    mentionSource: at?.toMention ? at : undefined,
+    box: boxRef,
+    acceptPlain: (source, item, el, from, caret) => {
+      const r = source.accept(item, el.value, from, caret);
       setText(r.text);
       pendingCaret.current = { at: r.caret, look: false };
-      box.focus();
     },
-    [menu, setText],
-  );
+  });
+  const shown = mention.mentioned.text;
+
   /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
   const insertTrigger = (trigger: string) => {
     setView("write");
     const box = boxRef.current;
-    const cur = box?.value ?? text;
+    const cur = box?.value ?? shown;
     const caret = box?.selectionStart ?? cur.length;
     const before = cur.slice(0, caret);
     const insert = before === "" || /\s$/.test(before) ? trigger : ` ${trigger}`;
-    setText(before + insert + cur.slice(caret));
+    mention.edit(before + insert + cur.slice(caret), caret + insert.length);
     pendingCaret.current = { at: caret + insert.length, look: true };
     if (box) box.focus();
   };
@@ -474,7 +450,8 @@ export const Composer = memo(function Composer({
     if (!p || !box) return;
     pendingCaret.current = undefined;
     box.focus();
-    box.setSelectionRange(p.at, p.at);
+    const at = p.at === "end" ? box.value.length : p.at;
+    box.setSelectionRange(at, at);
     if (p.look) lookForMenu(box);
   }, [text, view]);
 
@@ -585,7 +562,7 @@ export const Composer = memo(function Composer({
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
     draft.hold(sent);
     setText("");
-    setMenu(undefined); // ⌥Enter or ⌘Enter sends as typed, with a menu open: it goes with the text
+    clearMenu(); // ⌥Enter or ⌘Enter sends as typed, with a menu open: it goes with the text
     setPending((n) => n + 1);
     let submitted: Promise<void>;
     try {
@@ -625,32 +602,7 @@ export const Composer = memo(function Composer({
   // ⌥Enter, Enter. Recall joins later.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    pasted.current = false; // a key before the change: what follows is typed (⌘V's paste comes after)
-    if (menuOpen && menu) {
-      const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-      if (plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-        e.preventDefault();
-        menuRef.current?.move(e.key === "ArrowDown" ? 1 : -1);
-        return;
-      }
-      // Tab commits too (Q43). In the `/` menu Enter takes only a name match; otherwise it sends the
-      // text as typed (below), and with no row Tab moves on.
-      if (plain && (e.key === "Enter" || e.key === "Tab")) {
-        if (menuRef.current?.accept(e.key === "Enter")) {
-          e.preventDefault();
-          return;
-        }
-        if (e.key === "Tab") return;
-      }
-      // Esc closes the menu first and leaves the text; it never goes on to stop the turn. The popover
-      // may already have closed it (its own Esc listener runs first).
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeMenu();
-        return;
-      }
-    }
+    if (keyDown(e)) return;
     if (e.key === "Escape") {
       // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
       if (e.nativeEvent.defaultPrevented) return;
@@ -690,7 +642,7 @@ export const Composer = memo(function Composer({
       if (t) {
         e.preventDefault();
         setText(t);
-        pendingCaret.current = { at: t.length, look: false };
+        pendingCaret.current = { at: "end", look: false };
       }
       return;
     }
@@ -716,7 +668,8 @@ export const Composer = memo(function Composer({
     const fileOnly =
       e.clipboardData.files.length > 0 && e.clipboardData.getData("text/plain") === "";
     if (!fileOnly) {
-      pasted.current = true;
+      // Mentions in the paste go in as mentions, with no change event; anything else is the browser's paste.
+      paste(e);
       return;
     }
     e.preventDefault();
@@ -843,18 +796,20 @@ export const Composer = memo(function Composer({
               recipients={recipients}
               selected={chipSelected}
               onRemove={removeRecipient}
+              add={recipientsAdd}
             />
           )}
           {attachments && <AttachmentChips store={attachments} />}
           {view === "write" ? (
-            <div className="flex min-w-0 items-start">
+            <div className="relative isolate flex min-w-0 items-start">
+              {mention.highlighter ? <MentionHighlighter {...mention.highlighter} /> : null}
               <Textarea
-                ref={boxRef}
+                ref={setBox}
                 id={boxId}
-                value={text}
+                value={shown}
+                {...mention.bind}
                 onChange={(e) => {
-                  const value = e.target.value;
-                  setText(value);
+                  change(e);
                   setError(undefined);
                   setFilesNote(false);
                   setAttachNote(undefined);
@@ -862,22 +817,17 @@ export const Composer = memo(function Composer({
                   onEdit?.();
                   setHeldShownFor(undefined);
                   setSentRefusal(undefined);
-                  if (pasted.current) {
-                    pasted.current = false;
-                    pastedText.current = value;
-                    if (menuState) setMenu(undefined);
-                    return;
-                  }
-                  pastedText.current = undefined;
-                  if (sources.length) lookForMenu(e.target);
                 }}
-                onSelect={sources.length ? (e) => lookForMenu(e.currentTarget) : undefined}
+                onSelect={
+                  sources.length || mention.enabled
+                    ? (e) => {
+                        select(e.currentTarget);
+                      }
+                    : undefined
+                }
                 // A multiline combobox while it has caret menus (U3 §13.4); CaretMenu adds aria-controls
                 // and aria-activedescendant while one is open.
-                role={sources.length ? "combobox" : undefined}
-                aria-haspopup={sources.length ? "listbox" : undefined}
-                aria-expanded={sources.length ? menuOpen : undefined}
-                aria-autocomplete={sources.length ? "list" : undefined}
+                {...combobox}
                 onFocus={draft.bind.onFocus}
                 onBlur={() => {
                   draft.bind.onBlur();
@@ -919,6 +869,7 @@ export const Composer = memo(function Composer({
             // its width across turn edges, so where it wraps never changes with a turn.
             className="mx-1 mb-1 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 pointer-coarse:min-h-9"
           >
+            {toolbarStart}
             {slash?.label ? (
               // Starts a command in an empty box (the `/` menu opens only for a whole-box token).
               <Button

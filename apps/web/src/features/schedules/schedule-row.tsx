@@ -18,10 +18,10 @@ import { ScheduleState, STATE_VIEW } from "./schedule-state";
 import { ScheduleTime } from "./schedule-time";
 
 const who = (a: ScheduleAuthor) =>
-  a.kind === "user"
+  a.kind === "human"
     ? `@${a.handle}`
-    : `@${a.slug}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
-const whoPlain = (a: ScheduleAuthor) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
+    : `@${a.handle}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
+const whoPlain = (a: ScheduleAuthor) => `@${a.handle}`;
 
 function when(s: ScheduleItem, now: Date) {
   const t = (iso: string) => <ScheduleTime at={iso} zone={s.timezone} now={now} />;
@@ -31,7 +31,7 @@ function when(s: ScheduleItem, now: Date) {
     tail = s.ran ? (
       <>Ran {s.lastFiredAt ? t(s.lastFiredAt) : null}</>
     ) : (
-      <>Didn't run: @{s.target.slug} was archived</>
+      <>Didn't run: @{s.target.handle} was archived</>
     );
   else if (s.state === "paused") tail = "—";
   else if (!s.nextRunAt) tail = "—";
@@ -42,7 +42,7 @@ function when(s: ScheduleItem, now: Date) {
 
 function accessibleName(s: ScheduleItem, now: Date) {
   const next = s.nextRunAt ? formatScheduleTime(new Date(s.nextRunAt), s.timezone, now) : undefined;
-  const target = `to @${s.target.slug}${s.state === "pending_errored" ? " (target errored)" : s.target.archived ? " (target archived)" : ""}`;
+  const target = `to @${s.target.handle}${s.state === "pending_errored" ? " (target errored)" : s.target.archived ? " (target archived)" : ""}`;
   const rep = s.cron ? `repeats ${s.cron}` : "once";
   const nxt = next ? `, next run ${next.text} ${next.zone}` : "";
   const by =
@@ -95,11 +95,11 @@ export function ScheduleRow({
           </button>
           <span className="relative z-10 min-w-0 truncate leading-5">
             <Link
-              to="/agents/$slug/chat"
-              params={{ slug: s.target.slug }}
+              to="/agents/$ref/chat"
+              params={{ ref: s.target.ref }}
               className={`font-mono hover:underline ${s.target.archived || s.target.terminated ? "text-muted-foreground" : "text-foreground"}`}
             >
-              @{s.target.slug}
+              @{s.target.handle}
             </Link>
             {s.state === "skipped_archived" && (
               <span className="text-muted-foreground"> · archived</span>

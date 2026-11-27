@@ -12,18 +12,23 @@ const input = (a: { id: string; describedBy?: string; invalid: boolean }) => (
 
 test("FieldShell wires label, help and error; error replaces help", () => {
   const { rerender } = render(
-    <FieldShell name="slug" label="Slug" help="How others address it.">
+    <FieldShell name="handle" label="Handle" help="How others address it.">
       {input}
     </FieldShell>,
   );
-  expect(screen.getByLabelText("Slug")).toHaveAccessibleDescription("How others address it.");
+  expect(screen.getByLabelText("Handle")).toHaveAccessibleDescription("How others address it.");
   rerender(
-    <FieldShell name="slug" label="Slug" help="How others address it." error="That slug is taken.">
+    <FieldShell
+      name="handle"
+      label="Handle"
+      help="How others address it."
+      error="That handle is taken."
+    >
       {input}
     </FieldShell>,
   );
-  expect(screen.getByLabelText("Slug")).toHaveAccessibleDescription("That slug is taken.");
-  expect(screen.getByLabelText("Slug")).toBeInvalid();
+  expect(screen.getByLabelText("Handle")).toHaveAccessibleDescription("That handle is taken.");
+  expect(screen.getByLabelText("Handle")).toBeInvalid();
 });
 
 test("FieldShell legend is invalid with an error, and its label may carry a marker", () => {

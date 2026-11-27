@@ -4,6 +4,7 @@ import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { SignInAttempts } from "../credentials/sign-in/attempts.ts";
 import { ApiError } from "../errors.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
 
 /** S10 spec §9.4: list, disable and enable users. Every user is an admin. */
 export class UserAdminService {
@@ -13,18 +14,21 @@ export class UserAdminService {
       now: () => Date;
       bus: EventBus;
       signIn: Pick<SignInAttempts, "endFor">;
+      publishPrincipal: PublishPrincipal;
     },
   ) {}
 
   async list(): Promise<UserAdminItem[]> {
     const rows = await this.d.db
-      .select()
+      .select({ u: schema.users, handle: schema.principals.handle, ref: schema.principals.ref })
       .from(schema.users)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
       .orderBy(asc(schema.users.createdAt), asc(schema.users.id));
-    return rows.map((r) => ({
+    return rows.map(({ u: r, handle, ref }) => ({
       id: r.id,
+      ref,
       name: r.name,
-      handle: r.handle,
+      handle,
       email: r.email,
       createdAt: r.createdAt.toISOString(),
       disabledAt: r.disabledAt?.toISOString() ?? null,
@@ -54,8 +58,9 @@ export class UserAdminService {
         .orderBy(asc(schema.users.id))
         .for("no key update");
       const [target] = await tx
-        .select({ handle: schema.users.handle, disabledAt: schema.users.disabledAt })
+        .select({ handle: schema.principals.handle, disabledAt: schema.users.disabledAt })
         .from(schema.users)
+        .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
         .where(eq(schema.users.id, targetId));
       if (!target) throw notFound();
       if (target.disabledAt === null && !enabled.some((u) => u.id !== targetId)) {
@@ -70,16 +75,17 @@ export class UserAdminService {
       if (target.disabledAt === null) {
         // I9 §4.5: a human who manages agents can't be disabled while they report to them; move them first.
         const managed = await tx
-          .select({ slug: schema.agents.slug })
+          .select({ handle: schema.principals.handle })
           .from(schema.agents)
-          .where(and(eq(schema.agents.reportsToUser, targetId), isNull(schema.agents.terminatedAt)))
-          .orderBy(asc(schema.agents.slug));
+          .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
+          .where(and(eq(schema.agents.reportsTo, targetId), isNull(schema.agents.terminatedAt)))
+          .orderBy(asc(schema.principals.handle));
         if (managed.length)
           throw new ApiError(
             409,
             "manages_agents",
-            `@${target.handle} manages ${managed.map((a) => `@${a.slug}`).join(", ")}. Move them to another manager first.`,
-            { agents: managed.map((a) => a.slug) },
+            `@${target.handle} manages ${managed.map((a) => `@${a.handle}`).join(", ")}. Move them to another manager first.`,
+            { agents: managed.map((a) => a.handle) },
           );
         await tx
           .update(schema.users)
@@ -105,6 +111,7 @@ export class UserAdminService {
     this.d.bus.closeUser(targetId);
     this.d.signIn.endFor(targetId);
     this.d.bus.publishAll({ type: "users_changed" });
+    await this.d.publishPrincipal(targetId);
     return { revokedInvites };
   }
 
@@ -137,6 +144,7 @@ export class UserAdminService {
         .where(eq(schema.users.id, targetId));
     });
     this.d.bus.publishAll({ type: "users_changed" });
+    await this.d.publishPrincipal(targetId);
   }
 
   /** One primary-key lookup; an unknown user counts as disabled. */

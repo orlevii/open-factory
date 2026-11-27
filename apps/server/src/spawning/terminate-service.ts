@@ -1,4 +1,5 @@
 import { type Db, schema } from "@open-factory/db";
+import { mentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, PendingRow } from "../agents/event-store.ts";
@@ -6,12 +7,14 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { ApiError } from "../errors.ts";
 import type { TerminatePort } from "../mcp/tools/terminate-agent.ts";
 import type { Router } from "../messaging/router.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
+import { type Principal, principalById } from "../principals/principal-store.ts";
 
 const { agents } = schema;
 
 /**
- * Termination (S7 §8): the one path for `terminate_agent` (`by` = the spawner's slug), the UI route (`by` = `@handle`)
- * and the reaper (`by` = `@factory`). Latch first, then one transaction, so nothing can write to or start the agent
+ * Termination (S7 §8): the one path for `terminate_agent` (`by` = the spawner), the UI route (`by` = the human)
+ * and the reaper (`by` = null, the factory). Latch first, then one transaction, so nothing can write to or start the agent
  * between the commit and the latch.
  */
 export class TerminateService implements TerminatePort {
@@ -22,6 +25,8 @@ export class TerminateService implements TerminatePort {
       runtimes: AgentRuntimes;
       router: Pick<Router, "snapshot" | "persistPeerEvents" | "handOffRows">;
       log: RuntimeLog;
+      /** Tells the browsers the agent is terminated, once the transaction has committed. */
+      publishPrincipal: PublishPrincipal;
     },
   ) {}
 
@@ -31,21 +36,32 @@ export class TerminateService implements TerminatePort {
    */
   async terminateChild(
     callerId: string,
-    slugArg: string,
-  ): Promise<{ ok: true; slug: string } | { ok: false; message: string }> {
-    const slug = slugArg.trim().replace(/^@/, "");
-    const a = await this.d.store.agentBySlug(slug);
+    targetArg: string,
+  ): Promise<
+    { ok: true; handle: string; mention: string; warning?: string } | { ok: false; message: string }
+  > {
+    const found = await this.d.store.agentByArg(targetArg);
+    if (found.kind === "unknown_ref") return { ok: false, message: unknownRefError(found.ref) };
+    const a = found.kind === "agent" ? found.row : undefined;
     if (a?.kind !== "ephemeral" || a.reportsTo !== callerId)
-      return { ok: false, message: `@${slug} isn't an agent you spawned.` };
-    const caller = await this.d.store.agentById(callerId);
+      return {
+        ok: false,
+        message: `@${found.kind === "agent" ? found.handle : found.name} isn't an agent you spawned.`,
+      };
     try {
-      // The spawner is recorded by its bare slug (spec §13).
-      await this.terminate(a.id, caller?.slug ?? callerId);
+      const caller = await principalById(this.d.db, callerId);
+      if (!caller) throw new Error(`caller ${callerId} is not a principal`);
+      await this.terminate(a.id, caller);
     } catch (err) {
-      this.d.log.error({ err, agent: a.slug }, "terminating a spawned agent failed");
-      return { ok: false, message: `@${a.slug} couldn't be terminated; try again.` };
+      this.d.log.error({ err, agent: a.handle }, "terminating a spawned agent failed");
+      return { ok: false, message: `@${a.handle} couldn't be terminated; try again.` };
     }
-    return { ok: true, slug: a.slug };
+    return {
+      ok: true,
+      handle: a.handle,
+      mention: await this.d.store.agentMention(a.id),
+      ...(found.kind === "agent" && found.warning ? { warning: found.warning } : {}),
+    };
   }
 
   /**
@@ -55,7 +71,7 @@ export class TerminateService implements TerminatePort {
    */
   async terminate(
     agentId: string,
-    by: string,
+    by: Pick<Principal, "id" | "kind" | "ref" | "handle"> | null,
     o: { latched?: boolean } = {},
   ): Promise<{ status: "terminated" }> {
     // These guards run before the provisional latch and its unmark-on-failure try below, on purpose: nothing is latched
@@ -66,6 +82,8 @@ export class TerminateService implements TerminatePort {
     if (rt.agent.kind !== "ephemeral")
       throw new ApiError(409, "not_ephemeral", "Only spawned agents can be terminated.");
     if (!o.latched) rt.markTerminated({ committed: false });
+    // The terminator as the `terminated` event and the peer notices write it: a mention, or `@factory` for the TTL.
+    const terminator = by ? mentionOf(by.ref) : "@factory";
     let peerRows: PendingRow[] = [];
     let rejectedFor: string[] = [];
     let already: boolean;
@@ -76,7 +94,7 @@ export class TerminateService implements TerminatePort {
         const spawnerId = rt.agent.reportsTo;
         const [spawner] = spawnerId
           ? await tx
-              .select({ slug: agents.slug })
+              .select({ id: agents.id })
               .from(agents)
               .where(eq(agents.id, spawnerId))
               .for("no key update")
@@ -90,14 +108,14 @@ export class TerminateService implements TerminatePort {
         if (row.terminatedAt) return true;
         // The neighborhood before the change, read in the transaction (a stale pool read could miss a sibling).
         const before = await this.d.router.snapshot(tx, agentId);
-        rejectedFor = await this.d.store.terminateRows(tx, agentId, by);
+        rejectedFor = await this.d.store.terminateRows(tx, agentId, by?.id ?? null);
         // The spawner gets no row about its own act (§9.1): it has the tool result.
         peerRows = await this.d.router.persistPeerEvents(
           tx,
           agentId,
-          { kind: "left", reason: "terminated", by },
+          { kind: "left", reason: "terminated", by: terminator },
           before,
-          { excludeManager: spawner !== undefined && by === spawner.slug },
+          { excludeManager: spawner !== undefined && by?.id === spawner.id },
         );
         return false;
       });
@@ -109,13 +127,14 @@ export class TerminateService implements TerminatePort {
     rt.markTerminated({ committed: true });
     rt.chatChanged(rejectedFor);
     if (already) return { status: "terminated" };
+    await this.d.publishPrincipal(agentId);
     // A row whose insert committed after the transaction's reject-pending update (its sender read the agent live, and
     // READ COMMITTED doesn't show the transaction that row) is pending still: reject it now. Any later hand-off finds
     // the committed latch, which rejects it.
     rt.chatChanged(
       await this.d.store.rejectPending(agentId).catch((err: unknown) => {
         this.d.log.error(
-          { err, agent: rt.agent.slug },
+          { err, agent: rt.agent.handle },
           "rejecting late rows to a terminated agent failed",
         );
         return [];
@@ -124,9 +143,9 @@ export class TerminateService implements TerminatePort {
     this.d.router.handOffRows(peerRows);
     // §8 step 3: the stop and the container removal continue in the background; the status frame reports their end.
     void rt
-      .terminateStop(by)
+      .terminateStop(terminator)
       .catch((err: unknown) =>
-        this.d.log.error({ err, agent: rt.agent.slug }, "stopping a terminated agent failed"),
+        this.d.log.error({ err, agent: rt.agent.handle }, "stopping a terminated agent failed"),
       );
     return { status: "terminated" };
   }

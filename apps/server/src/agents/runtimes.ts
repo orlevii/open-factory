@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import type { HarnessDriver } from "@open-factory/harness";
 import {
   type AgentStatus,
@@ -6,9 +5,11 @@ import {
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
@@ -71,10 +72,10 @@ export interface RuntimesDeps {
 export function localCleanup(
   store: Pick<EventStore, "agentById">,
   journal: Pick<ProcessJournal, "reap">,
-): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+): (agent: AgentRecord) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "local") return undefined;
-    let j: AgentRow["runtimeJournal"] | undefined;
+    let j: AgentRecord["runtimeJournal"] | undefined;
     try {
       j = (await store.agentById(agent.id))?.runtimeJournal;
     } catch (err) {
@@ -96,19 +97,19 @@ export function localCleanup(
  */
 export function dockerCleanup(
   containers: Pick<ContainerManager, "stopIfRunning">,
-): (agent: AgentRow) => Promise<CleanupResult | undefined> {
+  store: Pick<EventStore, "refOfAgent">,
+): (agent: AgentRecord) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "docker") return undefined;
-    return (await containers.stopIfRunning(agent.id, agent.slug))
+    return (await containers.stopIfRunning(agent.id, await store.refOfAgent(agent.id)))
       ? { container: "stopped" }
       : undefined;
   };
 }
 
-/** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */
+/** The sender as the urgent interrupt's `by` stores it: a principal's `<@ref>`; the scheduler and the factory stay words. */
 function senderLabel(row: PendingRow): string {
-  if (row.fromHandle) return `@${row.fromHandle}`;
-  if (row.fromSlug) return `@${row.fromSlug}`;
+  if (row.fromRef) return mentionOf(row.fromRef);
   if (row.kind === "scheduled") return "@scheduler";
   // S8: `task_assigned` and `task_update` have no sender columns; they are from the factory (spec §7.4).
   if (row.kind !== "message") return "@factory";
@@ -121,7 +122,7 @@ function senderLabel(row: PendingRow): string {
  * sweep's last list still showed. A termination still stopping is never stuck.
  */
 function terminationStuck(
-  row: { errorKind?: string | null; runtimeJournal?: AgentRow["runtimeJournal"] },
+  row: { errorKind?: string | null; runtimeJournal?: AgentRecord["runtimeJournal"] },
   rt: AgentRuntime | undefined,
 ): boolean {
   if (rt?.terminationSettling()) return false;
@@ -150,7 +151,7 @@ export class AgentRuntimes {
       // with a null credential_id), is never paused by, nor counted under, any real credential's rate limit.
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: d.store,
-      load: (slug) => this.bySlug(slug),
+      load: (id) => this.load(id),
       ...(d.docker ? { images: this.images(d.docker) } : {}),
     });
   }
@@ -180,12 +181,13 @@ export class AgentRuntimes {
     };
   }
 
-  async bySlug(slug: string): Promise<AgentRuntime | undefined> {
-    const row = await this.d.store.agentBySlug(slug);
+  /** The runtime of the agent with this ref (already normalised), created and initialised on first use. */
+  async byRef(ref: string): Promise<AgentRuntime | undefined> {
+    const row = await this.d.store.agentByRef(ref);
     return row ? this.runtimeOf(row) : undefined;
   }
 
-  /** `bySlug` by id: the runtime, created and initialised on first use. */
+  /** `byRef` by id: the runtime, created and initialised on first use. */
   async load(agentId: string): Promise<AgentRuntime | undefined> {
     const loaded = this.byId.get(agentId);
     if (loaded) return loaded;
@@ -193,7 +195,7 @@ export class AgentRuntimes {
     return row ? this.runtimeOf(row) : undefined;
   }
 
-  private runtimeOf(row: AgentRow): Promise<AgentRuntime> {
+  private runtimeOf(row: AgentRecord): Promise<AgentRuntime> {
     let rt = this.byId.get(row.id);
     if (!rt) {
       const runtime = new AgentRuntime({
@@ -249,14 +251,14 @@ export class AgentRuntimes {
    * missing or invalid template, an invalid overlay): the start then fails closed with the resolver's own error.
    */
   private async imageAtLoad(
-    row: AgentRow,
+    row: AgentRecord,
     docker: NonNullable<RuntimesDeps["docker"]>,
   ): Promise<string | undefined> {
     try {
       return this.imageRef((await docker.resolver.effective(row)).config);
     } catch (err) {
       if (!(err instanceof AgentStartError))
-        this.d.log.warn({ err, agent: row.slug }, "reading the config for the image failed");
+        this.d.log.warn({ err, agent: row.handle }, "reading the config for the image failed");
       return undefined;
     }
   }
@@ -308,7 +310,7 @@ export class AgentRuntimes {
       rt = await this.recipientOf(row);
     } catch (err) {
       this.d.log.error(
-        { err, agentId: row.toAgentId, message: row.id },
+        { err, agentId: row.toId, message: row.id },
         "loading the recipient failed; the message stays pending",
       );
       return undefined;
@@ -319,10 +321,10 @@ export class AgentRuntimes {
         err instanceof AgentTerminatedError ||
         err instanceof AgentStartError
       )
-        this.d.log.info({ agent: rt.agent.slug, message: row.id }, err.message);
+        this.d.log.info({ agent: rt.agent.handle, message: row.id }, err.message);
       else
         this.d.log.error(
-          { err, agent: rt.agent.slug, message: row.id },
+          { err, agent: rt.agent.handle, message: row.id },
           "delivering a message failed",
         );
     });
@@ -330,15 +332,15 @@ export class AgentRuntimes {
   }
 
   private async recipientOf(row: PendingRow): Promise<AgentRuntime> {
-    if (!row.toAgentId) throw new Error(`message ${row.id} has no agent recipient`);
-    const rt = await this.load(row.toAgentId);
-    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toAgentId} not found`);
+    if (!row.toId) throw new Error(`message ${row.id} has no agent recipient`);
+    const rt = await this.load(row.toId);
+    if (!rt) throw new Error(`message ${row.id}: recipient ${row.toId} not found`);
     return rt;
   }
 
   /** S6 §8: hands a committed member update or peer event to its recipient; never awaited, never throws. */
   receive(row: PendingRow): void {
-    const to = row.toAgentId;
+    const to = row.toId;
     if (!to) {
       this.d.log.error({ message: row.id }, "a member update or peer event has no agent recipient");
       return;
@@ -354,16 +356,18 @@ export class AgentRuntimes {
   }
 
   /** The live status of a loaded runtime; for one not loaded, what its row says (errored or hibernated). */
-  statusOf(agent: Pick<AgentRow, "id" | "status">): AgentStatus {
+  statusOf(agent: Pick<AgentRecord, "id" | "status">): AgentStatus {
     const rt = this.loaded.get(agent.id);
     if (rt) return rt.statusFrame().status;
     return agent.status === "errored" ? "errored" : "hibernated";
   }
 
   /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */
-  private cleanupDeps(): { cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined> } {
+  private cleanupDeps(): { cleanup?: (agent: AgentRecord) => Promise<CleanupResult | undefined> } {
     const local = this.d.journal ? localCleanup(this.d.store, this.d.journal) : undefined;
-    const docker = this.d.docker ? dockerCleanup(this.d.docker.containers) : undefined;
+    const docker = this.d.docker
+      ? dockerCleanup(this.d.docker.containers, this.d.store)
+      : undefined;
     if (!local && !docker) return {};
     return {
       cleanup: async (agent) => (agent.runtime === "docker" ? docker?.(agent) : local?.(agent)),
@@ -397,7 +401,7 @@ export class AgentRuntimes {
           .settingsChanged()
           .catch((err) =>
             this.d.log.error(
-              { err, agent: rt.agent.slug },
+              { err, agent: rt.agent.handle },
               "re-arming after a settings change failed",
             ),
           ),
@@ -469,7 +473,11 @@ export class AgentRuntimes {
     const row = await this.d.store.createNotice({
       toAgentId: managerId,
       notice: "report_config_changed",
-      body: notices.reportConfigChanged({ by, report: report.slug, lines }),
+      body: notices.reportConfigChanged({
+        by,
+        report: await this.d.store.principalMention(reportId),
+        lines,
+      }),
       subjectAgentId: reportId,
     });
     await (await this.get(managerId))?.adoptNotice(row.id);
@@ -488,7 +496,7 @@ export class AgentRuntimes {
       errorKind?: string | null;
       runtime?: string;
       terminatedAt?: Date | null;
-      runtimeJournal?: AgentRow["runtimeJournal"];
+      runtimeJournal?: AgentRecord["runtimeJournal"];
     },
   ): Promise<LiveFields & { stuck?: true }> {
     const rt = await this.get(agentId);

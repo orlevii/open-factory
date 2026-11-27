@@ -45,7 +45,7 @@ export function boundVersion(v: unknown): string | undefined {
     : undefined;
 }
 
-/** `GET /api/agents/:slug/commands`: the allowed set (U3 §13.3). `template` before the first start (`at` null). */
+/** `GET /api/agents/:ref/commands`: the allowed set (U3 §13.3). `template` before the first start (`at` null). */
 export const agentCommandsResponseSchema = z.object({
   commands: z.array(commandSchema),
   source: z.enum(["session", "template"]),
@@ -121,7 +121,7 @@ export function classifyInput(text: string, known: ReadonlySet<string>): InputCl
   };
 }
 
-/** `POST /api/agents/:slug/input`: the raw text a human types into the session, and the sender's optimistic-row id. */
+/** `POST /api/agents/:ref/input`: the raw text a human types into the session, and the sender's optimistic-row id. */
 export const inputBodySchema = z.object({
   text: z.string().min(1),
   clientMessageId: z.string().uuid(),

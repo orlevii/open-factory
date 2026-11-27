@@ -1,3 +1,4 @@
+import { normaliseRef } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
@@ -17,6 +18,7 @@ import {
   Search,
   Settings,
   Sun,
+  UserPen,
 } from "lucide-react";
 import { TruncTooltip } from "@/components/agent-chip";
 import {
@@ -90,11 +92,14 @@ const nav = [
 /** A section stays highlighted on its detail routes (/agents/foo). "/" redirects to the Inbox. */
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
-/** The slug of an agent's Chat or Session, not of its /edit or /usage children. */
+/** The ref of an agent's Chat or Session, not of its /edit or /usage children. */
 export function matchSession(pathname: string): string | undefined {
   const m = /^\/agents\/([^/]+)(?:\/(?:chat|session))?\/?$/.exec(pathname);
-  const slug = m?.[1];
-  return slug && slug !== "new" ? safeDecode(slug) : undefined;
+  const agentRef = m?.[1];
+  if (!agentRef || agentRef === "new") return undefined;
+  // A typed or copied ref (any case, i/l/o) names the same agent the route's does.
+  const decoded = safeDecode(agentRef);
+  return normaliseRef(decoded) ?? decoded;
 }
 
 const parseCollapsed = (raw: string) =>
@@ -107,8 +112,8 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile, state } = useSidebar();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const activeSlug = useRouterState({ select: (s) => matchSession(s.location.pathname) });
-  const live = useIsLiveAgent(activeSlug ?? "");
+  const activeRef = useRouterState({ select: (s) => matchSession(s.location.pathname) });
+  const live = useIsLiveAgent(activeRef ?? "");
   // The drawer always shows the full tree; only the desktop rail is compressed.
   const collapsedRail = state === "collapsed" && !isMobile;
   const [treeCollapsed, setTreeCollapsed] = usePref("of-tree-collapsed", false, parseCollapsed);
@@ -116,7 +121,7 @@ export function AppSidebar() {
   // unless the tree is hidden (collapsed by the chevron, not the rail). Not active until we know.
   const agentsActive =
     isActive(pathname, "/agents") &&
-    (!activeSlug || live === false || (live === true && treeCollapsed && !collapsedRail));
+    (!activeRef || live === false || (live === true && treeCollapsed && !collapsedRail));
   // The _app guard has already loaded this query; it is null only for a moment during sign-out.
   const { data: session } = useQuery(sessionQueryOptions);
   const user = session?.user;
@@ -311,7 +316,7 @@ export function AppSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
             {(collapsedRail || !treeCollapsed) && (
-              <SidebarAgentTree activeSlug={activeSlug} collapsedRail={collapsedRail} />
+              <SidebarAgentTree activeRef={activeRef} collapsedRail={collapsedRail} />
             )}
           </SidebarGroupContent>
         </SidebarGroup>
@@ -386,6 +391,13 @@ export function AppSidebar() {
                   </>
                 )}
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => openSheet({ kind: "edit-profile" })}
+                  {...sheetIntent("edit-profile")}
+                >
+                  <UserPen aria-hidden="true" />
+                  Edit profile
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />
                   Sign out

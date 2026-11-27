@@ -8,45 +8,47 @@ import { Markdown } from "@/components/markdown/markdown";
 import { clampSource, longestFence } from "@/components/markdown/split-blocks";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Spinner } from "@/components/ui/spinner";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { ScheduleBadge } from "@/features/schedules/schedule-badge";
 import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
-import { type PartyKind, type SenderKind, SpeakerLine, useSpeakers } from "./speaker-line";
+import { type PartyKind, type SenderKind, SpeakerLine } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
+import { refOfWho, whoHandle } from "./who";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
 export const LINK_CLASS =
   "underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
 
-/** One active agent's display name (cached list): `null` when the slug isn't active, `undefined`
+/** One active agent's display name (cached list): `null` when the ref isn't active, `undefined`
  *  until the list has loaded. */
-export function useAgentName(slug: string): string | null | undefined {
+export function useAgentName(agentRef: string): string | null | undefined {
   // A primitive select: every agent_status frame patches the list, but a link only re-renders when
   // its own name changes.
   const select = useCallback(
-    (agents: { slug: string; displayName: string }[]) =>
-      agents.find((a) => a.slug === slug)?.displayName ?? null,
-    [slug],
+    (agents: { ref: string; displayName: string }[]) =>
+      agents.find((a) => a.ref === agentRef)?.displayName ?? null,
+    [agentRef],
   );
   return useQuery({ ...agentsQueryOptions, select }).data;
 }
 
-/** Slug -> an ended agent's display name, or null when it was archived (it stays unlinked). */
-const toEnded = (agents: { slug: string; displayName: string; terminatedAt?: string }[]) =>
-  new Map(agents.map((a) => [a.slug, a.terminatedAt ? a.displayName : null]));
+/** Ref -> an ended agent's display name, or null when it was archived (it stays unlinked). */
+const toEnded = (agents: { ref: string; displayName: string; terminatedAt?: string }[]) =>
+  new Map(agents.map((a) => [a.ref, a.terminatedAt ? a.displayName : null]));
 
 /**
- * How to show a slug (S7 UI design §4.4): from the active list, else from the ended list (fetched
- * only when a slug isn't active). A terminated agent keeps its link and name (its read-only session
- * is worth opening); an archived or unknown one is the plain slug. A slug in neither list while
+ * How to show an agent (S7 UI design §4.4): from the active list, else from the ended list (fetched
+ * only when it isn't active). A terminated agent keeps its link and name (its read-only session
+ * is worth opening); an archived or unknown one is plain text. An agent in neither list while
  * older ended agents exist beyond the newest 200 may be an old terminated one: it keeps the link
- * (the session route resolves any slug), without a name. `link` until the lists have loaded.
+ * (the session route resolves any ref), without a name. `link` until the lists have loaded.
  */
 const ENDED_LOOKUP_STALE_MS = 30_000;
-function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
-  const active = useAgentName(slug);
+function useAgentLinkTarget(agentRef: string): { link: boolean; display?: string } {
+  const active = useAgentName(agentRef);
   const needEnded = active === null;
   // Many links share this lookup as a timeline fills: one fetch serves them for a while, and a
   // terminated frame invalidates it anyway (status-frames.ts).
@@ -59,27 +61,28 @@ function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   });
   const { data: more } = useQuery(endedMoreQueryOptions);
   if (!needEnded) return { link: true, display: active ?? undefined };
-  // A failed lookup falls back to S6's plain slug for anything not active.
+  // A failed lookup falls back to S6's plain text for anything not active.
   if (!ended.data) return { link: !ended.isError };
-  const display = ended.data.get(slug);
+  const display = ended.data.get(agentRef);
   if (display) return { link: true, display };
   return { link: display === undefined && more === true };
 }
 
-/** An agent slug in mono, as a link to its chat (resolved by `useAgentLinkTarget`). `name` adds
+/** An agent's `@handle` in mono, as a link to its chat (resolved by `useAgentLinkTarget`). `name` adds
  *  " · Display name" when it is known. */
-export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
-  const { link, display } = useAgentLinkTarget(slug);
-  if (!link) return <span className="font-mono text-foreground">@{slug}</span>;
+export function AgentLink({ agentRef, name = false }: { agentRef: string; name?: boolean }) {
+  const { link, display } = useAgentLinkTarget(agentRef);
+  const handle = useHandle(agentRef);
+  if (!link) return <span className="font-mono text-foreground">@{handle}</span>;
   return (
     <>
       <Link
-        to="/agents/$slug/chat"
-        params={{ slug }}
-        aria-label={`Open @${slug}'s chat`}
+        to="/agents/$ref/chat"
+        params={{ ref: agentRef }}
+        aria-label={`Open @${handle}'s chat`}
         className={`font-mono text-foreground ${LINK_CLASS}`}
       >
-        @{slug}
+        @{handle}
       </Link>
       {name && display && <span className="text-muted-foreground"> · {display}</span>}
     </>
@@ -111,9 +114,10 @@ export function formatDue(due: string): string {
 
 /** Who scheduled a message, by the kind the envelope carries (`byKind`). */
 function ScheduledBy({ by, kind }: { by: string; kind: PartyKind }) {
-  const bare = by.startsWith("@") ? by.slice(1) : by;
-  return kind === "agent" ? (
-    <AgentLink slug={bare} />
+  const bare = whoHandle(by);
+  const ref = refOfWho(by);
+  return kind === "agent" && ref ? (
+    <AgentLink agentRef={ref} />
   ) : (
     <span className="font-mono text-foreground">@{bare}</span>
   );
@@ -156,9 +160,9 @@ export function MessageBlock(props: {
    *  "Sending"; `label` ("Sending…") takes the time's place once the POST is slow. */
   sending?: { label?: ReactNode };
   /** U3 §13.5: the message's confirmed uploads (the envelope's list), shown as chips; their
-   *  `[attached: …]` lines are hidden. Needs `slug` for the previews. */
+   *  `[attached: …]` lines are hidden. Needs `agentRef` for the previews. */
   attachments?: readonly MessageAttachment[] | undefined;
-  slug?: string;
+  agentRef?: string;
 }) {
   const region = useLongPressRegion();
   const {
@@ -176,11 +180,11 @@ export function MessageBlock(props: {
     sending,
     brief,
     attachments,
-    slug,
+    agentRef,
   } = props;
   // Only the lines of this message's own uploads go; a typed `[attached: …]` stays text.
-  // The chips render only with a slug: without them the lines stay, so no file ever disappears.
-  const chips = attachments?.length && slug ? attachments : undefined;
+  // The chips render only with a agentRef: without them the lines stay, so no file ever disappears.
+  const chips = attachments?.length && agentRef ? attachments : undefined;
   const shown = useMemo(() => stripAttachedLines(body, chips), [body, chips]);
   const notes = scheduled
     ? [
@@ -292,7 +296,7 @@ export function MessageBlock(props: {
       >
         {brief ? <LinesBody source={shown} lines={3} /> : <ClampedMarkdown source={shown} />}
       </div>
-      {chips && slug ? <AttachmentList slug={slug} attachments={chips} /> : null}
+      {chips && agentRef ? <AttachmentList agentRef={agentRef} attachments={chips} /> : null}
     </div>
   );
 }
@@ -302,8 +306,8 @@ export function UrgentBadge() {
 }
 
 /** The upload's same-origin, authenticated URL (the session cookie; never an external host). */
-export const uploadUrl = (slug: string, uploadId: string) =>
-  `/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}`;
+export const uploadUrl = (agentRef: string, uploadId: string) =>
+  `/api/agents/${encodeURIComponent(agentRef)}/uploads/${encodeURIComponent(uploadId)}`;
 
 /** Images up to this size preview automatically; a larger one (or one whose size the envelope doesn't carry)
  *  waits for "Show preview", so a timeline never downloads and decodes a 20 MB image to show 28px. */
@@ -312,23 +316,29 @@ export const AUTO_PREVIEW_BYTES = 1024 * 1024;
 /** A message's files (U3 §13.5): each a chip opening the file; an image previews through the
  *  authenticated same-origin GET. The name is a text node, never HTML. */
 export function AttachmentList({
-  slug,
+  agentRef,
   attachments,
 }: {
-  slug: string;
+  agentRef: string;
   attachments: readonly MessageAttachment[];
 }) {
   return (
     <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
       {attachments.map((a) => (
-        <AttachmentChip key={a.uploadId} slug={slug} attachment={a} />
+        <AttachmentChip key={a.uploadId} agentRef={agentRef} attachment={a} />
       ))}
     </ul>
   );
 }
 
-function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: MessageAttachment }) {
-  const url = uploadUrl(slug, a.uploadId);
+function AttachmentChip({
+  agentRef,
+  attachment: a,
+}: {
+  agentRef: string;
+  attachment: MessageAttachment;
+}) {
+  const url = uploadUrl(agentRef, a.uploadId);
   const name = displayName(a.name);
   const small = a.bytes <= AUTO_PREVIEW_BYTES;
   const [asked, setAsked] = useState(false);

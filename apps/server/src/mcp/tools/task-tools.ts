@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   commentTaskToolSchema,
   createTaskToolSchema,
@@ -7,7 +6,9 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
-import { HUMANS_MENTION_REFUSAL } from "../../messaging/principals.ts";
+import { agentMentionOf } from "@open-factory/shared/mentions";
+import type { AgentRecord, Principal } from "../../principals/principal-store.ts";
+import { type AgentFacing, UnknownMentionsError } from "../../principals/principal-text.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -26,13 +27,17 @@ const listNote = (limit: number) =>
     ? "Showing the 200 most recently updated; narrow the filter."
     : `Showing the ${limit} most recently updated; pass a larger limit (max 200) or narrow the filter.`;
 
-const principal = (p: { kind: "agent"; slug: string } | { kind: "user"; handle: string }) =>
-  p.kind === "agent" ? p.slug : `@${p.handle}`;
+/** A principal as an agent reads it: `<@ref|handle>`. */
+const principal = (p: { ref: string; handle: string }) => agentMentionOf(p);
 
 type TaskTools = {
   tasks: TaskService;
   /** The calling agent, from the token (never from an argument). */
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
+  /** The calling agent's principal: its ref and handle, which the actor carries. */
+  loadPrincipal(id: string): Promise<Principal | undefined>;
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
 /**
@@ -40,49 +45,53 @@ type TaskTools = {
  * tool error with its sentence; `TaskService` is the only place that decides who may do what.
  */
 const NOT_REACHED_TEXT = {
-  unknown: (n: string) => `No agent or user named '@${n}'.`,
-  ambiguous: (n: string) => `'@${n}' matches more than one name.`,
-  archived: (n: string) => `@${n} is archived and can't receive messages.`,
-  terminated: (n: string) => `@${n} was terminated and can't receive messages.`,
-  reserved: (n: string) =>
-    n === "humans" ? HUMANS_MENTION_REFUSAL : `'${n}' is reserved and can't receive messages.`,
-  too_many: (n: string) => `Too many mentions in one comment; @${n} was left out.`,
+  archived: (n: string) => `${n} is archived and can't receive messages.`,
+  terminated: (n: string) => `${n} was terminated and can't receive messages.`,
+  too_many: (n: string) => `Too many mentions in one comment; ${n} was left out.`,
 };
 /** One sentence per `not_reached` entry, so the tool's entries all have the same shape. */
 const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
   NOT_REACHED_TEXT[n.reason](n.name);
 
+/** `warnings` only when there is one. */
+const warned = (w: readonly string[] | undefined) =>
+  w?.length ? { warnings: [...new Set(w)] } : {};
+
 export function taskTools(d: TaskTools): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<Actor> => {
     const id = callerOf(tctx);
     const a = await d.loadAgent(id);
-    if (!a) throw new TaskError("ended", "You can't work on tasks: you were terminated.", 409);
-    return { kind: "agent", agentId: a.id, slug: a.slug };
+    const p = a && (await d.loadPrincipal(a.id));
+    if (!p) throw new TaskError("ended", "You can't work on tasks: you were terminated.", 409);
+    return { kind: "agent", id: p.id, ref: p.ref, handle: p.handle };
   };
   const guard = async <T>(fn: () => Promise<T>) => {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof TaskError) return toolError(e.message);
+      if (e instanceof TaskError || e instanceof UnknownMentionsError) return toolError(e.message);
       throw e;
     }
   };
-  const view = (r: {
+  const view = async (r: {
     task: {
       key: string;
       status: string;
-      assignee?: string;
+      assignee?: { ref: string; handle: string };
       assigneeEnded?: string;
       blockedBy: string[];
     };
     note?: string;
-  }) => ({
-    key: r.task.key,
-    status: r.task.status,
-    ...(r.task.assignee ? { assignee: r.task.assignee } : {}),
-    ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
-    blocked_by: r.task.blockedBy,
-  });
+    warnings?: string[];
+  }) => {
+    return {
+      key: r.task.key,
+      status: r.task.status,
+      ...(r.task.assignee ? { assignee: agentMentionOf(r.task.assignee) } : {}),
+      ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
+      blocked_by: r.task.blockedBy,
+    };
+  };
   return [
     {
       register(server: McpServer) {
@@ -111,7 +120,11 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.depends_on ? { dependsOn: args.depends_on } : {}),
                 ...(args.links ? { links: args.links } : {}),
               });
-              return { ...view(r), ...(r.note ? { note: r.note } : {}) };
+              return {
+                ...(await view(r)),
+                ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
+              };
             }),
         );
         server.registerTool(
@@ -142,7 +155,12 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.depends_on ? { dependsOn: args.depends_on } : {}),
                 ...(args.links ? { links: args.links } : {}),
               });
-              return { ...view(r), changed: r.changed, ...(r.note ? { note: r.note } : {}) };
+              return {
+                ...(await view(r)),
+                changed: r.changed,
+                ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
+              };
             }),
         );
         server.registerTool(
@@ -164,19 +182,25 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           ) =>
             guard(async () => {
               const limit = args.limit ?? 50;
-              const page = await d.tasks.list(await actorOf(tctx), {
-                status: args.status ?? ["open", "in_progress"],
-                ...(args.assignee ? { assignee: args.assignee } : {}),
-                ...(args.unassigned ? { unassigned: true } : {}),
-                ...(args.created_by ? { createdBy: args.created_by } : {}),
-                limit,
-              });
+              const warnings: string[] = [];
+              const page = await d.tasks.list(
+                await actorOf(tctx),
+                {
+                  status: args.status ?? ["open", "in_progress"],
+                  ...(args.assignee ? { assignee: args.assignee } : {}),
+                  ...(args.unassigned ? { unassigned: true } : {}),
+                  ...(args.created_by ? { createdBy: args.created_by } : {}),
+                  limit,
+                },
+                warnings,
+              );
+              const facing = await d.facing({ texts: page.items.map((t) => t.title) });
               return {
                 tasks: page.items.map((t) => ({
                   key: t.key,
-                  title: t.title,
+                  title: facing.render(t.title),
                   status: t.status,
-                  ...(t.assignee ? { assignee: t.assignee.slug } : {}),
+                  ...(t.assignee ? { assignee: principal(t.assignee) } : {}),
                   ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                   blocked_by: t.blockedBy,
                   created_by: principal(t.createdBy),
@@ -184,6 +208,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 })),
                 more: page.nextCursor !== null,
                 ...(page.nextCursor !== null ? { note: listNote(limit) } : {}),
+                ...warned(warnings),
               };
             }),
         );
@@ -204,12 +229,22 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 },
               });
               const first = t.comments[0];
+              const facing = await d.facing({
+                handles: t.blocks.flatMap((x) => (x.assignee ? [x.assignee] : [])),
+                texts: [
+                  t.title,
+                  t.body,
+                  ...t.dependsOn.map((x) => x.title),
+                  ...t.blocks.map((x) => x.title),
+                  ...t.comments.map((c) => c.body),
+                ],
+              });
               return {
                 key: t.key,
-                title: t.title,
-                body: t.body,
+                title: facing.render(t.title),
+                body: facing.render(t.body),
                 status: t.status,
-                ...(t.assignee ? { assignee: t.assignee.slug } : {}),
+                ...(t.assignee ? { assignee: principal(t.assignee) } : {}),
                 ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                 created_by: principal(t.createdBy),
                 created_at: t.createdAt.toISOString(),
@@ -217,26 +252,26 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 blocked_by: t.blockedBy,
                 depends_on: t.dependsOn.map((x) => ({
                   key: x.key,
-                  title: x.title,
+                  title: facing.render(x.title),
                   status: x.status,
                 })),
                 blocks: t.blocks.map((x) => ({
                   key: x.key,
-                  title: x.title,
+                  title: facing.render(x.title),
                   status: x.status,
-                  ...(x.assignee ? { assignee: x.assignee } : {}),
+                  ...(x.assignee ? { assignee: facing.mention(x.assignee) } : {}),
                 })),
                 links: t.links.map((l) => ({
                   kind: l.kind,
                   ...(l.target ? { target: l.target } : {}),
-                  ...(l.agent ? { agent: l.agent.slug } : {}),
+                  ...(l.agent ? { agent: principal(l.agent) } : {}),
                   ...(l.title ? { title: l.title } : {}),
                   ...(l.agent?.ended ? { ended: l.agent.ended } : {}),
                 })),
                 comments: t.comments.map((c) => ({
                   id: c.id,
                   author: principal(c.author),
-                  body: c.body,
+                  body: facing.render(c.body),
                   created_at: c.createdAt.toISOString(),
                 })),
                 earlier_comments: t.earlierComments,
@@ -252,19 +287,24 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
+              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Mention an agent or a person as <@ref|handle> to bring them in; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>
             guard(async () => {
               const r = await d.tasks.comment(await actorOf(tctx), args.id, args.body);
+              const facing = await d.facing({ handles: r.notReached.map((n) => n.name) });
               return {
                 id: r.id,
-                delivered_to: r.deliveredTo,
-                mentioned_humans: r.mentionedHumans,
-                not_reached: r.notReached.map((n) => ({ ...n, detail: notReachedText(n) })),
+                delivered_to: r.deliveredTo.map(agentMentionOf),
+                mentioned_humans: r.mentionedHumans.map(agentMentionOf),
+                not_reached: r.notReached.map((n) => {
+                  const name = facing.mention(n.name);
+                  return { ...n, name, detail: notReachedText({ ...n, name }) };
+                }),
                 held: r.held,
                 ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
               };
             }),
         );

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
 
@@ -32,17 +33,18 @@ afterEach(() => {
 });
 
 const local = (d: number, h: number, m: number) => new Date(2026, 10, d, h, m).toISOString();
-const SLUG = "tech-lead-ab12";
+const HANDLE = "tech-lead-ab12";
+const REF = refFor(HANDLE);
 const BODY =
   "It stops now, ending any work in progress, and its session can't continue. Messages waiting for it are dropped. Its workspace is deleted 3 days later unless you pin it; worktrees it made in projects stay.";
 
 const spawned = (over: Partial<AgentSummary> = {}): AgentSummary =>
   agentSummary({
-    slug: SLUG,
+    handle: HANDLE,
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     template: "tech-lead",
-    reportsTo: { kind: "agent", handle: "lead" },
+    reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
     depth: 1,
     ...over,
   });
@@ -51,7 +53,7 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
   spawned({
     status: "terminated",
     terminatedAt: local(19, 14, 32),
-    terminatedBy: "lead",
+    terminatedBy: { ref: refFor("lead"), handle: "lead" },
     workspacePinned: false,
     workspaceGraceEndsAt: local(22, 14, 32),
     ...over,
@@ -61,26 +63,49 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
 async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
   const state = { agent: first };
   const api = mockApi({
-    [`GET /api/agents/${SLUG}`]: () =>
+    [`GET /api/agents/${REF}`]: () =>
       json({
         agent: state.agent,
         queue: [],
         lastSeq: 1,
       }),
-    [`GET /api/agents/${SLUG}/events?`]: () =>
+    [`GET /api/agents/${REF}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "history" })],
       }),
     "GET /api/agents?ended=exclude": () =>
       json({
-        agents: [agentSummary({ slug: "lead", displayName: "Lead" }), state.agent],
+        agents: [agentSummary({ handle: "lead", displayName: "Lead" }), state.agent],
         running: { count: 1 },
       }),
     "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p-lead",
+            ref: refFor("lead"),
+            kind: "agent",
+            handle: "lead",
+            name: "Lead",
+            state: "live",
+            avatar: null,
+          },
+          {
+            id: "p-or",
+            ref: "hhhhhhhh",
+            kind: "human",
+            handle: "or",
+            name: "Or",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
     ...extra,
   });
-  const app = renderApp(`/agents/${SLUG}/session`, alice);
+  const app = renderApp(`/agents/${REF}/session`, alice);
   await screen.findByText("history");
   return { api, state, app };
 }
@@ -105,7 +130,7 @@ const terminatedFrame = () =>
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: SLUG,
+      agent: REF,
       status: "terminated",
       turnOpen: false,
       restartPending: false,
@@ -146,25 +171,27 @@ test("the header keeps a spawned agent's ' · ab12' tail; the title says Termina
 test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; success focuses Pin workspace", async () => {
   let fail = true;
   const { api, state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/terminate`]: () => {
+    [`POST /api/agents/${REF}/terminate`]: () => {
       if (fail)
         return json({ error: { code: "internal", message: "The factory couldn't stop it." } }, 500);
-      state.agent = terminated({ terminatedBy: "@alice" });
+      state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "alice" } });
       return json({ agent: state.agent });
     },
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  expect(within(dialog).getByRole("heading", { name: `Terminate @${SLUG}?` })).toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("heading", { name: `Terminate @${HANDLE}?` }),
+  ).toBeInTheDocument();
   expect(within(dialog).getByText(BODY)).toBeInTheDocument();
   expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   expect(await within(dialog).findByText("The factory couldn't stop it.")).toBeInTheDocument();
   expect(within(dialog).getByRole("alert")).toHaveTextContent("The factory couldn't stop it.");
   fail = false;
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(api.calls.filter((c) => c.url === `/api/agents/${SLUG}/terminate`)).toHaveLength(2);
+  expect(api.calls.filter((c) => c.url === `/api/agents/${REF}/terminate`)).toHaveLength(2);
   const pin = await screen.findByRole("button", { name: "Pin workspace" });
   await vi.waitFor(() => expect(document.activeElement).toBe(pin));
   expect(
@@ -181,7 +208,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "half a thought");
   await menuItem("Compact…");
   expect(await screen.findByLabelText("Focus (optional)")).toBeInTheDocument();
-  state.agent = terminated({ terminatedBy: "@or" });
+  state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "or" } });
   terminatedFrame();
   const line = await screen.findByText("This agent was terminated. Its session is read-only.");
   expect(screen.queryByLabelText("Focus (optional)")).toBeNull();
@@ -193,30 +220,30 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   await vi.waitFor(() =>
     expect(screen.queryByRole("button", { name: "Copy unsent message" })).toBeNull(),
   );
-  expect(localStorage.getItem(`of-draft:v1:agent:${SLUG}`)).toBeNull();
+  expect(localStorage.getItem(`of-draft:v1:agent:${REF}`)).toBeNull();
   // The detail was refetched for the header's dates.
   expect(await screen.findByText(/Terminated by/)).toBeInTheDocument();
 });
 
 test("a send that races the termination says so", async () => {
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/input`]: () => {
+    [`POST /api/agents/${REF}/input`]: () => {
       state.agent = terminated();
       return json(
-        { error: { code: "agent_terminated", message: `@${SLUG} was terminated.` } },
+        { error: { code: "agent_terminated", message: `@${HANDLE} was terminated.` } },
         409,
       );
     },
   });
   await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "late");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  const alert = await screen.findByText(`@${SLUG} was terminated, so this wasn't sent.`);
+  const alert = await screen.findByText(`@${HANDLE} was terminated, so this wasn't sent.`);
   expect(alert.closest("[role=alert]")).not.toBeNull();
   // Once the detail catches up the composer is read-only, the line and the draft copy stay.
   expect(
     await screen.findByText("This agent was terminated. Its session is read-only."),
   ).toBeInTheDocument();
-  expect(screen.getByText(`@${SLUG} was terminated, so this wasn't sent.`)).toBeInTheDocument();
+  expect(screen.getByText(`@${HANDLE} was terminated, so this wasn't sent.`)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy unsent message" })).toBeInTheDocument();
 });
 
@@ -224,43 +251,50 @@ test("Agent details: in the grace period, with Pin workspace; credential omitted
   await open(terminated({ credential: null }));
   const panel = await details();
   expect(sentence()).toBe(
-    "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
+    "Terminated by @lead, Lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
-  expect(within(panel).getByRole("link", { name: "Open @lead's chat" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(panel.textContent).not.toContain("Credential");
   expect(panel.textContent).toContain("Spawned by");
+});
+
+test("Agent details: an agent that terminated it is a link to that agent's chat", async () => {
+  await open(terminated());
+  const panel = await details();
+  const link = await within(panel).findByRole("link", { name: /@lead/ });
+  expect(link).toHaveAttribute("href", expect.stringContaining(`/agents/${refFor("lead")}/chat`));
+  expect(link.closest("[data-terminated-text]")).not.toBeNull();
 });
 
 test.each([
   [
     "due for deletion",
     {},
-    "Terminated by @lead on 14 Nov at 14:32. Workspace due for deletion since 17 Nov at 14:32 unless you pin it.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace due for deletion since 17 Nov at 14:32 unless you pin it.",
     "Pin workspace",
   ],
   [
     "pinned",
     { workspacePinned: true },
-    "Terminated by @lead on 14 Nov at 14:32. Workspace pinned.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
   [
     "deleted",
     { workspaceDeletedAt: local(17, 14, 40) },
-    "Terminated by @lead on 14 Nov at 14:32. Workspace deleted on 17 Nov at 14:40.",
+    "Terminated by @lead, Lead on 14 Nov at 14:32. Workspace deleted on 17 Nov at 14:40.",
     undefined,
   ],
   [
     "TTL and stuck",
-    { terminatedBy: "@factory", workspacePinned: true, stuck: true as const },
+    { terminatedBy: null, workspacePinned: true, stuck: true as const },
     "Terminated on 14 Nov at 14:32 after 3 days without activity. Workspace pinned. Its container couldn't be removed; the factory keeps retrying.",
     "Unpin workspace",
   ],
   [
     "by a human",
-    { terminatedBy: "@or", workspacePinned: true },
-    "Terminated by @or on 14 Nov at 14:32. Workspace pinned.",
+    { terminatedBy: { ref: "hhhhhhhh", handle: "or" }, workspacePinned: true },
+    "Terminated by O@or, Or on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
 ] as const)("Agent details: %s", async (_, over, text, button) => {
@@ -281,11 +315,9 @@ test.each([
     within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
       undefined,
   ).toBe(button);
-  // A human ends it in plain text; an agent is a link (the grace-period test).
-  if ("terminatedBy" in over && over.terminatedBy === "@or") {
-    const or = within(panel).getByText("@or");
-    expect(or.closest("a")).toBeNull();
-  }
+  // A person is a chip without a link; only an agent links to its chat.
+  if (text.includes("Terminated by O@or"))
+    expect(within(panel).queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
 test("Agent details: What's kept? explains in a popover", async () => {
@@ -301,11 +333,11 @@ test("Agent details: What's kept? explains in a popover", async () => {
 
 test("Pin / Unpin is one toggle that keeps focus and announces; within the grace Unpin acts at once", async () => {
   const { api, state } = await open(terminated(), {
-    [`PUT /api/agents/${SLUG}/workspace-pin`]: () => {
+    [`PUT /api/agents/${REF}/workspace-pin`]: () => {
       state.agent = terminated({ workspacePinned: true });
       return json({ agent: state.agent });
     },
-    [`DELETE /api/agents/${SLUG}/workspace-pin`]: () => {
+    [`DELETE /api/agents/${REF}/workspace-pin`]: () => {
       state.agent = terminated({ workspacePinned: false });
       return json({ agent: state.agent });
     },
@@ -322,14 +354,14 @@ test("Pin / Unpin is one toggle that keeps focus and announces; within the grace
   expect(document.activeElement).toBe(toggle);
   expect(await screen.findByText("Workspace unpinned.")).toBeInTheDocument();
   expect(api.calls.map((c) => `${c.method} ${c.url}`)).toContain(
-    `DELETE /api/agents/${SLUG}/workspace-pin`,
+    `DELETE /api/agents/${REF}/workspace-pin`,
   );
 });
 
 test("Unpin after the grace confirms: the workspace is deleted", async () => {
   const old = { terminatedAt: local(14, 14, 32), workspaceGraceEndsAt: local(17, 14, 32) };
   const { api, state } = await open(terminated({ ...old, workspacePinned: true }), {
-    [`DELETE /api/agents/${SLUG}/workspace-pin`]: () => {
+    [`DELETE /api/agents/${REF}/workspace-pin`]: () => {
       state.agent = terminated({ ...old, workspacePinned: false });
       return json({ agent: state.agent });
     },
@@ -337,7 +369,7 @@ test("Unpin after the grace confirms: the workspace is deleted", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Unpin workspace" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(
-    within(dialog).getByRole("heading", { name: `Unpin and delete @${SLUG}'s workspace?` }),
+    within(dialog).getByRole("heading", { name: `Unpin and delete @${HANDLE}'s workspace?` }),
   ).toBeInTheDocument();
   expect(
     within(dialog).getByText(
@@ -355,7 +387,7 @@ test("Unpin after the grace confirms: the workspace is deleted", async () => {
 const frameNow = () =>
   ws.onMessage?.({
     type: "agent_status",
-    agent: SLUG,
+    agent: REF,
     status: "terminated",
     turnOpen: false,
     restartPending: false,
@@ -369,8 +401,8 @@ test("the terminated frame arriving before the response: the dialog stays open u
   });
   let framed = false;
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/terminate`]: async () => {
-      state.agent = terminated({ terminatedBy: "@alice" });
+    [`POST /api/agents/${REF}/terminate`]: async () => {
+      state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "alice" } });
       act(() => frameNow());
       framed = true;
       await held;
@@ -379,7 +411,7 @@ test("the terminated frame arriving before the response: the dialog stays open u
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(framed).toBe(true));
   // The view has turned read-only behind it, but the request is still pending.
   expect(
@@ -394,8 +426,8 @@ test("the terminated frame arriving before the response: the dialog stays open u
 
 test("a failed terminate request after the agent was terminated anyway closes the dialog", async () => {
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/terminate`]: async () => {
-      state.agent = terminated({ terminatedBy: "lead" });
+    [`POST /api/agents/${REF}/terminate`]: async () => {
+      state.agent = terminated({ terminatedBy: { ref: refFor("lead"), handle: "lead" } });
       act(() => frameNow());
       // The frame commits on the next animation frame; the failure comes back once it has rendered.
       await vi.waitFor(() =>
@@ -408,7 +440,7 @@ test("a failed terminate request after the agent was terminated anyway closes th
   });
   await menuItem("Terminate…");
   const dialog = await screen.findByRole("alertdialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${SLUG}` }));
+  await userEvent.click(within(dialog).getByRole("button", { name: `Terminate @${HANDLE}` }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByText("Something broke.")).toBeNull();
   const pin = await screen.findByRole("button", { name: "Pin workspace" });
@@ -435,13 +467,13 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
 
 test("Edit agent on a spawned agent says it can't be edited", async () => {
   mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${REF}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
     "GET /api/agents?ended=exclude": () => json({ agents: [spawned()], running: { count: 1 } }),
     "GET /api/templates": () => json({ templates: [] }),
   });
-  renderApp(`/agents/${SLUG}/chat`, alice);
+  renderApp(`/agents/${REF}/chat`, alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "edit-agent", slug: SLUG }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: REF }));
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: /Save|Archive/ })).toBeNull();

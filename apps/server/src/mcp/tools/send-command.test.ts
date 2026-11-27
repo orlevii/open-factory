@@ -1,3 +1,4 @@
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
   AgentArchivedError,
@@ -6,7 +7,8 @@ import {
   CommandsUnsupportedError,
 } from "../../agents/errors.ts";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../../test/helpers.ts";
+import { testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 // I1 §7: send_command(target, command) for yourself and your direct reports.
@@ -22,12 +24,12 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: drv });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
-  for (const slug of ["lead", "dev", "qa", "kid"]) {
-    ids[slug] = (await h.seedAgent({ slug })).id;
-    tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
+  for (const handle of ["lead", "dev", "qa", "kid"]) {
+    ids[handle] = (await h.seedAgent({ handle })).id;
+    tok[handle] = h.app.agentTokens.mint(ids[handle] as string).token;
   }
-  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'kid'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'dev')`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = (select id from principals where handle = 'kid')`;
 });
 afterEach(() => h.close());
 
@@ -40,26 +42,31 @@ const call = async (who: string, command: string, target: string) => {
     json: r.isError ? undefined : JSON.parse(text(r)),
   };
 };
-const rt = async (slug: string) => {
-  const r = await h.app.runtimes.bySlug(slug);
-  if (!r) throw new Error(`no runtime ${slug}`);
+const rt = async (handle: string) => {
+  const r = await runtimeOf(h.app, handle);
+  if (!r) throw new Error(`no runtime ${handle}`);
   return r;
 };
-const procOf = (slug: string) => drv.starts.filter((p) => p.spec.agentId === ids[slug]).at(-1);
+const procOf = (handle: string) => drv.starts.filter((p) => p.spec.agentId === ids[handle]).at(-1);
 /** Starts the agent with a human message and leaves its turn open (`open`) or finished. */
-async function start(slug: string, open: boolean) {
+async function start(handle: string, open: boolean) {
   await h.app.inject({
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: [slug], body: "work", urgent: false, clientMessageId: crypto.randomUUID() },
+    payload: {
+      to: [h.seededRef(handle)],
+      body: "work",
+      urgent: false,
+      clientMessageId: crypto.randomUUID(),
+    },
   });
-  procOf(slug)?.emit(ev.session(), ev.turn(), ev.usage(), ...(open ? [] : [ev.end()]));
-  await (await rt(slug)).settled();
+  procOf(handle)?.emit(ev.session(), ev.turn(), ev.usage(), ...(open ? [] : [ev.end()]));
+  await (await rt(handle)).settled();
 }
-const rawQueue = async (slug: string) =>
-  (await rt(slug)).queueItems().filter((q) => q.kind === "raw" || q.kind === "compact");
-const rawWrites = (slug: string) => procOf(slug)?.writes.filter((w) => w.kind === "raw") ?? [];
+const rawQueue = async (handle: string) =>
+  (await rt(handle)).queueItems().filter((q) => q.kind === "raw" || q.kind === "compact");
+const rawWrites = (handle: string) => procOf(handle)?.writes.filter((w) => w.kind === "raw") ?? [];
 
 test("every caller lists send_command; a spawned agent's says only yourself", async () => {
   const desc = async (who: string) => {
@@ -78,13 +85,18 @@ test('self by "me" and by its own handle; the entry is the agent\'s own', async 
   for (const target of ["me", "lead", "@lead"]) {
     const r = await call("lead", "/context", target);
     expect(r.err, target).toBe(false);
-    expect(r.json).toEqual({
-      target: "@lead",
+    expect(r.json).toMatchObject({
+      target: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
       status: "queued",
       note: "Your /context runs when this turn ends.",
     });
     const [item] = await rawQueue("lead");
-    expect(item).toMatchObject({ kind: "raw", body: "/context", from: "@lead", fromKind: "agent" });
+    expect(item).toMatchObject({
+      kind: "raw",
+      body: "/context",
+      from: mentionOf(testRef(ids.lead as string)),
+      fromKind: "agent",
+    });
     // one pending self-command at a time: clear it for the next loop turn
     procOf("lead")?.emit(ev.usage(), ev.end());
     await (await rt("lead")).settled();
@@ -99,32 +111,45 @@ test("a self /compact says to write down where you are", async () => {
   await start("lead", true);
   const r = await call("lead", "/compact keep the plan", "me");
   expect(r.json).toEqual({
-    target: "@lead",
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
     status: "queued",
     note: "Your /compact runs when this turn ends. Write down where you are before you end the turn.",
   });
   expect(await rawQueue("lead")).toMatchObject([
-    { kind: "compact", from: "@lead", fromKind: "agent", focus: "keep the plan" },
+    {
+      kind: "compact",
+      from: mentionOf(testRef(ids.lead as string)),
+      fromKind: "agent",
+      focus: "keep the plan",
+    },
   ]);
 });
 
 test("a direct report: the note follows its state (hibernated, turn open)", async () => {
   // hibernated: woken to run it
   const hib = await call("lead", "/context", "dev");
-  expect(hib.json).toEqual({ target: "@dev", status: "queued", note: "Wakes @dev to run it." });
+  expect(hib.json).toMatchObject({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "queued",
+    note: expect.stringMatching(/^Wakes <@[0-9a-z]{8}\|dev> to run it\.$/),
+  });
   await (await rt("dev")).settled();
   expect(procOf("dev")).toBeDefined();
   // turn open
   procOf("dev")?.emit(ev.session(), ev.turn());
   await (await rt("dev")).settled();
   const open = await call("lead", "/review", "dev");
-  expect(open.json.note).toBe("Runs when @dev's current turn ends.");
+  expect(open.json.note).toMatch(/^Runs when <@[0-9a-z]{8}\|dev>'s current turn ends\.$/);
 });
 
 test("a direct report that is idle runs it now", async () => {
   await start("dev", false);
   const r = await call("lead", "/context", "@dev");
-  expect(r.json).toEqual({ target: "@dev", status: "queued", note: "Runs now." });
+  expect(r.json).toMatchObject({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "queued",
+    note: "Runs now.",
+  });
   expect(rawWrites("dev")).toEqual([{ kind: "raw", text: "/context" }]);
 });
 
@@ -137,18 +162,43 @@ test("an errored report holds it until it is restarted (restart_agent, or a huma
   expect((await rt("dev")).live().status).toBe("errored");
   const starts = drv.starts.length;
   const r = await call("lead", "/context", "dev");
-  expect(r.json).toEqual({
-    target: "@dev",
+  expect(r.json).toMatchObject({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
-    note: "@dev is errored; it runs after it is restarted (restart_agent, or a human).",
+    note: expect.stringMatching(
+      /^<@[0-9a-z]{8}\|dev> is errored; it runs after it is restarted \(restart_agent, or a human\)\.$/,
+    ),
   });
   expect(drv.starts).toHaveLength(starts);
+});
+
+test("a direct report named by its mention runs it with no warning; by a plain handle it warns", async () => {
+  await start("dev", false);
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const mentioned = await call("lead", "/context", `<@${dev?.ref}|stale>`);
+  expect(mentioned.json).toEqual({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "queued",
+    note: "Runs now.",
+  });
+  const plain = await call("lead", "/context", "dev");
+  expect(plain.json.warnings).toEqual([
+    `Plain mention detected: @dev was resolved to <@${dev?.ref}|dev>. Mention as <@ref|handle>.`,
+  ]);
+});
+
+test("a ref nobody holds is refused with the fix-it error", async () => {
+  const r = await call("lead", "/context", "<@zzzzzzzz>");
+  expect(r.err).toBe(true);
+  expect(r.text).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their mention.",
+  );
 });
 
 test("a spawned report is a direct report too", async () => {
   const r = await call("lead", "/context", "kid");
   expect(r.err).toBe(false);
-  expect(r.json.target).toBe("@kid");
+  expect(r.json.target).toMatch(/^<@[0-9a-z]{8}\|kid>$/);
 });
 
 test("a target that is not the caller or its direct report is refused", async () => {
@@ -174,12 +224,12 @@ test("a spawned caller can command only itself", async () => {
 });
 
 test("a terminated or archived report is refused as for messages", async () => {
-  await h.sql`update agents set terminated_at = now() where slug = 'kid'`;
+  await h.sql`update agents set terminated_at = now() where id = (select id from principals where handle = 'kid')`;
   expect(await call("lead", "/context", "kid")).toMatchObject({
     err: true,
     text: "@kid was terminated and can't receive messages.",
   });
-  await h.sql`update agents set archived_at = now() where slug = 'dev'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'dev')`;
   expect(await call("lead", "/context", "dev")).toMatchObject({
     err: true,
     text: "@dev is archived and can't receive messages.",
@@ -214,7 +264,7 @@ test("arguments are neutralised and the line is written as typed", async () => {
   ]);
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events.filter((e) => e.type === "operator_input")).toEqual([
-    expect.objectContaining({ by: "@lead" }),
+    expect.objectContaining({ by: mentionOf(testRef(ids.lead as string)) }),
   ]);
 });
 
@@ -236,7 +286,11 @@ test("/compact focus on a report takes the Compact flow, by the caller", async (
   expect(procOf("dev")?.controls.at(-1)).toMatchObject({ cmd: "compact", arg: "the API work" });
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events.filter((e) => e.type === "control")).toEqual([
-    expect.objectContaining({ cmd: "compact", by: "@lead", arg: "the API work" }),
+    expect.objectContaining({
+      cmd: "compact",
+      by: mentionOf(testRef(ids.lead as string)),
+      arg: "the API work",
+    }),
   ]);
 });
 
@@ -248,13 +302,13 @@ test("nobody can cancel an agent's queued command from the UI", async () => {
   expect(items.map((q) => q.kind)).toEqual(["raw", "compact"]);
   // sent by an agent (a manager), not a human
   expect(items.map((q) => [q.from, q.fromKind])).toEqual([
-    ["@lead", "agent"],
-    ["@lead", "agent"],
+    [mentionOf(testRef(ids.lead as string)), "agent"],
+    [mentionOf(testRef(ids.lead as string)), "agent"],
   ]);
   for (const item of items) {
     const res = await h.app.inject({
       method: "DELETE",
-      url: `/api/agents/dev/queue/${item.id}`,
+      url: `/api/agents/${await h.refOf("dev")}/queue/${item.id}`,
       headers: { cookie },
     });
     expect(res.statusCode).toBe(403);
@@ -277,7 +331,9 @@ test("a second command for yourself is refused while one is pending, and the age
 });
 
 test("a hibernated report's compact wakes it with reason compact", async () => {
-  expect((await call("lead", "/compact", "dev")).json.note).toBe("Wakes @dev to run it.");
+  expect((await call("lead", "/compact", "dev")).json.note).toMatch(
+    /^Wakes <@[0-9a-z]{8}\|dev> to run it\.$/,
+  );
   await (await rt("dev")).settled();
   const started = (await h.app.store.after(ids.dev as string, 0, 1000))
     .map((e) => e.event)

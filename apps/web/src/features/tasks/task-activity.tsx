@@ -9,7 +9,11 @@ import { STATUS } from "./status-label";
 type Event = Extract<Activity, { type: "event" }>;
 
 const Who = ({ p }: { p: TaskPrincipal }) =>
-  p.kind === "agent" ? <AgentLink slug={p.slug} /> : <span className="font-mono">@{p.handle}</span>;
+  p.kind === "agent" ? (
+    <AgentLink agentRef={p.ref} />
+  ) : (
+    <span className="font-mono">@{p.handle}</span>
+  );
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -18,7 +18,7 @@ const schedulerTimers = {
   },
 };
 const opts = () => ({ harnessDriver: driver, clock: () => clock, schedulerTimers });
-const proc = () => driver.starts.filter((p) => p.spec.slug === "ceo").at(-1);
+const proc = () => driver.startsOf("ceo").at(-1);
 
 beforeEach(async () => {
   clock = new Date("2026-11-20T10:00:00Z");
@@ -26,19 +26,19 @@ beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp(opts());
   userId = (await signUp(h.app, { handle: "or" })).user.id;
-  await h.seedAgent({ slug: "ceo" });
+  await h.seedAgent({ handle: "ceo" });
 });
 afterEach(() => h.close());
 
 async function ceo() {
-  const a = await h.app.store.agentBySlug("ceo");
+  const a = await agentRowOf(h.app, "ceo");
   if (!a) throw new Error("seed");
   return a;
 }
 
 test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the scheduled envelope", async () => {
   const { item } = await h.app.schedules.create(
-    { userId },
+    { kind: "human", id: userId },
     {
       target: "ceo",
       cron: "0 9 * * 1-5",
@@ -50,17 +50,17 @@ test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the sc
   clock = new Date("2026-11-23T08:00:00Z");
   await h.app.scheduler.tick();
   await h.app.scheduler.idle();
-  await (await h.app.runtimes.bySlug("ceo"))?.settled();
+  await (await runtimeOf(h.app, "ceo"))?.settled();
   const p = proc();
   expect(p).toBeDefined();
   p?.emit(ev.session(), ev.turn());
-  await (await h.app.runtimes.bySlug("ceo"))?.settled();
+  await (await runtimeOf(h.app, "ceo"))?.settled();
   const first = p?.sent[0]?.[0];
   expect(first).toMatchObject({
     from: "@scheduler",
     kind: "scheduled",
     scheduleKey: item.key,
-    by: "@or",
+    by: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     due: "2026-11-23T09:00:00+01:00",
   });
   expect(first?.firings).toBe(1); // rendered only above 1
@@ -71,7 +71,7 @@ test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the sc
 
 test("catch-up: a server stopped across the next 09:00 fires once at boot, late, and moves on", async () => {
   const { item } = await h.app.schedules.create(
-    { userId },
+    { kind: "human", id: userId },
     { target: "ceo", cron: "0 9 * * 1-5", timezone: "Europe/Berlin", body: "Morning review" },
   );
   await h.app.close();
@@ -88,9 +88,9 @@ test("catch-up: a server stopped across the next 09:00 fires once at boot, late,
   expect(new Date(rows[0]?.due_at as string).toISOString()).toBe("2026-11-24T08:00:00.000Z");
   const got = await again.app.schedules.get(item.key);
   expect(got?.nextRunAt).toBe("2026-11-25T08:00:00.000Z");
-  await (await again.app.runtimes.bySlug("ceo"))?.settled();
+  await (await runtimeOf(again.app, "ceo"))?.settled();
   const p = driver.starts.at(-1);
   p?.emit(ev.session(), ev.turn());
-  await (await again.app.runtimes.bySlug("ceo"))?.settled();
+  await (await runtimeOf(again.app, "ceo"))?.settled();
   expect(p?.sent[0]?.[0]).toMatchObject({ kind: "scheduled", firings: 2, late: true });
 });

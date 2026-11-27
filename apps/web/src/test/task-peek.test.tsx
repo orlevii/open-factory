@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -28,7 +29,7 @@ const summary = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: at,
 });
 const detail = (n: number) => ({
@@ -232,15 +233,15 @@ test("Esc inside the peek's editors leaves the peek open: the description draft 
   space(r2);
   const sheet = await screen.findByRole("dialog", { name: "T-2" });
   await userEvent.click(await within(sheet).findByRole("button", { name: "Edit description" }));
-  const area = within(sheet).getByRole("textbox", { name: "Description" });
+  const area = within(sheet).getByRole("combobox", { name: "Description" });
   fireEvent.change(area, { target: { value: "A long draft" } });
   fireEvent.keyDown(area, { key: "Escape" });
   expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
-  expect(within(sheet).getByRole("textbox", { name: "Description" })).toHaveValue("A long draft");
+  expect(within(sheet).getByRole("combobox", { name: "Description" })).toHaveValue("A long draft");
   await userEvent.click(within(sheet).getByRole("button", { name: "Edit title" }));
-  const title = within(sheet).getByRole("textbox", { name: "Title" });
+  const title = within(sheet).getByRole("combobox", { name: "Title" });
   fireEvent.keyDown(title, { key: "Escape" });
-  await waitFor(() => expect(within(sheet).queryByRole("textbox", { name: "Title" })).toBeNull());
+  await waitFor(() => expect(within(sheet).queryByRole("combobox", { name: "Title" })).toBeNull());
   expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
 });
 

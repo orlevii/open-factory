@@ -6,10 +6,11 @@ import { Combobox, type ComboOption } from "@/components/ui/combobox";
 import { agentsListQueryOptions } from "@/features/session/api";
 
 /** The only fields the picker reads. Status frames change none of them, so the list isn't rebuilt. */
-export type AgentOpt = Pick<AgentSummary, "slug" | "displayName" | "kind" | "reportsTo">;
+export type AgentOpt = Pick<AgentSummary, "ref" | "handle" | "displayName" | "kind" | "reportsTo">;
 
 const project = (a: AgentSummary): AgentOpt => ({
-  slug: a.slug,
+  ref: a.ref,
+  handle: a.handle,
   displayName: a.displayName,
   kind: a.kind,
   reportsTo: a.reportsTo,
@@ -22,25 +23,25 @@ const liveByName = (data: AgentSummary[]): AgentOpt[] =>
   data
     .filter(isLive)
     .map(project)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.slug.localeCompare(b.slug));
+    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.handle.localeCompare(b.handle));
 const endedAll = (data: AgentSummary[]): AgentOpt[] => data.map(project);
 
 const NONE: AgentOpt[] = [];
 
 const optionOf = (a: AgentOpt, group?: string): ComboOption => ({
-  value: a.slug,
-  label: a.displayName || a.slug,
-  keywords: [a.slug],
+  value: a.ref,
+  label: a.displayName || a.handle,
+  keywords: [a.handle],
   ...(group ? { group } : {}),
 });
 
 const renderPlain = (o: ComboOption): ReactNode =>
-  o.fixed ? o.label : <AgentChip slug={o.value} badge showSlug />;
+  o.fixed ? o.label : <AgentChip agentRef={o.value} badge showHandle />;
 
 /**
- * A searchable agent pick (slug or name). `scope` "live" lists live agents; "live+ended" adds the ended
+ * A searchable agent pick (handle or name); its value is the agent's ref. `scope` "live" lists live agents; "live+ended" adds the ended
  * ones in a last "Ended" group (the ended list is fetched only then). A value that isn't listed shows as
- * `@slug` with its face. `filter` must be a stable function (memoize it). Sorted by name.
+ * `@handle` with its face. `filter` must be a stable function (memoize it). Sorted by name.
  */
 export function AgentCombobox({
   value,
@@ -105,7 +106,7 @@ export function AgentCombobox({
       return renderValueOverride ? (
         renderValueOverride(v)
       ) : (
-        <AgentChip slug={v} badge showSlug inline />
+        <AgentChip agentRef={v} badge showHandle inline />
       );
     },
     [fixed, renderValueOverride],

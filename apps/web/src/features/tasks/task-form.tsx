@@ -1,14 +1,15 @@
 import { ApiError, taskBodySchema, taskTitleSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { MentionInput } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
-import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import type { ComboOption } from "@/components/ui/combobox";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
@@ -70,9 +71,10 @@ export function TaskForm({
   useFocusOnOpen(form);
   const active = useQuery(agentsListQueryOptions("exclude"));
   const ended = useQuery(agentsListQueryOptions("only"));
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const known =
     active.data && ended.data
-      ? new Set([...active.data, ...ended.data].map((a) => a.slug))
+      ? new Set([...active.data, ...ended.data].map((a) => a.handle))
       : undefined;
 
   /** Writes through a ref, so the draft never lags a render. */
@@ -97,12 +99,12 @@ export function TaskForm({
     v.assignee &&
       active.data &&
       ended.data &&
-      !active.data.some((a) => a.slug === v.assignee && !a.archivedAt && !a.terminatedAt),
+      !active.data.some((a) => a.ref === v.assignee && !a.archivedAt && !a.terminatedAt),
   );
   const assignee = stale ? "" : v.assignee;
-  const staleSlug = v.assignee;
+  const staleRef = v.assignee;
   const staleEnded =
-    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
+    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.ref === staleRef);
   const staleError = stale ? (staleEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing) : undefined;
   // Guarded, not left to the updater's bail-out: any setState call during render schedules another render, even one
   // whose updater returns the same state, so an unguarded call loops.
@@ -112,7 +114,7 @@ export function TaskForm({
     if (!staleError) return;
     // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft. `restored`
     // is the form's own state, so after Discard the prefill counts as a fresh one.
-    if (!restored && staleSlug === prefill?.assignee)
+    if (!restored && staleRef === prefill?.assignee)
       draft.rebase({ ...blank(prefill), assignee: "" });
     update({ assignee: "" });
   }, [staleError]);
@@ -177,18 +179,25 @@ export function TaskForm({
     <form ref={form} onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
       <SheetBody className="field-stack">
         <fieldset disabled={pending} className="field-stack">
-          <FormField
-            name="title"
-            label="Title"
-            value={title}
-            error={f.errors.title}
-            autoComplete="off"
-            onChange={(e) => {
-              update({ title: e.target.value });
-              f.change("title");
-            }}
-            onBlur={(e) => f.blur("title", e)}
-          />
+          <FieldShell name="title" label="Title" error={f.errors.title}>
+            {(a) => (
+              <MentionInput
+                id={a.id}
+                name="title"
+                value={title}
+                source={at}
+                autoComplete="off"
+                className="h-9"
+                aria-invalid={a.invalid || undefined}
+                aria-describedby={a.describedBy}
+                onValueChange={(next) => {
+                  update({ title: next });
+                  f.change("title");
+                }}
+                onBlur={(e) => f.blur("title", e)}
+              />
+            )}
+          </FieldShell>
           <FieldShell
             name="assignee"
             label="Assignee"
@@ -216,6 +225,7 @@ export function TaskForm({
               <MarkdownEditor
                 id={a.id}
                 value={body}
+                mentionSource={at}
                 invalid={Boolean(f.errors.body)}
                 view={bodyView}
                 onViewChange={setBodyView}

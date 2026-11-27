@@ -6,8 +6,9 @@ import { MSG } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 import { ProjectService } from "./project-service.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -33,8 +34,8 @@ const dir = (name: string) => {
   return d;
 };
 
-async function grant(slug: string, project: string, archived = false) {
-  const a = await t.seedAgent({ slug });
+async function grant(handle: string, project: string, archived = false) {
+  const a = await t.seedAgent({ handle });
   if (archived)
     await t.db
       .update(schema.agents)
@@ -168,20 +169,20 @@ test("a live spawned grantee blocks removal and is named with its spawner", asyn
   const proj = (
     await t.db.select().from(schema.projects).where(eq(schema.projects.name, "kids"))
   )[0];
-  const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
+  const [boss] = await agentRecords(t.db).where(eq(schema.principals.handle, "boss"));
   const [cred] = await t.db.select().from(schema.credentials).limit(1);
-  const kid = (slug: string) => ({
-    id: `${slug}-id`,
-    slug,
-    displayName: slug,
+  const kid = (handle: string) => ({
+    id: `${handle}-id`,
+    handle,
+    displayName: handle,
     template: "t",
     config: {} as never,
     runtime: "local" as const,
     kind: "ephemeral",
-    reportsTo: boss?.id,
+    reportsTo: boss?.id as string,
     credentialId: cred?.id ?? null,
   });
-  await claimTestHandle(t.db, "tl-ab12", "agent");
+  await seedTestPrincipal(t.db, "agent", "tl-ab12", "tl-ab12-id");
   await t.db.insert(schema.agents).values(kid("tl-ab12"));
   await t.db
     .insert(schema.agentProjectGrants)

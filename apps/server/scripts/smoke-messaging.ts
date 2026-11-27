@@ -25,16 +25,17 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
+import { type AnyEvent, type Envelope, refOf, type SessionEvent } from "@open-factory/shared";
 import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { byHandle } from "./by-handle.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
-const SLUGS = ["lead", "ada", "bob"] as const;
-type Slug = (typeof SLUGS)[number];
+const HANDLES = ["lead", "ada", "bob"] as const;
+type Handle = (typeof HANDLES)[number];
 const TOKEN_FILE = path.join(homedir(), ".open-factory-spike", "oauth-token");
 
 let token = "";
@@ -160,7 +161,7 @@ const logStream = new Writable({
 // ---------- app and cleanup ----------
 let app!: Awaited<ReturnType<typeof buildApp>>;
 let appBuilt = false;
-const ids = new Map<Slug, string>();
+const ids = new Map<Handle, string>();
 let tdb: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
 let closeDb: (() => Promise<void>) | undefined;
 let cleaned: Promise<void> | undefined;
@@ -224,14 +225,14 @@ const freePort = () =>
       srv.close(() => resolve(port));
     });
   });
-const idOf = (slug: Slug) => {
-  const id = ids.get(slug);
-  if (!id) throw new Error(`no agent ${slug}`);
+const idOf = (handle: Handle) => {
+  const id = ids.get(handle);
+  if (!id) throw new Error(`no agent ${handle}`);
   return id;
 };
-const since = (slug: Slug, seq = 0): Promise<SessionEvent[]> =>
-  app.store.after(idOf(slug), seq, 10_000);
-const lastSeq = async (slug: Slug) => (await since(slug)).at(-1)?.seq ?? 0;
+const since = (handle: Handle, seq = 0): Promise<SessionEvent[]> =>
+  app.store.after(idOf(handle), seq, 10_000);
+const lastSeq = async (handle: Handle) => (await since(handle)).at(-1)?.seq ?? 0;
 const textOf = (es: SessionEvent[]) =>
   es.flatMap((e) => (e.event.type === "assistant_text" ? [e.event.text] : [])).join("\n");
 const toolTrace = (es: SessionEvent[]) =>
@@ -283,26 +284,26 @@ async function until<T>(
   throw new Error(`timed out after ${Math.round(ms / 1000)} s waiting for ${what}`);
 }
 
-let orUser = { userId: "", handle: "or" };
+let orUser = { userId: "", ref: "", handle: "or" };
 
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
-async function send(slug: Slug, body: string) {
-  const from = await lastSeq(slug);
-  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+async function send(handle: Handle, body: string) {
+  const from = await lastSeq(handle);
+  const [sent] = (await app.router.send(orUser, [handle], body, false)).results;
   if (!sent || sent.status === "refused" || sent.status === "start_failed")
     throw new Error(
-      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+      `send to ${handle} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
     );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
-async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
+async function turnOf(handle: Handle, id: string, from: number, ms = 240_000) {
   return until(
-    `${slug}'s turn for message ${id}`,
+    `${handle}'s turn for message ${id}`,
     async () => {
-      const es = await since(slug, from);
+      const es = await since(handle, from);
       const err = es.find((e) => e.event.type === "error" && e.event.source !== "api");
-      if (err) throw new Error(`${slug}: ${brief(JSON.stringify(err.event))}`);
+      if (err) throw new Error(`${handle}: ${brief(JSON.stringify(err.event))}`);
       const i = es.findIndex(
         (e) =>
           e.event.type === "message_in" &&
@@ -321,57 +322,57 @@ async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
  * is printed. `accept` returns undefined to retry.
  */
 async function ask<T>(
-  slug: Slug,
+  handle: Handle,
   prompts: string[],
   accept: (turn: SessionEvent[]) => T | undefined,
 ): Promise<{ turn: SessionEvent[]; got: T }> {
   let last: SessionEvent[] = [];
   for (const [n, prompt] of prompts.slice(0, 3).entries()) {
-    if (n > 0) say(`    retry ${n}: ${slug} did not follow the prompt; tightened prompt sent`);
-    const s = await send(slug, prompt);
-    last = await turnOf(slug, s.id, s.from);
+    if (n > 0) say(`    retry ${n}: ${handle} did not follow the prompt; tightened prompt sent`);
+    const s = await send(handle, prompt);
+    last = await turnOf(handle, s.id, s.from);
     const got = accept(last);
     if (got !== undefined) return { turn: last, got };
   }
   throw new Error(
-    `${slug} did not follow the prompt after retries; tools: ${toolTrace(last) || "none"}; reply: ${brief(textOf(last))}`,
+    `${handle} did not follow the prompt after retries; tools: ${toolTrace(last) || "none"}; reply: ${brief(textOf(last))}`,
   );
 }
 
 const LONG_BASH = (secs: number) =>
   `Run this exact command with the Bash tool, in the foreground, in one call: perl -e 'sleep ${secs}' && echo slept ${secs}\nThen say done.`;
 /** Waits for a Bash call that sleeps `secs` and checks it is still running (no result yet) 3 s later. */
-async function longBash(slug: Slug, from: number, secs: number) {
+async function longBash(handle: Handle, from: number, secs: number) {
   const call = await until(
-    `${slug}'s Bash sleep ${secs}`,
+    `${handle}'s Bash sleep ${secs}`,
     async () => {
-      const es = await since(slug, from);
+      const es = await since(handle, from);
       const c = calls(es, "Bash").find((x) =>
         new RegExp(`sleep ${secs}`).test(JSON.stringify(x.event.input)),
       );
       if (c) return c;
       if (es.some((e) => e.event.type === "turn_end" && !e.event.originKind))
         throw new Error(
-          `${slug}'s turn ended without the Bash call: ${toolTrace(es)}; ${brief(textOf(es))}`,
+          `${handle}'s turn ended without the Bash call: ${toolTrace(es)}; ${brief(textOf(es))}`,
         );
       return undefined;
     },
     240_000,
   );
   await sleep(3000);
-  const r = resultOf(await since(slug, from), call.event.toolUseId);
+  const r = resultOf(await since(handle, from), call.event.toolUseId);
   if (r) throw new Error(`the Bash call already returned: ${brief(r.content)}`);
   return call;
 }
 /** No open turn and nothing queued for 10 s in a row (the agents may still be talking to each other). */
-async function quiet(slugs: Slug[]) {
+async function quiet(handles: Handle[]) {
   let since0 = 0;
   await until(
-    `${slugs.join(", ")} to go quiet`,
+    `${handles.join(", ")} to go quiet`,
     async () => {
       const busy = [];
-      for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+      for (const s of handles) {
+        const rt = await byHandle(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -398,8 +399,8 @@ async function finalChecks() {
     posts.length > 0 && !mcpRequests.some((r) => r.status === 403) && !statusCodes.has(403),
     `/mcp requests by method and status: ${JSON.stringify(listenerCodes)}; all response codes in the run: ${JSON.stringify(Object.fromEntries(statusCodes))}; remote addresses seen by the listener: ${sources.join(", ")}; POSTs that never got a response: ${mcpRequests.filter((r) => r.method === "POST" && r.status === undefined).length}`,
   );
-  for (const slug of SLUGS) {
-    const es = await since(slug);
+  for (const handle of HANDLES) {
+    const es = await since(handle);
     const unavailable = es.filter((e) => e.event.type === "mcp_unavailable");
     const starts = es.filter((e) => e.event.type === "session_started");
     // How long after each start the factory MCP answered, and the first call that found the tool missing.
@@ -430,7 +431,7 @@ async function finalChecks() {
         /MCP servers are still connecting: factory/.test(e.event.content),
     );
     check(
-      `7. ${slug}: the factory tools were there when the agent first needed them (no "No such tool available", no "still connecting"), no mcp_unavailable`,
+      `7. ${handle}: the factory tools were there when the agent first needed them (no "No such tool available", no "still connecting"), no mcp_unavailable`,
       starts.length > 0 &&
         missing.length === 0 &&
         searching.length === 0 &&
@@ -482,8 +483,9 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
     .join("; ");
   const me = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json() as {
     id: string;
+    ref: string;
   };
-  return { cookie, userId: me.id };
+  return { cookie, userId: me.id, ref: me.ref };
 }
 
 /** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
@@ -547,7 +549,7 @@ try {
     const or = await signUp("or", "Or");
     return { or, sam: await signUp("sam", "Sam", or) };
   });
-  orUser = { userId: users.or.userId, handle: "or" };
+  orUser = { userId: users.or.userId, ref: users.or.ref, handle: "or" };
   await step("1. factory settings: member update debounce 20 s", () =>
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 20 }),
   );
@@ -576,33 +578,37 @@ try {
     const errs = r?.issues.filter((i) => i.severity === "error") ?? [];
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
-  for (const [slug, reportsTo] of [
+  for (const [handle, reportsTo] of [
     ["lead", "or"],
     ["ada", "lead"],
     ["bob", "lead"],
   ] as const) {
-    await step(`1. agent ${slug} created (reports to ${reportsTo})`, () =>
+    await step(`1. agent ${handle} created (reports to ${reportsTo})`, () =>
       app.agents.create(
         {
           template: "msg",
-          slug,
-          displayName: slug[0]?.toUpperCase() + slug.slice(1),
-          description: `Smoke messaging agent ${slug}`,
+          handle,
+          displayName: handle[0]?.toUpperCase() + handle.slice(1),
+          description: `Smoke messaging agent ${handle}`,
           reportsTo,
           credential: "smoke",
         },
-        { kind: "human", handle: "or" },
+        { kind: "human", ref: orUser.ref, handle: "or" },
       ),
     );
     ids.set(
-      slug,
-      String((await conn.sql`select id from agents where slug = ${slug}`)[0]?.id ?? ""),
+      handle,
+      String(
+        (
+          await conn.sql`select a.id from agents a join principals p on p.id = a.id where p.handle = ${handle}`
+        )[0]?.id ?? "",
+      ),
     );
   }
 
   // 2. AC1: ada → hibernated bob with mcp__factory__send_message; bob wakes and replies.
   const bobFrom = await lastSeq("bob");
-  const bobStatus = (await app.runtimes.bySlug("bob"))?.live().status;
+  const bobStatus = (await byHandle(app, "bob"))?.live().status;
   const t2 = await step("2. ada sends to bob with mcp__factory__send_message", () =>
     ask(
       "ada",
@@ -819,7 +825,7 @@ try {
       "ada",
       [
         "Call mcp__factory__list_peers and tell me who you can message.",
-        "Call the tool mcp__factory__list_peers with no arguments, then list the slugs and relations it returned.",
+        "Call the tool mcp__factory__list_peers with no arguments, then list the handles and relations it returned.",
         "You must call mcp__factory__list_peers now, with no arguments. No other tool.",
       ],
       (es) => okCalls(es, "mcp__factory__list_peers")[0],
@@ -830,8 +836,8 @@ try {
   try {
     peers = JSON.parse(peersRaw);
   } catch {}
-  const rel = (slug: string) =>
-    peers.peers?.find((a) => a.kind === "agent" && a.handle === `@${slug}`)?.relation;
+  const rel = (handle: string) =>
+    peers.peers?.find((a) => a.kind === "agent" && a.handle === `@${handle}`)?.relation;
   const handles = (peers.peers ?? [])
     .filter((p) => p.kind === "human")
     .map((h) => h.handle.slice(1));
@@ -876,7 +882,7 @@ try {
             from: { name: string };
             to: string;
             preview: string;
-            link: { agentSlug: string; seq?: number };
+            link: { kind: string; agentRef?: string; seq?: number };
           }[];
         }
       ).items ?? [];
@@ -886,7 +892,7 @@ try {
       res.statusCode === 200 &&
         item?.from.name === "ada" &&
         item.to === `@${handle}` &&
-        item.link.agentSlug === "ada" &&
+        item.link.agentRef === refOf(idOf("ada")) &&
         item.link.seq === t6.got.seq,
       `${res.statusCode}: ${brief(JSON.stringify(item ?? items), 300)}; call seq ${t6.got.seq}`,
     );

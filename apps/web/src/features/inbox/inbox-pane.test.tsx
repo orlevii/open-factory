@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { chatQueryOptions } from "@/features/chat/api";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail } from "@/test/session-fixtures";
 
@@ -31,13 +32,12 @@ afterEach(() => {
 });
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, s)).toISOString();
-const msg = (slug: string, i: number, over: Record<string, unknown> = {}) => ({
+const msg = (handle: string, i: number, over: Record<string, unknown> = {}) => ({
   kind: "message",
-  id: `${slug}-m${i}`,
-  from: `@${slug}`,
-  fromKind: "agent",
-  body: `${slug} says ${i}`,
-  recipients: ["@alice"],
+  id: `${handle}-m${i}`,
+  from: { kind: "agent", ref: `${handle}`.padEnd(8, "0") },
+  body: `${handle} says ${i}`,
+  recipients: [{ ref: "abcd2345" }],
   urgent: false,
   createdAt: at(i),
   state: "delivered",
@@ -49,11 +49,12 @@ const chatPage = (entries: unknown[]) => ({
   newerCursor: null,
   working: null,
 });
-const row = (slug: string, name: string, unread: number) => ({
+const row = (handle: string, name: string, unread: number) => ({
   agent: {
-    slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -61,8 +62,13 @@ const row = (slug: string, name: string, unread: number) => ({
     archivedAt: null,
   },
   unread,
-  firstUnreadId: `${slug}-m3`,
-  latest: { messageId: `${slug}-m3`, preview: `${slug} says 3`, createdAt: at(3), urgent: false },
+  firstUnreadId: `${handle}-m3`,
+  latest: {
+    messageId: `${handle}-m3`,
+    preview: `${handle} says 3`,
+    createdAt: at(3),
+    urgent: false,
+  },
 });
 
 let api: MockApi;
@@ -77,22 +83,23 @@ beforeEach(() => {
     dev: [msg("dev", 1), msg("dev", 2), msg("dev", 3)],
     ops: [msg("ops", 1), msg("ops", 2), msg("ops", 3)],
   };
-  unread = { count: 3, byAgent: { dev: 2, ops: 1 } };
+  unread = { count: 3, byAgent: { [refFor("dev")]: 2, [refFor("ops")]: 1 } };
   Element.prototype.scrollIntoView = vi.fn();
   api = mockApi({
     "GET /api/inbox?": () => json({ chats, items: [], nextCursor: null }),
     "GET /api/inbox/unread-count": () => json(unread),
-    "POST /api/inbox/read-from/dev": () => json({ marked: 2, readAt: at(9) }),
-    "POST /api/inbox/read-from/ops": () => json({ marked: 1, readAt: at(9) }),
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/ops": () => json(detail({ slug: "ops", displayName: "Ops agent" })),
-    "GET /api/agents/dev/chat?": () => json(chatPage(threads.dev ?? [])),
-    "GET /api/agents/ops/chat?": () => json(chatPage(threads.ops ?? [])),
-    "GET /api/agents/dev/events?": () =>
+    [`POST /api/inbox/read-from/${refFor("dev")}`]: () => json({ marked: 2, readAt: at(9) }),
+    [`POST /api/inbox/read-from/${refFor("ops")}`]: () => json({ marked: 1, readAt: at(9) }),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("ops")}`]: () =>
+      json(detail({ handle: "ops", displayName: "Ops agent" })),
+    [`GET /api/agents/${refFor("dev")}/chat?`]: () => json(chatPage(threads.dev ?? [])),
+    [`GET /api/agents/${refFor("ops")}/chat?`]: () => json(chatPage(threads.ops ?? [])),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({ events: [], hasMore: { before: false, after: false } }),
     "GET /api/agents?": () =>
       json({
-        agents: [agentSummary(), agentSummary({ slug: "ops", displayName: "Ops agent" })],
+        agents: [agentSummary(), agentSummary({ handle: "ops", displayName: "Ops agent" })],
         more: false,
         running: { count: 0 },
       }),
@@ -100,8 +107,8 @@ beforeEach(() => {
 });
 
 const pane = () => screen.getByRole("region", { name: "Reading pane" });
-const listRow = (slug: string) =>
-  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${slug}"]`);
+const listRow = (handle: string) =>
+  document.querySelector<HTMLElement>(`a[data-inbox-id="chat:${refFor(handle)}"]`);
 async function visit(path: string) {
   fakeMatchMedia.installWidth(1280);
   const app = renderApp(path, alice);
@@ -110,7 +117,7 @@ async function visit(path: string) {
 }
 
 test("the pane shows the Chat under a compact strip, with no ⋯, Agent details or ]", async () => {
-  await visit("/inbox?item=chat:dev");
+  await visit(`/inbox?item=chat:${refFor("dev")}`);
   const p = pane();
   expect(await within(p).findByText("dev says 2")).toBeInTheDocument();
   expect(await within(p).findByRole("combobox", { name: "Message to Dev agent" })).toBeVisible();
@@ -118,11 +125,11 @@ test("the pane shows the Chat under a compact strip, with no ⋯, Agent details 
   expect(within(strip).getByText("Dev agent")).toBeInTheDocument();
   expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveAttribute(
     "href",
-    "/agents/dev/chat",
+    `/agents/${refFor("dev")}/chat`,
   );
   expect(within(strip).getByRole("link", { name: "Session" })).toHaveAttribute(
     "href",
-    "/agents/dev/session",
+    `/agents/${refFor("dev")}/session`,
   );
   expect(within(p).queryByRole("button", { name: /Agent details|Actions for/ })).toBeNull();
   expect(within(p).queryByRole("complementary")).toBeNull();
@@ -147,9 +154,9 @@ test("selecting keeps focus in the list; the composer takes focus only on Enter 
 });
 
 test("retargeting swaps the thread at once: nothing of the old one stays, nothing fades", async () => {
-  const app = await visit("/inbox?item=chat:dev");
+  const app = await visit(`/inbox?item=chat:${refFor("dev")}`);
   await within(pane()).findByText("dev says 3");
-  await app.router.navigate({ to: "/inbox", search: { item: "chat:ops" } });
+  await app.router.navigate({ to: "/inbox", search: { item: `chat:${refFor("ops")}` } });
   await within(pane()).findByText("ops says 3");
   expect(within(pane()).queryByText("dev says 3")).toBeNull();
   expect(
@@ -158,7 +165,7 @@ test("retargeting swaps the thread at once: nothing of the old one stays, nothin
 });
 
 test("retargeting never puts a fading row (data-live) on screen, not even for a frame", async () => {
-  const app = await visit("/inbox?item=chat:dev");
+  const app = await visit(`/inbox?item=chat:${refFor("dev")}`);
   await within(pane()).findByText("dev says 3");
   const seen: string[] = [];
   const watch = new MutationObserver((records) => {
@@ -171,7 +178,7 @@ test("retargeting never puts a fading row (data-live) on screen, not even for a 
     }
   });
   watch.observe(pane(), { subtree: true, childList: true, attributes: true });
-  await app.router.navigate({ to: "/inbox", search: { item: "chat:ops" } });
+  await app.router.navigate({ to: "/inbox", search: { item: `chat:${refFor("ops")}` } });
   await within(pane()).findByText("ops says 3");
   watch.disconnect();
   expect(seen).toEqual([]);
@@ -185,11 +192,11 @@ test("a thread cached before the row's newest message puts the divider on the ri
   const app = renderApp("/inbox", alice);
   await waitFor(() => expect(listRow("dev")).not.toBeNull());
   // A prefetch from before the third message: two entries, both older than the unread ones' end.
-  app.queryClient.setQueryData(chatQueryOptions("dev").queryKey, {
+  app.queryClient.setQueryData(chatQueryOptions(refFor("dev")).queryKey, {
     pages: [chatPage([msg("dev", 1), msg("dev", 2)]) as never],
     pageParams: [""],
   });
-  await app.router.navigate({ to: "/inbox", search: { item: "chat:dev" } });
+  await app.router.navigate({ to: "/inbox", search: { item: `chat:${refFor("dev")}` } });
   await within(pane()).findByText("dev says 3");
   const divider = await waitFor(() => {
     const el = pane().querySelector<HTMLElement>("[data-new-divider]");
@@ -200,12 +207,17 @@ test("a thread cached before the row's newest message puts the divider on the ri
 });
 
 test("Mark all read and then Undo before the dwell is up does not make the pane read the chat", async () => {
-  const app = await visit("/inbox?item=chat:dev");
+  const app = await visit(`/inbox?item=chat:${refFor("dev")}`);
   await within(pane()).findByText("dev says 3");
-  act(() => app.queryClient.setQueryData(["inbox-unread"], { count: 1, byAgent: { ops: 1 } }));
+  act(() =>
+    app.queryClient.setQueryData(["inbox-unread"], { count: 1, byAgent: { [refFor("ops")]: 1 } }),
+  );
   await new Promise((r) => setTimeout(r, 60));
   act(() =>
-    app.queryClient.setQueryData(["inbox-unread"], { count: 3, byAgent: { dev: 2, ops: 1 } }),
+    app.queryClient.setQueryData(["inbox-unread"], {
+      count: 3,
+      byAgent: { [refFor("dev")]: 2, [refFor("ops")]: 1 },
+    }),
   );
   await new Promise((r) => setTimeout(r, 700));
   expect(posts()).toHaveLength(0);
@@ -215,7 +227,7 @@ test("it opens at the first unread message, marked New, when the unread are tall
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
   vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(400);
-  await visit("/inbox?item=chat:dev");
+  await visit(`/inbox?item=chat:${refFor("dev")}`);
   const divider = await waitFor(() => {
     const el = pane().querySelector<HTMLElement>("[data-new-divider]");
     expect(el).not.toBeNull();
@@ -231,34 +243,34 @@ test("when the unread are shorter than the pane it stays pinned at the bottom", 
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
   vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(900);
-  await visit("/inbox?item=chat:dev");
+  await visit(`/inbox?item=chat:${refFor("dev")}`);
   await waitFor(() => expect(pane().querySelector("[data-new-divider]")).not.toBeNull());
   expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
 });
 
 test("the pane reads the chat after the dwell, and a selection that moves cancels it", async () => {
-  const app = await visit("/inbox?item=chat:dev");
+  const app = await visit(`/inbox?item=chat:${refFor("dev")}`);
   await within(pane()).findByText("dev says 3");
   expect(posts()).toHaveLength(0);
-  await app.router.navigate({ to: "/inbox", search: { item: "chat:ops" } });
+  await app.router.navigate({ to: "/inbox", search: { item: `chat:${refFor("ops")}` } });
   await within(pane()).findByText("ops says 3");
   await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 2000 });
   // Only ops was shown for the dwell: dev was passed over.
-  expect(posts()[0]?.url).toBe("/api/inbox/read-from/ops");
+  expect(posts()[0]?.url).toBe(`/api/inbox/read-from/${refFor("ops")}`);
   expect(posts()[0]?.body).toEqual({ upTo: at(3) });
 });
 
 test("the Chat page reads at once", async () => {
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 250 });
   expect(posts()[0]?.body).toEqual({ upTo: at(3) });
 });
 
-test("a reload with ?item=chat:dev shows that chat even with nothing unread", async () => {
+test(`a reload with ?item=chat:${refFor("dev")} shows that chat even with nothing unread`, async () => {
   chats = [];
   unread = { count: 0, byAgent: {} };
   fakeMatchMedia.installWidth(1280);
-  renderApp("/inbox?item=chat:dev", alice);
+  renderApp(`/inbox?item=chat:${refFor("dev")}`, alice);
   await screen.findByRole("region", { name: "Reading pane" });
   expect(await within(pane()).findByText("dev says 3")).toBeInTheDocument();
   const selected = await waitFor(() => {
@@ -272,19 +284,21 @@ test("a reload with ?item=chat:dev shows that chat even with nothing unread", as
 });
 
 test("the unread count coming back without a newer message (Undo of Mark all read) is not read again", async () => {
-  const app = renderApp("/agents/dev/chat", alice);
+  const app = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await waitFor(() => expect(posts()).toHaveLength(1));
   await waitFor(() =>
     expect(app.queryClient.getQueryData(["inbox-unread"])).toMatchObject({ count: 1 }),
   );
-  act(() => app.queryClient.setQueryData(["inbox-unread"], { count: 3, byAgent: { dev: 2 } }));
+  act(() =>
+    app.queryClient.setQueryData(["inbox-unread"], { count: 3, byAgent: { [refFor("dev")]: 2 } }),
+  );
   await new Promise((r) => setTimeout(r, 1300));
   expect(posts()).toHaveLength(1);
 });
 
 test("your message in the pane is the chat cache's own entry, keyed by its clientMessageId", async () => {
   api.on("POST /api/messages", () => new Promise<Response>(() => {}));
-  const app = await visit("/inbox?item=chat:dev");
+  const app = await visit(`/inbox?item=chat:${refFor("dev")}`);
   await within(pane()).findByText("dev says 3");
   const box = await within(pane()).findByRole("combobox", { name: "Message to Dev agent" });
   await userEvent.type(box, "hello pane{Enter}");
@@ -295,7 +309,7 @@ test("your message in the pane is the chat cache's own entry, keyed by its clien
   expect(within(pane()).getAllByText("hello pane")).toHaveLength(1);
   const cached = app.queryClient.getQueryData<{
     pages: { entries: { clientMessageId?: string }[] }[];
-  }>(chatQueryOptions("dev").queryKey);
+  }>(chatQueryOptions(refFor("dev")).queryKey);
   expect(
     cached?.pages.flatMap((p) => p.entries).filter((e) => e.clientMessageId === id),
   ).toHaveLength(1);

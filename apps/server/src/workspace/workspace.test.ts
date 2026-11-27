@@ -50,7 +50,9 @@ function setup(fakeEnv: Record<string, string> = {}) {
   });
   const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: { x: { command: "x" } } } };
   const prep = {
-    slug: "lead",
+    ref: "lead",
+    handle: "lead",
+    self: { ref: "p3dh8vcn", handle: "lead" },
     displayName: "Lead",
     description: "d",
     template: "lead",
@@ -61,7 +63,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
       templateSkills: [],
       library: { skills: {} },
     },
-    manager: { kind: "user" as const, handle: "or", name: "Or" },
+    manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
@@ -80,7 +82,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
 
 test("materialize then prepare: the full layout", async () => {
   const { ws, tpl, prep, repo, hs, home } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, ".claude/skills"))).toBe(false); // linked at start, never copied
@@ -104,7 +106,9 @@ test("materialize then prepare: the full layout", async () => {
       },
     },
   });
-  expect(readFileSync(path.join(wd, ".claude-config/CLAUDE.md"), "utf8")).toContain("@lead");
+  expect(readFileSync(path.join(wd, ".claude-config/CLAUDE.md"), "utf8")).toContain(
+    "<@p3dh8vcn|lead>",
+  );
   expect(out.mounts.map((m) => m.target)).toEqual([
     wd,
     repo,
@@ -116,7 +120,7 @@ test("materialize then prepare: the full layout", async () => {
 
 test("prepare drops agent-added settings keys and re-asserts template rules", async () => {
   const { ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   await ws.prepare(prep);
   const f = path.join(ws.workdir("lead"), ".claude-config/settings.json");
   const s = JSON.parse(readFileSync(f, "utf8"));
@@ -132,11 +136,9 @@ test("prepare drops agent-added settings keys and re-asserts template rules", as
 test("materialize: an existing folder is folder_exists and left alone; the caller can discard its own", async () => {
   const { ws, tpl, prep, home } = setup();
   mkdirSync(path.join(home, "agents/taken"), { recursive: true });
-  await expect(
-    ws.materialize("taken", "taken", tpl, { ...prep, slug: "taken" }),
-  ).rejects.toBeInstanceOf(FieldError);
+  await expect(ws.materialize("taken", tpl, prep)).rejects.toBeInstanceOf(FieldError);
   expect(existsSync(path.join(home, "agents/taken"))).toBe(true);
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   await ws.discard("lead");
   expect(existsSync(path.join(home, "agents/lead"))).toBe(false);
 });
@@ -146,7 +148,7 @@ const tplMd = (tpl: { dir: string }) => path.join(tpl.dir, "AGENTS.md");
 
 test("resetPersona backs up a differing AGENTS.md, writes the template's and never deletes", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "# Lead\nlearned things\n");
   writeFileSync(path.join(wd, "mine.md"), "keep");
@@ -175,7 +177,7 @@ test("resetPersona backs up a differing AGENTS.md, writes the template's and nev
 
 test("resetPersona backs a symlinked AGENTS.md up as a link and replaces it, never writing through", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   const secret = path.join(mkdtempSync(path.join(tmpdir(), "secret-")), "id_ed25519");
   writeFileSync(secret, "PRIVATE KEY");
@@ -191,7 +193,7 @@ test("resetPersona backs a symlinked AGENTS.md up as a link and replaces it, nev
 
 test("resetPersona refuses a workdir that is a symlink", async () => {
   const { ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   const host = mkdtempSync(path.join(tmpdir(), "host-"));
   rmSync(wd, { recursive: true });
@@ -204,7 +206,7 @@ test("resetPersona refuses a workdir that is a symlink", async () => {
 
 test("a staged persona reset leaves the workdir alone until prepare applies it, then removes the file", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "edited");
   const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
@@ -222,7 +224,7 @@ test("a staged persona reset leaves the workdir alone until prepare applies it, 
 
 test("a failing apply at prepare keeps the pending file; a later write-now reset supersedes it", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
   rmSync(path.join(wd, "AGENTS.md"));
@@ -240,7 +242,7 @@ test("a failing apply at prepare keeps the pending file; a later write-now reset
 test("prepare treats a non-object previous settings.json like a parse failure", async () => {
   for (const bad of ["null", "[1,2]", "7", "{nope"]) {
     const { ws, tpl, prep } = setup();
-    await ws.materialize("lead", "lead", tpl, prep);
+    await ws.materialize("lead", tpl, prep);
     const sp = path.join(ws.workdir("lead"), ".claude-config/settings.json");
     writeFileSync(sp, bad);
     await ws.prepare(prep);
@@ -251,7 +253,7 @@ test("prepare treats a non-object previous settings.json like a parse failure", 
 
 test("prepare writes the effective settings and mcp", async () => {
   const { ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const effective = {
     ...prep.effective,
     doc: {
@@ -273,7 +275,7 @@ test("prepare writes the effective settings and mcp", async () => {
 
 test(".mcp.json gets the factory server with an env-expanded header and no secret", async () => {
   const { ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   await ws.prepare({ ...prep, mcpUrl: "http://host.docker.internal:3001/mcp" });
   const raw = readFileSync(path.join(ws.workdir("lead"), ".mcp.json"), "utf8");
   expect(JSON.parse(raw).mcpServers.factory).toEqual({
@@ -285,7 +287,7 @@ test(".mcp.json gets the factory server with an env-expanded header and no secre
 
 test("a template skill is live: edits show at once, a removed one's link goes, local_skills off drops them", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   await ws.prepare(prep);
   writeFileSync(path.join(home, "templates/lead/skills/local/SKILL.md"), "edited");
@@ -303,7 +305,7 @@ test("a template skill is live: edits show at once, a removed one's link goes, l
 
 test("prepare refuses a symlinked template skill and a symlinked skills/ folder", async () => {
   const { home, ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
   const skills = path.join(home, "templates/lead/skills");
   symlinkSync(outside, path.join(skills, "evil"));
@@ -316,7 +318,7 @@ test("prepare refuses a symlinked template skill and a symlinked skills/ folder"
 test("materialize refuses a skill the Library can't resolve, with the start's message", async () => {
   const { ws, tpl, prep } = setup();
   const missing = { ...prep, config: { ...prep.config, skills: ["nope"] } };
-  await expect(ws.materialize("lead", "lead", tpl, missing)).rejects.toMatchObject({
+  await expect(ws.materialize("lead", tpl, missing)).rejects.toMatchObject({
     name: "WorkspaceError",
     message: "Skill nope hasn't been added in Skills. Fix it in Configuration.",
     fix: "config",
@@ -325,7 +327,7 @@ test("materialize refuses a skill the Library can't resolve, with the start's me
 
 test("prepare resolves a skill through the Library, so an unresolvable one fails the start too", async () => {
   const { ws, tpl, prep, claude } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   rmSync(path.join(claude, "skills/grilling/SKILL.md"));
   await expect(ws.prepare(prep)).rejects.toMatchObject({
     message: "Skill grilling hasn't been added in Skills. Fix it in Configuration.",
@@ -342,7 +344,7 @@ test("prepare checks and scrubs the agent's own folders after linking", async ()
       config: { ...prep.effective.config, skills: ["grilling", "hooked"] },
     },
   };
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   mkdirSync(path.join(wd, ".claude-config/skills/stale"), { recursive: true });
   // A Library skill that declares hooks is human-registered: it starts.
@@ -362,27 +364,19 @@ test("prepare checks and scrubs the agent's own folders after linking", async ()
 
 test("prepare names the template as the fix for a skill the template lists, the agent for one it added", async () => {
   const { ws, tpl, prep, claude } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   rmSync(path.join(claude, "skills/grilling/SKILL.md"));
   const listed = { ...prep, effective: { ...prep.effective, templateSkills: ["grilling"] } };
   await expect(ws.prepare(listed)).rejects.toMatchObject({ fix: "template" });
   await expect(ws.prepare(prep)).rejects.toMatchObject({ fix: "config" });
   await expect(
-    ws.materialize(
-      "lead2",
-      "lead2",
-      { ...tpl, config: { ...tpl.config, skills: ["grilling"] } },
-      {
-        ...prep,
-        slug: "lead2",
-      },
-    ),
+    ws.materialize("lead2", { ...tpl, config: { ...tpl.config, skills: ["grilling"] } }, prep),
   ).rejects.toMatchObject({ fix: "template" });
 });
 
 test("prepare reports the first failing step when two coexist: the settings check, then the agents check", async () => {
   const { ws, tpl, prep } = setup();
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", tpl, prep);
   const wd = ws.workdir("lead");
   mkdirSync(path.join(wd, ".claude/agents"), { recursive: true });
   writeFileSync(path.join(wd, ".claude/settings.local.json"), JSON.stringify({ hooks: {} }));

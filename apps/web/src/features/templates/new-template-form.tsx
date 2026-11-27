@@ -16,7 +16,7 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
-import { deriveSlug } from "@/features/agents/derive-slug";
+import { deriveHandle } from "@/features/agents/derive-handle";
 import { FormFrame, type FormFrameKind } from "@/features/settings/forms/form-frame";
 import { setupQueryOptions } from "@/features/setup/api";
 import { refreshList, withItem, writeToList } from "@/features/sheets/add-to-list";
@@ -112,7 +112,7 @@ export function NewTemplateForm({
   );
   const qc = useQueryClient();
 
-  const derived = useMemo(() => deriveSlug(v.displayName, taken), [v.displayName, taken]);
+  const derived = useMemo(() => deriveHandle(v.displayName, taken), [v.displayName, taken]);
   const name = v.revealed ? v.name : derived;
   // The reserved names are in `taken`, so "New" derives new-2: only a hand-typed one is reserved.
 

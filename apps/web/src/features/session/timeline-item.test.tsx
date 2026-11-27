@@ -1,5 +1,6 @@
 import { screen } from "@testing-library/react";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
@@ -39,7 +40,7 @@ const live = (key: string) =>
 test("data-live only for rows above liveAfter that weren't handed off; turn footers never", async () => {
   renderInRouter(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={[text(9), text(10), message(11, "m1"), message(12, "m2"), footer]}
       failedIds={new Set()}
       interruptedEnds={new Set()}

@@ -1,5 +1,6 @@
 import {
   messageLookupSchema,
+  normaliseRef,
   type SendMessagesResponse,
   sendMessagesBodySchema,
   sendMessagesResponseSchema,
@@ -7,7 +8,9 @@ import {
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
-import { ApiError } from "../errors.ts";
+import { ApiError, FieldError } from "../errors.ts";
+import { principalsByRefs } from "../principals/principal-store.ts";
+import { NO_AGENT_AT_REF } from "./ref-params.ts";
 
 const idParams = z.object({ id: z.string().min(1) });
 
@@ -46,10 +49,18 @@ export const messagesRoutes: FastifyPluginAsyncZod = async (app) => {
       const { to, body, urgent, clientMessageId, attachments } = req.body;
       if (attachments?.length && to.length > 1)
         throw new ApiError(422, "invalid_attachment", MANY_WITH_FILES);
+      // Spec §4.4: the recipients are refs. A handle, a mention or an unknown ref is the request's error, not a refusal.
+      const refs = to.map((t) => normaliseRef(t));
+      const known = await principalsByRefs(
+        app.db,
+        refs.filter((r) => r !== undefined),
+      );
+      if (refs.some((r) => r === undefined || !known.has(r)))
+        throw new FieldError("to", NO_AGENT_AT_REF);
       const u = req.user as { id: string; handle: string };
       const { results } = await app.router.send(
         { userId: u.id, handle: u.handle },
-        to,
+        refs as string[],
         body,
         urgent,
         {

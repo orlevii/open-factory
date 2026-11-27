@@ -42,7 +42,7 @@ export class CredentialVerifier {
     const proc = this.d.driver.start(
       {
         agentId: "verify",
-        slug: "verify",
+        ref: "verify",
         cwd: dir,
         env,
         claudeBin: this.d.claudeBin,

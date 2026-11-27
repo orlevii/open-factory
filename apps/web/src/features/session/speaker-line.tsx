@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { scanMentions } from "@open-factory/shared/mentions";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import {
@@ -13,15 +14,18 @@ import {
 } from "react";
 import { AgentChip, type ChipAgent } from "@/components/agent-chip";
 import { HumanAvatar } from "@/components/human-avatar";
+import { Mention } from "@/components/mention/mention";
 import { MiddleTruncate } from "@/components/middle-truncate";
+import { useHandle } from "@/features/agents/use-agent-index";
+import { usePrincipal, useRefOfHandle } from "@/features/principals/use-principal";
 import { usersQueryOptions } from "@/features/settings/api";
-import type { Session } from "@/lib/auth-client";
+import type { Session } from "@/lib/session";
 import { sessionQueryOptions } from "@/lib/session";
 import { agentsListQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 
-/** How a slug shows on a speaker line: the chip's identity, and whether it links to a session. */
+/** How an agent shows on a speaker line: the chip's identity, and whether it links to a session. */
 export type ResolvedAgent = { agent: ChipAgent; link: boolean };
 
 /**
@@ -34,21 +38,31 @@ export interface SpeakerIndex {
   sessionAgent: ChipAgent | undefined;
   /** The signed-in human's handle: their own messages say "You". */
   selfHandle: string | undefined;
-  /** The live agents list has loaded: before it, every slug is a stand-in. */
+  /** The signed-in human's ref: a stored mention of it says "You" too. */
+  selfRef: string | undefined;
+  /** The live agents list has loaded: before it, every handle is a stand-in. */
   ready: boolean;
-  /** Live, then ended (terminated keeps its link and name, archived is the plain slug). */
-  agent(slug: string): ResolvedAgent;
+  /** By handle (what an envelope or a call's arguments name): live, then ended (terminated keeps its link and name, archived is plain). */
+  agent(handle: string): ResolvedAgent;
   /** A human's display name from the users list. */
   userName(handle: string): string | undefined;
-  /** Whether `slug` is a known agent (live or ended). */
-  isAgent(slug: string): boolean;
+  /** Whether `handle` is a known agent (live or ended). */
+  isAgent(handle: string): boolean;
   /** A line whose agent isn't live asks once for the ended list (fetched lazily, shared). */
   requestEnded(): void;
 }
 
 type Ended = { agent: ChipAgent; terminated: boolean };
 
-const stub = (slug: string): ChipAgent => ({ slug, displayName: `@${slug}`, stub: true });
+/** A stand-in for a handle no list has (yet): its ref is whatever the principals cache knows, "" when nothing does. */
+const stubOf =
+  (refOf: (handle: string) => string | undefined) =>
+  (handle: string): ChipAgent => ({
+    ref: refOf(handle) ?? "",
+    handle,
+    displayName: `@${handle}`,
+    stub: true,
+  });
 const noop = () => {};
 
 /** The pure part of the provider: tests build an index from plain lists. `endedMore` is true when
@@ -56,45 +70,51 @@ const noop = () => {};
 export function buildSpeakerIndex(o: {
   sessionAgent?: ChipAgent;
   selfHandle?: string;
+  selfRef?: string;
   live?: readonly ChipAgent[];
   ended?: readonly (ChipAgent & { terminated: boolean })[];
   endedMore?: boolean;
   endedFailed?: boolean;
   users?: readonly (readonly [string, string])[];
   requestEnded?: () => void;
+  /** The ref of whoever holds a handle, from the principals cache: a stand-in links only when it is known. */
+  refOfHandle?: (handle: string) => string | undefined;
 }): SpeakerIndex {
-  const live = o.live ? new Map(o.live.map((a) => [a.slug, a])) : undefined;
+  const stub = stubOf(o.refOfHandle ?? (() => undefined));
+  const live = o.live ? new Map(o.live.map((a) => [a.handle, a])) : undefined;
   const ended = o.ended
-    ? new Map<string, Ended>(o.ended.map((a) => [a.slug, { agent: a, terminated: a.terminated }]))
+    ? new Map<string, Ended>(o.ended.map((a) => [a.handle, { agent: a, terminated: a.terminated }]))
     : undefined;
   const users = new Map(o.users ?? []);
   const cache = new Map<string, ResolvedAgent>();
-  const resolve = (slug: string): ResolvedAgent => {
-    if (slug === o.sessionAgent?.slug) return { agent: o.sessionAgent, link: false };
-    const a = live?.get(slug);
+  const resolve = (handle: string): ResolvedAgent => {
+    if (handle === o.sessionAgent?.handle) return { agent: o.sessionAgent, link: false };
+    const a = live?.get(handle);
     if (a) return { agent: a, link: true };
-    // Until the lists have loaded a slug keeps its link; a failed lookup is the plain slug.
-    if (!live || (!ended && !o.endedFailed)) return { agent: stub(slug), link: true };
-    const e = ended?.get(slug);
+    // Until the lists have loaded a handle keeps its link; a failed lookup is plain text.
+    if (!live || (!ended && !o.endedFailed)) return { agent: stub(handle), link: true };
+    const e = ended?.get(handle);
     if (e)
-      return e.terminated ? { agent: e.agent, link: true } : { agent: stub(slug), link: false };
-    // A slug in neither list may be an older terminated agent while more exist: it keeps the link.
-    return { agent: stub(slug), link: !o.endedFailed && o.endedMore === true };
+      return e.terminated ? { agent: e.agent, link: true } : { agent: stub(handle), link: false };
+    // A handle in neither list may be an older terminated agent while more exist: it keeps the link.
+    return { agent: stub(handle), link: !o.endedFailed && o.endedMore === true };
   };
   return {
     sessionAgent: o.sessionAgent,
     selfHandle: o.selfHandle,
+    selfRef: o.selfRef,
     ready: live !== undefined,
-    agent: (slug) => {
-      let r = cache.get(slug);
+    agent: (handle) => {
+      let r = cache.get(handle);
       if (!r) {
-        r = resolve(slug);
-        cache.set(slug, r);
+        r = resolve(handle);
+        cache.set(handle, r);
       }
       return r;
     },
     userName: (handle) => users.get(handle),
-    isAgent: (slug) => !!live?.has(slug) || !!ended?.has(slug) || slug === o.sessionAgent?.slug,
+    isAgent: (handle) =>
+      !!live?.has(handle) || !!ended?.has(handle) || handle === o.sessionAgent?.handle,
     requestEnded: o.requestEnded ?? noop,
   };
 }
@@ -107,7 +127,8 @@ export const useSpeakers = () => useContext(SpeakerContext);
 // (which patches every list) leaves them, and the index built from them, identical.
 const toChips = (l: AgentSummary[]): ChipAgent[] =>
   l.map((a) => ({
-    slug: a.slug,
+    ref: a.ref,
+    handle: a.handle,
     displayName: a.displayName,
     template: a.template,
     kind: a.kind,
@@ -116,7 +137,8 @@ const toChips = (l: AgentSummary[]): ChipAgent[] =>
   }));
 const toEnded = (l: AgentSummary[]) =>
   l.map((a) => ({
-    slug: a.slug,
+    ref: a.ref,
+    handle: a.handle,
     displayName: a.displayName,
     template: a.template,
     kind: a.kind,
@@ -129,13 +151,14 @@ const toUsers = (l: { handle: string; name: string }[]) =>
 const ENDED_LOOKUP_STALE_MS = 30_000;
 
 const toHandle = (s: Session | null) => s?.user.handle;
+const toRef = (s: Session | null) => s?.user.ref;
 
 /** One reader of the agents, ended agents and users lists for a whole session (m7), and of your
  *  handle. The session agent comes in as primitives, so a status frame on it changes nothing here;
- *  a caller that doesn't have it yet (the inbox pane) passes the slug alone and the live list's
+ *  a caller that doesn't have it yet (the inbox pane) passes the ref alone and the live list's
  *  entry stands in. Mount it before the events load: the lists fetch alongside them. */
 export function SpeakerProvider({
-  slug,
+  agentRef,
   displayName,
   template,
   kind,
@@ -143,7 +166,7 @@ export function SpeakerProvider({
   color,
   children,
 }: {
-  slug: string;
+  agentRef: string;
   displayName?: string;
   template?: string;
   kind?: AgentSummary["kind"];
@@ -151,7 +174,10 @@ export function SpeakerProvider({
   color?: number | null;
   children: ReactNode;
 }) {
+  const refOfHandle = useRefOfHandle();
+  const sessionHandle = useHandle(agentRef);
   const selfHandle = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const selfRef = useQuery({ ...sessionQueryOptions, select: toRef }).data;
   const [needEnded, setNeedEnded] = useState(false);
   const requestEnded = useCallback(() => setNeedEnded(true), []);
   const live = useQuery({
@@ -173,24 +199,42 @@ export function SpeakerProvider({
       buildSpeakerIndex({
         sessionAgent:
           displayName !== undefined
-            ? { slug, displayName, template, kind, avatarVersion, color }
-            : (live?.find((a) => a.slug === slug) ?? stub(slug)),
+            ? {
+                ref: agentRef,
+                handle: sessionHandle,
+                displayName,
+                template,
+                kind,
+                avatarVersion,
+                color,
+              }
+            : (live?.find((a) => a.ref === agentRef) ?? {
+                ref: agentRef,
+                handle: sessionHandle,
+                displayName: `@${sessionHandle}`,
+                stub: true,
+              }),
         selfHandle,
+        selfRef,
         live,
         ended: ended.data,
         endedMore: more,
         endedFailed: ended.isError,
         users,
         requestEnded,
+        refOfHandle,
       }),
     [
-      slug,
+      agentRef,
+      sessionHandle,
+      refOfHandle,
       displayName,
       template,
       kind,
       avatarVersion,
       color,
       selfHandle,
+      selfRef,
       live,
       ended.data,
       ended.isError,
@@ -203,7 +247,7 @@ export function SpeakerProvider({
 }
 
 /** Below a 20rem container the handle hides (the name's tooltip keeps it). */
-const SLUG_CLASS = "@max-[20rem]:hidden";
+const HANDLE_CLASS = "@max-[20rem]:hidden";
 const NAME_CLASS = "font-medium text-foreground";
 
 /** Who a handle belongs to: the server says (envelope, queue item, send result), never guessed from a
@@ -212,18 +256,51 @@ const NAME_CLASS = "font-medium text-foreground";
 export type PartyKind = "agent" | "human";
 /** A sender can also be the factory itself. */
 export type SenderKind = PartyKind | "factory";
-export type Party = { handle: string; kind?: PartyKind | undefined };
+/** A recipient: its handle as written (labels and the several-recipients summary), and its `<@ref>` mention when the ref is
+ *  known, so the line shows the principal live. */
+export type Party = { handle: string; mention?: string; kind?: PartyKind | undefined };
 
 const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
 
-/** One side of a speaker line: an agent chip, a human's name and handle, or "You". */
+/** One side of a speaker line. A stored mention shows its principal (a chip, or "You" for the signed-in human); a handle
+ *  resolves as it always did. */
 function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
+  const s = useSpeakers();
+  const principalRef = scanMentions(id).tokens[0]?.ref;
+  if (!principalRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
+  if (principalRef === s.selfRef) return <SelfMention principalRef={principalRef} />;
+  return <Mention principalRef={principalRef} />;
+}
+
+/** The signed-in human's mention: "You", with their avatar, once the principal is known. */
+function SelfMention({ principalRef }: { principalRef: string }) {
+  const found = usePrincipal(principalRef);
+  if (found.status !== "found") return <Mention principalRef={principalRef} />;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <HumanAvatar name={found.principal.name} />
+      <span dir="auto" className={NAME_CLASS}>
+        You
+      </span>
+    </span>
+  );
+}
+
+function HandleSpeaker({
+  id,
+  kind,
+  self,
+}: {
+  id: string;
+  kind?: SenderKind | undefined;
+  self: boolean;
+}) {
   const s = useSpeakers();
   const handle = bareHandle(id);
   const known = kind ?? (s.isAgent(handle) ? "agent" : "human");
   const human = known === "human";
   const resolved = known === "agent" ? s.agent(handle) : undefined;
-  // Only once the live list is in: before it, every slug is a stand-in.
+  // Only once the live list is in: before it, every handle is a stand-in.
   const needEnded = s.ready && !human && resolved?.agent.stub === true && !self;
   const { requestEnded } = s;
   useEffect(() => {
@@ -240,11 +317,11 @@ function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined
       <AgentChip
         agent={resolved.agent}
         size={20}
-        showSlug
+        showHandle
         link={resolved.link && !self}
         inline
         className={NAME_CLASS}
-        slugClassName={`font-normal ${SLUG_CLASS}`}
+        handleClassName={`font-normal ${HANDLE_CLASS}`}
       />
     );
   const name = s.userName(handle);
@@ -274,7 +351,7 @@ function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined
       </span>
       <span
         title={`@${handle}`}
-        className={`min-w-0 font-mono text-muted-foreground ${SLUG_CLASS}`}
+        className={`min-w-0 font-mono text-muted-foreground ${HANDLE_CLASS}`}
       >
         <MiddleTruncate text={`@${handle}`} />
       </span>
@@ -352,7 +429,7 @@ export const SpeakerLine = memo(function SpeakerLine({
                   {recipientSummary(to.map((r) => `@${bareHandle(r.handle)}`))}
                 </span>
               ) : (
-                <Speaker id={to[0].handle} kind={to[0].kind} self={false} />
+                <Speaker id={to[0].mention ?? to[0].handle} kind={to[0].kind} self={false} />
               )}
             </>
           )}

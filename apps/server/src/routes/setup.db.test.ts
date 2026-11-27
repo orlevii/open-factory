@@ -1,8 +1,8 @@
 import { schema } from "@open-factory/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -46,29 +46,27 @@ test("GET /api/setup: a template with issues still counts as hasTemplate", async
 });
 
 test("GET /api/setup: an archived agent still counts as hasAgent", async () => {
-  await h.seedAgent({ slug: "ada" });
+  await h.seedAgent({ handle: "ada" });
   await h.db
     .update(schema.agents)
     .set({ archivedAt: new Date() })
-    .where(eq(schema.agents.slug, "ada"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"ada"})`));
   const r = await getSetup();
   expect(r.json()).toEqual({ hasCredential: true, hasTemplate: false, hasAgent: true });
 });
 
 test("GET /api/setup: a terminated ephemeral agent still counts as hasAgent", async () => {
   // seedAgent also seeds a credential; only hasAgent is asserted here.
-  const boss = await h.seedAgent({ slug: "boss" });
-  await claimTestHandle(h.db, "eph", "agent");
+  const boss = await h.seedAgent({ handle: "boss" });
+  await seedTestPrincipal(h.db, "agent", "eph", "eph-1");
   await h.db.insert(schema.agents).values({
     id: "eph-1",
-    slug: "eph",
     displayName: "Ephemeral",
     template: "test",
     runtime: "local",
     kind: "ephemeral",
     reportsTo: boss.id,
     terminatedAt: new Date(),
-    terminatedBy: "@or",
   });
   const r = await getSetup();
   expect(r.json()).toEqual({ hasCredential: true, hasTemplate: false, hasAgent: true });

@@ -6,6 +6,7 @@ import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
 import { useAgent } from "@/features/agents/use-agent-index";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { usersQueryOptions } from "@/features/settings/api";
 import { sessionQueryOptions } from "@/lib/session";
@@ -13,17 +14,17 @@ import { sessionQueryOptions } from "@/lib/session";
 const PEOPLE = "People";
 const AGENTS = "Agents";
 
-type Person = { handle: string; name: string; you: boolean };
+type Person = { ref: string; handle: string; name: string; you: boolean };
 
 /** Persistent, live agents, in the reporting tree's order (the server's). */
 const managersInTree = (data: AgentSummary[]) =>
   data
     .filter((a) => a.kind === "persistent" && !a.archivedAt && !a.terminatedAt)
-    .map((a) => ({ slug: a.slug, displayName: a.displayName }));
-const liveHandles = (data: AgentSummary[]) =>
-  new Set(data.filter((a) => !a.archivedAt && !a.terminatedAt).map((a) => a.slug));
+    .map((a) => ({ ref: a.ref, handle: a.handle, displayName: a.displayName }));
+const liveRefs = (data: AgentSummary[]) =>
+  new Set(data.filter((a) => !a.archivedAt && !a.terminatedAt).map((a) => a.ref));
 
-const NO_AGENTS: { slug: string; displayName: string }[] = [];
+const NO_AGENTS: { ref: string; handle: string; displayName: string }[] = [];
 
 /** The person's name and handle, as a chip. "You (Or Levi · @or)" for the signed-in human. */
 function PersonChip({ person }: { person: Person }) {
@@ -48,16 +49,22 @@ function PersonChip({ person }: { person: Person }) {
   );
 }
 
+/** A saved manager the pick no longer lists (archived, disabled, or not loaded yet), named by its current handle. */
+function GoneManager({ agentRef, note }: { agentRef: string; note?: string }) {
+  const handle = usePrincipal(agentRef).principal?.handle;
+  return `@${handle ?? "…"}${note ? ` (${note})` : ""}`;
+}
+
 /** Reporting-line depth as padding: 0.75rem a level, three levels at most, then a `└ `. */
-function AgentRow({ slug }: { slug: string }) {
-  const depth = useAgent(slug)?.depth ?? 0;
+function AgentRow({ agentRef }: { agentRef: string }) {
+  const depth = useAgent(agentRef)?.depth ?? 0;
   return (
     <span
       className="flex min-w-0 items-center gap-1"
       style={{ paddingInlineStart: `${Math.min(depth, 3) * 0.75}rem` }}
     >
       {depth > 3 && <span aria-hidden="true">└</span>}
-      <AgentChip slug={slug} badge showSlug />
+      <AgentChip agentRef={agentRef} badge showHandle />
     </span>
   );
 }
@@ -79,9 +86,10 @@ export function ManagerCombobox({
   "aria-describedby": ariaDescribedBy,
 }: {
   value: string;
-  onValueChange(handle: string): void;
-  /** A stable predicate over an agent's slug. */
-  canManage?: (slug: string) => boolean;
+  /** The chosen manager's ref, an agent's or a human's. */
+  onValueChange(ref: string): void;
+  /** A stable predicate over an agent's ref. */
+  canManage?: (agentRef: string) => boolean;
   id?: string;
   disabled?: boolean;
   "aria-label": string;
@@ -89,32 +97,33 @@ export function ManagerCombobox({
   "aria-describedby"?: string | undefined;
 }) {
   const agents = useQuery({ ...agentsListQueryOptions("exclude"), select: managersInTree });
-  const live = useQuery({ ...agentsListQueryOptions("exclude"), select: liveHandles });
+  const live = useQuery({ ...agentsListQueryOptions("exclude"), select: liveRefs });
   const users = useQuery(usersQueryOptions);
   const session = useQuery(sessionQueryOptions).data?.user;
   const meHandle = session?.handle;
+  const meRef = session?.ref;
   const meName = session?.name;
 
   const people = useMemo((): Person[] => {
     const others = (users.data ?? [])
-      .filter((u) => !u.disabledAt && u.handle !== meHandle)
-      .map((u) => ({ handle: u.handle, name: u.name, you: false }));
-    if (!meHandle) return others;
+      .filter((u) => !u.disabledAt && u.ref !== meRef)
+      .map((u) => ({ ref: u.ref, handle: u.handle, name: u.name, you: false }));
+    if (!meHandle || !meRef) return others;
     // You come from the session, so the pick works while the users list is loading or has failed.
-    const mine = users.data?.find((u) => u.handle === meHandle);
-    return [{ handle: meHandle, name: mine?.name ?? meName ?? "", you: true }, ...others];
-  }, [users.data, meHandle, meName]);
-  const peopleByHandle = useMemo(
-    () => new Map(people.map((p) => [p.handle, p] as const)),
-    [people],
-  );
+    const mine = users.data?.find((u) => u.ref === meRef);
+    return [
+      { ref: meRef, handle: meHandle, name: mine?.name ?? meName ?? "", you: true },
+      ...others,
+    ];
+  }, [users.data, meHandle, meRef, meName]);
+  const peopleByRef = useMemo(() => new Map(people.map((p) => [p.ref, p] as const)), [people]);
 
   const options = useMemo((): ComboOption[] => {
-    const manageable = (agents.data ?? NO_AGENTS).filter((a) => !canManage || canManage(a.slug));
+    const manageable = (agents.data ?? NO_AGENTS).filter((a) => !canManage || canManage(a.ref));
     return [
       ...people.map(
         (p): ComboOption => ({
-          value: p.handle,
+          value: p.ref,
           label: p.you ? `You (${p.name} · @${p.handle})` : p.name,
           keywords: [p.handle],
           group: PEOPLE,
@@ -122,37 +131,37 @@ export function ManagerCombobox({
       ),
       ...manageable.map(
         (a): ComboOption => ({
-          value: a.slug,
-          label: a.displayName || a.slug,
-          keywords: [a.slug],
+          value: a.ref,
+          label: a.displayName || a.handle,
+          keywords: [a.handle],
           group: AGENTS,
         }),
       ),
     ];
   }, [people, agents.data, canManage]);
 
-  const disabledHandles = useMemo(
-    () => new Set((users.data ?? []).filter((u) => u.disabledAt).map((u) => u.handle)),
+  const disabledRefs = useMemo(
+    () => new Set((users.data ?? []).filter((u) => u.disabledAt).map((u) => u.ref)),
     [users.data],
   );
   const renderOption = useCallback(
     (o: ComboOption): ReactNode => {
-      const p = o.group === PEOPLE ? peopleByHandle.get(o.value) : undefined;
-      return p ? <PersonChip person={p} /> : <AgentRow slug={o.value} />;
+      const p = o.group === PEOPLE ? peopleByRef.get(o.value) : undefined;
+      return p ? <PersonChip person={p} /> : <AgentRow agentRef={o.value} />;
     },
-    [peopleByHandle],
+    [peopleByRef],
   );
   const renderValue = useCallback(
     (v: string): ReactNode => {
-      const p = peopleByHandle.get(v);
+      const p = peopleByRef.get(v);
       if (p) return <PersonChip person={p} />;
-      if (disabledHandles.has(v)) return `@${v} (disabled)`;
+      if (disabledRefs.has(v)) return <GoneManager agentRef={v} note="disabled" />;
       if (live.data?.has(v) && (!canManage || canManage(v)))
-        return <AgentChip slug={v} badge showSlug inline />;
-      // Archived only once both lists have answered: a loading or failed list says nothing about the handle.
-      return live.data && users.data ? `@${v} (archived)` : `@${v}`;
+        return <AgentChip agentRef={v} badge showHandle inline />;
+      // Archived only once both lists have answered: a loading or failed list says nothing about the manager.
+      return <GoneManager agentRef={v} note={live.data && users.data ? "archived" : undefined} />;
     },
-    [peopleByHandle, disabledHandles, live.data, users.data, canManage],
+    [peopleByRef, disabledRefs, live.data, users.data, canManage],
   );
 
   return (

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { createDb } from "../client.ts";
 import { createMigratedTestDatabase } from "../testing.ts";
 import { skillSources } from "./library.ts";
+import { principals } from "./principals.ts";
 
 let tdb: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
 let h: ReturnType<typeof createDb>;
@@ -16,6 +17,11 @@ afterAll(async () => {
 
 test("a GitHub skill source reads back with its picked skills and pinned trees", async () => {
   const addedAt = new Date("2026-11-24T10:00:00Z");
+  const [principal] = await h.db
+    .insert(principals)
+    .values({ id: "p-or", kind: "human", handle: "or", ref: "0r000000" })
+    .returning();
+  if (!principal) throw new Error("seed failed");
   const [inserted] = await h.db
     .insert(skillSources)
     .values({
@@ -30,7 +36,7 @@ test("a GitHub skill source reads back with its picked skills and pinned trees",
       skills: ["a"],
       state: "ready",
       startedAt: addedAt,
-      addedBy: "or",
+      addedById: principal.id,
       addedAt,
     })
     .returning();

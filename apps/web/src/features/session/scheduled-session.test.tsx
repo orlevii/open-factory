@@ -7,11 +7,14 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
+import { mentionFor, refFor } from "@/test/refs";
 import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
@@ -22,6 +25,21 @@ beforeEach(() => {
   resetSeq();
   mockApi({
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "u-or",
+            ref: "k7x2m9qd",
+            kind: "human",
+            handle: "or",
+            name: "Or",
+            state: "live",
+            avatar: null,
+          },
+          ...["lead", "gone-ab12"].map((h) => principal(refFor(h), h)),
+        ],
+      }),
   });
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -31,12 +49,14 @@ function inRouter(ui: React.ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([stub("/agents/$slug"), stub("/tasks/$key")]),
+    routeTree: root.addChildren([stub("/agents/$ref"), stub("/tasks/$key")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -62,7 +82,8 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
 const speakers = buildSpeakerIndex({
   live: [
     {
-      slug: "lead",
+      ref: refFor("lead"),
+      handle: "lead",
       displayName: "Lead",
       template: "lead",
       kind: "persistent",
@@ -77,7 +98,7 @@ function renderEvents(events: AnyEvent[]) {
       {rows.map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -104,21 +125,24 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 
 test("late and firings add the notes; an agent author links to its session", async () => {
   const { container } = renderEvents([
-    scheduled({ late: true, firings: 3, by: "@lead", byKind: "agent" }),
+    scheduled({ late: true, firings: 3, by: mentionFor("lead"), byKind: "agent" }),
   ]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
   );
-  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead/chat");
+  expect(await screen.findByRole("link", { name: /lead/ })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("lead")}/chat`,
+  );
 });
 
 test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
-  renderEvents([scheduled({ by: "@gone-ab12", byKind: "agent" })]);
+  renderEvents([scheduled({ by: mentionFor("gone-ab12"), byKind: "agent" })]);
   await screen.findByText("Scheduler");
-  expect(screen.getByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
+  expect(await screen.findByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
     "href",
-    "/agents/gone-ab12/chat",
+    `/agents/${refFor("gone-ab12")}/chat`,
   );
 });
 
@@ -141,7 +165,7 @@ test("a pending scheduled item shows the badge and 'covers 3 runs'", async () =>
     createdAt: "2026-11-23T08:00:00.000Z",
   };
   const { container } = inRouter(
-    <QueueItems items={[item]} agent={{ slug: "dev", status: "errored" } as never} />,
+    <QueueItems items={[item]} agent={{ handle: "dev", status: "errored" } as never} />,
   );
   expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");
@@ -150,11 +174,11 @@ test("a pending scheduled item shows the badge and 'covers 3 runs'", async () =>
 
 test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {
   const { container } = renderEvents([
-    { type: "hibernated", reason: "crons_stopped", by: "@or" },
+    { type: "hibernated", reason: "crons_stopped", by: "<@k7x2m9qd>" },
     {
       type: "background_work_lost",
       reason: "crons_stopped",
-      by: "@or",
+      by: "<@k7x2m9qd>",
       tasks: [],
       crons: [{ cronId: "c1", humanSchedule: "Every 5 minutes" }],
     },
@@ -167,8 +191,10 @@ test("the three quiet lines read as specified, from the events' `by` and `durabl
       durable: true,
     },
   ]);
-  await screen.findByText(/Hibernated: @or stopped its crons/);
-  expect(container.textContent).toContain("Stopped by @or: every 5 minutes (cron)");
+  await waitFor(() =>
+    expect(container.textContent).toMatch(/Hibernated: .*@or.*stopped its crons/),
+  );
+  expect(container.textContent).toMatch(/Stopped by .*@or.*: every 5 minutes \(cron\)/);
   expect(container.textContent).toContain("Cron created: every 5 minutes (kept on disk)");
 });
 

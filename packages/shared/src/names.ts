@@ -1,12 +1,9 @@
 import { z } from "zod";
-import { RESERVED_HANDLES } from "./handle.ts";
 import { MSG } from "./messages.ts";
 
-export const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const NAME_PATTERN = /^[a-z][a-z0-9-]{0,38}[a-z0-9]$/;
 export const SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const HOST_SKILL_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
-export const RESERVED_SLUGS = [...RESERVED_HANDLES] as const;
 
 const RESERVED_SECRET_EXACT = new Set([
   "PATH",
@@ -40,10 +37,6 @@ const charRules = (schema: z.ZodString, pattern: RegExp) =>
     .regex(/[^-]$/, MSG.noTrailingHyphen)
     .regex(pattern, MSG.nameChars);
 
-export const slugSchema = charRules(lengthRules(3, 40, MSG.slugLength), SLUG_PATTERN).refine(
-  (s) => !(RESERVED_SLUGS as readonly string[]).includes(s),
-  MSG.slugReserved,
-);
 export const nameSchema = charRules(lengthRules(2, 40, MSG.nameLength), NAME_PATTERN);
 export const secretNameSchema = z
   .string()

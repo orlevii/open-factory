@@ -4,7 +4,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import { authSecret } from "../crypto/keys.ts";
-import { claimHandle } from "../messaging/principals.ts";
 import { signUpContext } from "../users/sign-up-gate.ts";
 import { authOptions, type PasswordHasher } from "./options.ts";
 import { trustedOrigins } from "./origins.ts";
@@ -17,7 +16,7 @@ export function createAuth(config: Config, db: Db, passwordHasher?: PasswordHash
       trustedOrigins: trustedOrigins(config),
       passwordHasher,
       database: drizzleAdapter(db, { provider: "pg", schema, usePlural: true }),
-      claim: (handle) => claimHandle(db, handle, "user"),
+      newUserId: () => signUpContext.getStore()?.userId,
       mayCreateUser: () => signUpContext.getStore()?.allowed === true,
       // One primary-key lookup.
       isDisabled: async (userId) => {

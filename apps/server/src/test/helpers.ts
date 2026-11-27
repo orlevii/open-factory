@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, createDb, type Db, schema } from "@open-factory/db";
+import { createDb, type Db, schema } from "@open-factory/db";
 import { createMigratedTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
 import { createFakeClaude } from "@open-factory/harness/testing";
@@ -17,11 +17,12 @@ import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import type { PasswordHasher } from "../auth/options.ts";
 import { type Config, hostSkillsDirOf, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
-import { claimTestHandle, testManagerUserId } from "./handles.ts";
+import { refOfHandle, seedTestPrincipal, testManagerUserId, testRef } from "./principals.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -120,13 +121,15 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   };
   const first = await build(opts);
   const opened = [first];
+  const seeded = new Map<string, string>();
+  const seededRefs = new Map<string, string>();
   return {
     ...first,
     factoryHome,
     /** Where host skills are read from: `<config.hostClaudeDir>/skills`. */
     hostSkillsDir: hostSkillsDirOf(first.config),
-    seedAgent: (o?: SeedAgentOptions) =>
-      seedTestAgent(
+    seedAgent: async (o?: SeedAgentOptions) => {
+      const row = await seedTestAgent(
         {
           db: first.db,
           config: first.config,
@@ -134,8 +137,26 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           workspace: first.app.workspace,
         },
         o,
-      ),
+      );
+      seeded.set(row.handle, agentWorkdir(factoryHome, testRef(row.id)));
+      seededRefs.set(row.handle, testRef(row.id));
+      return row;
+    },
+    /** The ref of an agent made by `seedAgent`, synchronously (a URL's `:ref`). */
+    seededRef(handle: string): string {
+      const ref = seededRefs.get(handle);
+      if (!ref) throw new Error(`no seeded agent ${handle}`);
+      return ref;
+    },
+    /** The workdir of an agent made by `seedAgent`: named by its ref, not its handle. */
+    seededWorkdir(handle: string): string {
+      const dir = seeded.get(handle);
+      if (!dir) throw new Error(`no seeded agent ${handle}`);
+      return dir;
+    },
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
+    /** The ref of the agent or person with this handle: what routes and services address an agent by. */
+    refOf: (handle: string) => refOfHandle(first.db, handle),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
     /** Reopens over the same database; `factorySettings` is not re-applied (a PATCH before the restart persists). */
     async reopen(o: TestAppOptions = { ...opts, factorySettings: undefined }) {
@@ -155,12 +176,12 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
 }
 
 export interface SeedAgentOptions {
-  slug?: string;
+  handle?: string;
   /** The agent's overlay (`agents.config`, I2 §5.1); `{}` runs exactly the `test` template. */
   config?: AgentOverlay;
   credentialValue?: string;
-  /** The user it reports to; defaults to the oldest user (`testManagerUserId`). */
-  reportsToUser?: string;
+  /** The principal id it reports to; defaults to the oldest user (`testManagerUserId`). */
+  reportsTo?: string;
 }
 
 /** The `test` template every seeded agent is created from: local, nothing listed (I2: config comes from it live). */
@@ -170,8 +191,8 @@ export const TEST_TEMPLATE_YAML = "name: test\ndisplay_name: Test agent\nruntime
 export async function seedTestAgent(
   app: { db: Db; config: Config; vault: Vault; workspace: Workspace },
   opts: SeedAgentOptions = {},
-): Promise<AgentRow> {
-  const slug = opts.slug ?? "dev";
+): Promise<AgentRecord> {
+  const handle = opts.handle ?? "dev";
   const credentialId = randomUUID();
   await app.db.insert(schema.credentials).values({
     id: credentialId,
@@ -185,26 +206,25 @@ export async function seedTestAgent(
     writeFileSync(path.join(tplDir, "template.yaml"), TEST_TEMPLATE_YAML);
     writeFileSync(path.join(tplDir, "AGENTS.md"), "# Test agent\n");
   }
-  await claimTestHandle(app.db, slug, "agent");
+  const principal = await seedTestPrincipal(app.db, "agent", handle);
   const [row] = await app.db
     .insert(schema.agents)
     .values({
-      id: randomUUID(),
-      slug,
+      id: principal.id,
       displayName: "Test agent",
       description: "",
       template: "test",
       config: agentOverlaySchema.parse(opts.config ?? {}),
       runtime: "local",
       credentialId,
-      reportsToUser: opts.reportsToUser ?? (await testManagerUserId(app.db)),
+      reportsTo: opts.reportsTo ?? (await testManagerUserId(app.db)),
     })
     .returning();
   if (!row) throw new Error("seed failed");
-  const workdir = agentWorkdir(app.config.factoryHome, slug);
+  const workdir = agentWorkdir(app.config.factoryHome, principal.ref);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  return row;
+  return { ...row, handle, ref: principal.ref };
 }
 
 /**
@@ -265,4 +285,23 @@ export async function createTestDb() {
       await tdb.release();
     },
   };
+}
+
+/** The agent row with this handle (what a test names an agent by), or undefined. */
+export async function agentRowOf(app: Pick<FastifyInstance, "store">, handle: string) {
+  const r = await app.store.agentByArg(handle);
+  return r.kind === "agent" ? r.row : undefined;
+}
+
+/** The runtime of the agent with this handle, created on first use. */
+export async function runtimeOf(app: Pick<FastifyInstance, "store" | "runtimes">, handle: string) {
+  const row = await agentRowOf(app, handle);
+  return row ? app.runtimes.load(row.id) : undefined;
+}
+
+/** The ref of the agent with this handle, for a test that holds only the app. */
+export async function agentRefOf(app: Pick<FastifyInstance, "store">, handle: string) {
+  const row = await agentRowOf(app, handle);
+  if (!row) throw new Error(`no agent @${handle}`);
+  return app.store.refOfAgent(row.id);
 }

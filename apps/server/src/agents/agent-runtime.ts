@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
+import type { MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
   type BatchRow,
@@ -36,10 +36,12 @@ import {
   taskKey,
   type WaitingOn,
 } from "@open-factory/shared";
+import { type MentionPrincipal, mentionOf, renderMentions } from "@open-factory/shared/mentions";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import {
   type ContainerManager,
   type EnsureResult,
@@ -86,11 +88,11 @@ export interface RuntimeLog {
 }
 
 export interface RuntimeDeps {
-  agent: AgentRow;
+  agent: AgentRecord;
   store: EventStore;
   bus: EventBus;
   driver: HarnessDriver;
-  /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
+  /** Builds the spec for a process start. It takes the agent's ref lock itself: never call it while holding that lock. */
   prepareStart: StartPreparer;
   /** Per-launch agent tokens (spec §5.2): minted before each start, revoked when that process exits. */
   tokens: Pick<AgentTokens, "mint" | "revoke">;
@@ -103,7 +105,7 @@ export interface RuntimeDeps {
    * container stop (§11.3). Resolves what it did (recorded as a `cleanup` event); a throw means a container stop
    * failed, which makes the agent `stop_failed` (§9.6). Defaults to a no-op.
    */
-  cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined>;
+  cleanup?: (agent: AgentRecord) => Promise<CleanupResult | undefined>;
   /**
    * Local agents only (spec §12): snapshots Claude's process tree (pids with start times) into `runtime_journal`, so
    * the cleanup can reap what a dead process left. Absent with a fake driver: a fake pid is not ours to journal.
@@ -197,7 +199,7 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human or an agent, `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@factory`, `@scheduler`, else the sender's mention); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
@@ -205,7 +207,12 @@ type MessageEntry = {
   row: MessageRow;
   from: string;
   fromKind: "human" | "agent" | "factory";
+  /** The sender's `<@ref>` mention, what a member update's `re` stores (absent for the factory and the scheduler). */
+  fromMention?: string;
+  /** A `message` row's recipients as `<@ref>` mentions (the envelope's `to`, rendered when it is written). */
+  recipientMentions?: string[];
   groupKey?: string;
+  /** The subject agent's `<@ref>` mention (the envelope's `about`). */
   about?: string;
   subject?: Subject;
 };
@@ -226,10 +233,11 @@ type WrittenBatch = {
 function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
   const senders = new Map<string, string | null>();
   const firstIdBySender = new Map<string, string>();
-  for (const { row } of batch) {
-    senders.set(row.id, row.fromUserId);
-    if (row.kind === "message" && row.fromUserId && !firstIdBySender.has(row.fromUserId))
-      firstIdBySender.set(row.fromUserId, row.id);
+  for (const { row, fromKind } of batch) {
+    const human = fromKind === "human" ? row.fromId : null;
+    senders.set(row.id, human);
+    if (row.kind === "message" && human && !firstIdBySender.has(human))
+      firstIdBySender.set(human, row.id);
   }
   return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender, entries: batch };
 }
@@ -310,34 +318,42 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
 
 /** The entry for a joined row (spec §7.3, §8.4); one shape for `init()`, `receive` and the deliveries. */
 function entryOf(r: PendingRow): MessageEntry {
-  const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
+  const {
+    fromHandle,
+    fromRef,
+    fromKind: senderKind,
+    recipientMentions,
+    subjectHandle,
+    subjectRef,
+    subjectDisplayName,
+    ...row
+  } = r;
   let from: string;
   let fromKind: MessageEntry["fromKind"] = "factory";
   if (row.kind === "system") from = "@factory";
   // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
   else if (row.kind === "scheduled") from = "@scheduler";
-  else if (fromHandle) {
+  else if (fromHandle && senderKind) {
     from = `@${fromHandle}`;
-    fromKind = "human";
-  } else if (fromSlug) {
-    from = `@${fromSlug}`;
-    fromKind = "agent";
+    fromKind = senderKind;
   } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
-  const groupKey = fromSlug ?? subjectSlug ?? undefined;
+  const groupKey = (senderKind === "agent" ? fromRef : null) ?? subjectRef ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
     from,
     fromKind,
+    ...(fromRef && senderKind ? { fromMention: mentionOf(fromRef) } : {}),
+    ...(recipientMentions ? { recipientMentions } : {}),
     ...(groupKey ? { groupKey } : {}),
-    ...(subjectSlug ? { about: `@${subjectSlug}` } : {}),
+    ...(subjectRef ? { about: mentionOf(subjectRef) } : {}),
   };
-  if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectSlug) {
+  if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectHandle) {
     const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
     entry.subject = {
-      slug: subjectSlug,
-      displayName: subjectDisplayName ?? subjectSlug,
+      handle: subjectHandle,
+      displayName: subjectDisplayName ?? subjectHandle,
       relation: row.notice === "report" ? "report" : "peer",
       ...(left ? { left } : {}),
     };
@@ -358,14 +374,14 @@ const scheduleFieldsOf = (
   row: MessageRow & {
     scheduleKey?: string | null;
     scheduleZone?: string | null;
-    authorLabel?: string | null;
+    authorMention?: string | null;
     authorKind?: "human" | "agent" | null;
   },
 ) =>
   row.kind === "scheduled" && row.scheduleKey
     ? {
         scheduleKey: row.scheduleKey,
-        ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.authorMention ? { by: row.authorMention } : {}),
         ...(row.authorKind ? { byKind: row.authorKind } : {}),
         ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
         ...(row.firings ? { firings: row.firings } : {}),
@@ -387,14 +403,15 @@ const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
 const requestsOf = (entries: MessageEntry[]): RequestRef[] =>
   entries
     .filter((e) => REQUEST_KINDS.has(kindOf(e.row)))
-    .map((e) => ({ id: e.row.id, from: e.from }));
+    .map((e) => ({ id: e.row.id, from: e.fromMention ?? e.from }));
 
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
-  from: e.from,
+  // A principal is its mention here (rendered when the batch is written); the factory and the scheduler stay words.
+  from: e.fromMention ?? e.from,
   fromKind: e.fromKind,
-  ...(e.row.recipients ? { to: e.row.recipients } : {}),
+  ...(e.recipientMentions ? { to: e.recipientMentions } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -455,9 +472,39 @@ type LiveCron = {
   durable: boolean;
 };
 
-/** Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. */
-const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
-  groupEnvelopes(batch.map(toBatchRow));
+/**
+ * Every batch goes through groupEnvelopes, the one owner of envelope-body escaping. Principals are mentions until now: one
+ * query names every ref of the batch, and each attribute and body is rendered with its current handle (spec §4.4).
+ */
+async function toEnvelopes(
+  batch: MessageEntry[],
+  mentionLookup: (
+    texts: readonly string[],
+  ) => Promise<(ref: string) => MentionPrincipal | undefined>,
+): Promise<FactoryMessage[]> {
+  const rows = batch.map(toBatchRow);
+  const texts = rows.flatMap((r) => [
+    r.from,
+    r.body,
+    ...(r.to ?? []),
+    ...(r.about ? [r.about] : []),
+    ...(r.by ? [r.by] : []),
+    ...(r.re?.map((x) => x.from) ?? []),
+  ]);
+  const lookup = await mentionLookup(texts);
+  const show = (t: string) => renderMentions(t, lookup, "agent");
+  return groupEnvelopes(
+    rows.map((r) => ({
+      ...r,
+      from: show(r.from),
+      body: show(r.body),
+      ...(r.to ? { to: r.to.map(show) } : {}),
+      ...(r.about ? { about: show(r.about) } : {}),
+      ...(r.by ? { by: show(r.by) } : {}),
+      ...(r.re ? { re: r.re.map((x) => ({ ...x, from: show(x.from) })) } : {}),
+    })),
+  );
+}
 
 /** I7 §9.2: what a `restartNow` did; it never waits for the start. */
 export type RestartOutcome = {
@@ -466,7 +513,7 @@ export type RestartOutcome = {
 };
 
 /** I7 §9.2 row 8: the refusal text, from what a forced restart would stop. */
-const lostWorkMessage = (slug: string, lost: { tasks: string[]; crons: string[] }) => {
+const lostWorkMessage = (handle: string, lost: { tasks: string[]; crons: string[] }) => {
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const parts = [
     ...(lost.tasks.length
@@ -476,16 +523,16 @@ const lostWorkMessage = (slug: string, lost: { tasks: string[]; crons: string[] 
       : []),
     ...(lost.crons.length ? [plural(lost.crons.length, "cron")] : []),
   ];
-  return `@${slug} has ${parts.join(" and ")}; pass force: true to restart anyway.`;
+  return `@${handle} has ${parts.join(" and ")}; pass force: true to restart anyway.`;
 };
 
 export class AgentRuntime {
-  agent: AgentRow;
+  agent: AgentRecord;
   private readonly jobs = new SerialQueue();
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
   private sessionStarted = false; // session_started seen for this process
-  private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
+  private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the ref lock)
   private openTurnId: string | undefined;
   /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
   private turnStartedAt: string | undefined;
@@ -672,6 +719,7 @@ export class AgentRuntime {
   }
 
   async init() {
+    this.agentRefValue = await this.ref();
     // The row may have been terminated since it was read for the constructor.
     const r = await this.d.store.agentById(this.agent.id);
     if (r?.terminatedAt && !this.terminationCommitted) this.markTerminated({ committed: true });
@@ -756,7 +804,7 @@ export class AgentRuntime {
           this.debounceTimer = undefined;
           await this.deliverDebounced();
         }).catch((err) =>
-          this.d.log.error({ err, agent: this.agent.slug }, "delivering member updates failed"),
+          this.d.log.error({ err, agent: this.agent.handle }, "delivering member updates failed"),
         );
       },
       // Above setTimeout's maximum the delay overflows to 1 ms and the timer would spin: an early fire finds nothing
@@ -798,7 +846,7 @@ export class AgentRuntime {
       if (this.terminationCommitted) {
         // S7 §8 step 2: the transaction rejected what was pending; a row handed over after it is rejected here.
         this.chatChanged([await this.d.store.markRejected(row.id)]);
-        throw new AgentTerminatedError(this.agent.slug);
+        throw new AgentTerminatedError(this.agent.handle);
       }
       if (this.archived) {
         this.chatChanged([await this.d.store.markRejected(row.id)]);
@@ -807,7 +855,7 @@ export class AgentRuntime {
           this.queue.splice(at, 1);
           this.publishQueue();
         }
-        throw new AgentArchivedError(this.agent.slug);
+        throw new AgentArchivedError(this.agent.handle);
       }
       let entry = this.queue.find(
         (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
@@ -924,7 +972,7 @@ export class AgentRuntime {
         agentId: this.agent.id,
         userId,
       });
-      if (this.terminated || this.archived) throw new AgentEndedError(this.agent.slug);
+      if (this.terminated || this.archived) throw new AgentEndedError(this.agent.handle);
       if (!(await this.d.store.restoreCancelled(messageId))) {
         if (this.queue.some((e) => e.kind === "message" && e.row.id === messageId)) return;
         throw new AlreadyDeliveredError();
@@ -1000,7 +1048,11 @@ export class AgentRuntime {
       if (!report) return;
       await this.addNotice(
         "report_config_changed",
-        notices.reportConfigChanged({ by, report: report.slug, lines }),
+        notices.reportConfigChanged({
+          by,
+          report: await this.d.store.principalMention(reportId),
+          lines,
+        }),
         reportId,
       );
     });
@@ -1052,7 +1104,8 @@ export class AgentRuntime {
   /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
   async compact(c: {
     focus?: string;
-    byHandle: string;
+    /** The requester's mention, `<@ref>`. */
+    by: string;
     userId?: string;
     clientMessageId?: string;
     self?: boolean;
@@ -1060,7 +1113,7 @@ export class AgentRuntime {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
-      by: `@${c.byHandle}`,
+      by: c.by,
       createdAt: new Date(),
       ...(c.userId ? { userId: c.userId } : {}),
       ...(c.self ? { self: true } : {}),
@@ -1069,7 +1122,7 @@ export class AgentRuntime {
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.archived) throw new AgentArchivedError(this.agent.handle);
       if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch and queues nothing, as for raw input.
       const retryKey =
@@ -1118,7 +1171,7 @@ export class AgentRuntime {
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.archived) throw new AgentArchivedError(this.agent.handle);
       if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
       const retryKey =
@@ -1148,17 +1201,17 @@ export class AgentRuntime {
    * interrupted turn's result instead of being absorbed by the aborting turn. A hold already set (a Stop or an urgent
    * send under way) makes it a no-op; a compaction is never interrupted (409 `compacting`, D5).
    */
-  async interrupt(c: { byHandle: string }): Promise<void> {
+  async interrupt(c: { by: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.archived) throw new AgentArchivedError(this.agent.handle);
       if (this.compactInFlight) throw new CompactingError();
       if (this.hold) return;
       // U3 §13.3 (review M1): a written command whose turn never opened has nothing to interrupt, and its turn_end may
       // never come; Stop ends its barrier so the queue moves again.
       if (this.proc && this.rawInFlight && !this.openTurnId) {
         this.rawInFlight = false;
-        await this.append(null, { type: "control", cmd: "interrupt", by: `@${c.byHandle}` });
+        await this.append(null, { type: "control", cmd: "interrupt", by: c.by });
         this.publishQueue();
         await this.flush();
         this.publishStatus();
@@ -1166,7 +1219,7 @@ export class AgentRuntime {
       }
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
-        await this.beginInterruptHold(`@${c.byHandle}`);
+        await this.beginInterruptHold(c.by);
       } catch (err) {
         // The process is going away and its `exited` is not processed yet: there is nothing to interrupt (409).
         if (err instanceof ProcessNotRunningError) throw new NoOpenTurnError();
@@ -1200,20 +1253,19 @@ export class AgentRuntime {
    * rate-limited): stops at the first moment the agent isn't busy, the warm window not waited for; an apply-restart's
    * hibernate already under way is taken over. Anything else already stopping is refused.
    */
-  stopCrons(byHandle: string): Promise<{ status: "stopped" | "pending" }> {
+  stopCrons(by: string): Promise<{ status: "stopped" | "pending" }> {
     return this.apiJob(async () => {
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      const by = `@${byHandle}`;
+      if (this.archived) throw new AgentArchivedError(this.agent.handle);
       const proc = this.proc;
-      if (!proc || this.crons.size === 0) throw new StopCronsError("no_crons", this.agent.slug);
+      if (!proc || this.crons.size === 0) throw new StopCronsError("no_crons", this.agent.handle);
       if (proc === this.deadProc || proc === this.failingProc) {
-        throw new StopCronsError("stopping", this.agent.slug);
+        throw new StopCronsError("stopping", this.agent.handle);
       }
       if (this.stopping) {
         const a = this.afterExit;
         if (a?.kind !== "hibernate" || a.reason !== "apply_changes")
-          throw new StopCronsError("stopping", this.agent.slug);
+          throw new StopCronsError("stopping", this.agent.handle);
         // Takes the apply-restart's hibernate over, as a shutdown does: its exit records the stop, adds no
         // `restart_crons` notice, and wakes only for non-passive items.
         a.reason = "crons_stopped";
@@ -1269,7 +1321,7 @@ export class AgentRuntime {
       await this.stopCronsNow(p.by);
       this.publishStatus();
     }).catch((err: unknown) =>
-      this.d.log.error({ err, agent: this.agent.slug }, "stopping the crons failed"),
+      this.d.log.error({ err, agent: this.agent.handle }, "stopping the crons failed"),
     );
   }
 
@@ -1362,7 +1414,7 @@ export class AgentRuntime {
    * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
    * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
    * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
-   * serial, so it would wait on itself. `by` is an `@handle`. `changes` are the caller's `describeChanges` lines, `null`
+   * serial, so it would wait on itself. `by` is the requester's mention. `changes` are the caller's `describeChanges` lines, `null`
    * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
   restartNow(r: {
@@ -1373,27 +1425,27 @@ export class AgentRuntime {
   }): Promise<RestartOutcome> {
     return this.apiJob(async () => {
       const { by } = r;
-      const slug = this.agent.slug;
+      const handle = this.agent.handle;
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(slug);
+      if (this.archived) throw new AgentArchivedError(handle);
       if (this.errored) {
         if (this.errorKind === "resume_unrecoverable")
           throw new RecoveryRefusedError(
             "resume_unrecoverable",
-            `@${slug}'s session can't be resumed; a human must start a new session.`,
+            `@${handle}'s session can't be resumed; a human must start a new session.`,
           );
         return this.restartErrored(by, r.runtimeAllowed);
       }
       const proc = this.proc;
       if (this.starting || this.attempting || (proc && !this.sessionStarted))
-        throw new RecoveryRefusedError("starting", `@${slug} is starting; try again shortly.`);
+        throw new RecoveryRefusedError("starting", `@${handle} is starting; try again shortly.`);
       // `stopping` outlives the exit (a fresh start resets it), so it only counts while a process is left.
       if (proc && (this.stopping || proc === this.deadProc || proc === this.failingProc))
-        throw new RecoveryRefusedError("stopping", `@${slug} is stopping; try again shortly.`);
+        throw new RecoveryRefusedError("stopping", `@${handle} is stopping; try again shortly.`);
       if (this.compactInFlight)
         throw new RecoveryRefusedError(
           "compacting",
-          `@${slug} is compacting; try again when it finishes.`,
+          `@${handle} is compacting; try again when it finishes.`,
         );
       if (!proc) return { status: "not_running" as const };
       if (this.restartNowPending) {
@@ -1408,7 +1460,7 @@ export class AgentRuntime {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
           crons: lost.crons.map((c) => c.humanSchedule),
         };
-        throw new RecoveryRefusedError("lost_work", lostWorkMessage(slug, data), data);
+        throw new RecoveryRefusedError("lost_work", lostWorkMessage(handle, data), data);
       }
       const turnWork = Boolean(
         this.openTurnId || this.awaiting.length || this.rawInFlight || this.hold,
@@ -1426,7 +1478,7 @@ export class AgentRuntime {
         this.publishStatus();
         return {
           status: "restart_pending" as const,
-          note: `@${slug} restarts in a moment, once a finished task's result is delivered.`,
+          note: `@${handle} restarts in a moment, once a finished task's result is delivered.`,
         };
       }
       // Row 12: an idle restart is a hibernate; the next start reads the latest config.
@@ -1436,7 +1488,7 @@ export class AgentRuntime {
         this.publishStatus();
         return {
           status: "restart_pending" as const,
-          note: `@${slug} restarts in a moment, once its current messages are delivered.`,
+          note: `@${handle} restarts in a moment, once its current messages are delivered.`,
         };
       }
       if (r.changes?.length)
@@ -1479,7 +1531,7 @@ export class AgentRuntime {
         // The process is going away and its `exited` isn't processed yet.
         throw new RecoveryRefusedError(
           "stopping",
-          `@${this.agent.slug} is stopping; try again shortly.`,
+          `@${this.agent.handle} is stopping; try again shortly.`,
         );
       }
       return;
@@ -1500,11 +1552,11 @@ export class AgentRuntime {
           await this.beginRestartNowStop();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
-          else this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback failed");
+          else this.d.log.error({ err, agent: this.agent.handle }, "cut restart fallback failed");
         }
         this.publishStatus();
       }).catch((err) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback job failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "cut restart fallback job failed"),
       );
     }, this.d.holdTimeoutMs ?? 10_000);
     this.restartNowFallback = timer;
@@ -1595,10 +1647,10 @@ export class AgentRuntime {
    * pending notices (they describe the old session), clear errored, and make pending human messages the new
    * session's first turn (one attempt). The old session's JSONL stays on disk.
    */
-  resetSession(r: { byHandle: string }): Promise<void> {
+  resetSession(r: { by: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (this.archived) throw new AgentArchivedError(this.agent.handle);
       this.refuseRecoveryWhileAttempting();
       if (
         !this.errored ||
@@ -1609,7 +1661,7 @@ export class AgentRuntime {
           "Start a new session is only for an agent whose session couldn't be resumed.",
         );
       this.refuseWhileStopping();
-      const by = `@${r.byHandle}`;
+      const { by } = r;
       await this.d.store.setSessionId(this.agent.id, null);
       await this.append(null, { type: "session_reset", by });
       await this.d.store.deletePendingNotices(this.agent.id);
@@ -1632,7 +1684,7 @@ export class AgentRuntime {
       // After the attempt began: a failed forward must not leave the pending human messages without one. The reset is
       // done, so the failure is logged rather than failing the human's call.
       await this.forwardRecovered().catch((err: unknown) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "forwarding recovered failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "forwarding recovered failed"),
       );
       this.publishStatus();
     });
@@ -1674,7 +1726,7 @@ export class AgentRuntime {
         void this.run(async () => {
           for (const id of dropped) this.chatChanged([await this.d.store.markRejected(id)]);
         }).catch((err: unknown) =>
-          this.d.log.error({ err, agent: this.agent.slug }, "rejecting dropped rows failed"),
+          this.d.log.error({ err, agent: this.agent.handle }, "rejecting dropped rows failed"),
         );
     }
     this.clearOwedBound();
@@ -1714,7 +1766,7 @@ export class AgentRuntime {
       this.publishStatus();
     }).catch((err: unknown) =>
       this.d.log.error(
-        { err, agent: this.agent.slug },
+        { err, agent: this.agent.handle },
         "delivering after a failed termination failed",
       ),
     );
@@ -1814,7 +1866,7 @@ export class AgentRuntime {
       const row = await this.d.store.agentById(this.agent.id);
       if (!row?.terminatedAt) return "none";
       if (!this.terminationCommitted) this.markTerminated({ committed: true });
-      const by = row.terminatedBy ?? "@factory";
+      const by = await this.d.store.terminatorMentionOf(row.terminatedBy);
       await this.ensureTerminatedEvent(by);
       this.containerListed = Boolean(o.containerListed);
       const proc = this.proc;
@@ -1853,7 +1905,7 @@ export class AgentRuntime {
     void this.d.store
       .setLastActivity(this.agent.id, at)
       .catch((err: unknown) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "recording the last activity failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "recording the last activity failed"),
       );
   }
 
@@ -1873,12 +1925,12 @@ export class AgentRuntime {
       if (target.runtime === "docker" || o.container) {
         // Never counted as removed: the container may still run, so the sweep must retry (stop_failed keeps the slot).
         if (!this.d.docker) throw new Error("the Docker runtime isn't configured");
-        const removed = await this.d.docker.containers.remove(this.agent.id, this.agent.slug);
+        const removed = await this.d.docker.containers.remove(this.agent.id, await this.ref());
         if (removed) done = { ...done, container: "removed" };
       }
     } catch (err) {
       this.d.log.error(
-        { err, agent: this.agent.slug, runtime: target.runtime },
+        { err, agent: this.agent.handle, runtime: target.runtime },
         `cleaning up a terminated agent failed${err instanceof Error ? `: ${err.message}` : ""}`,
       );
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
@@ -1933,7 +1985,10 @@ export class AgentRuntime {
       const reason = this.wakeReason(granted);
       if (this.proc) {
         // Never release here: the slot is held by the running process and its exit releases it.
-        this.d.log.error({ agent: this.agent.slug, reason }, "grant for an agent that is running");
+        this.d.log.error(
+          { agent: this.agent.handle, reason },
+          "grant for an agent that is running",
+        );
         return;
       }
       // The whole eligibility predicate again (spec §5.2): the grant was bookkeeping, this is the agent's own turn.
@@ -2225,7 +2280,7 @@ export class AgentRuntime {
 
   statusFrame(): AgentStatusFrame {
     const l = this.live();
-    return { type: "agent_status", agent: this.agent.slug, ...l };
+    return { type: "agent_status", agent: this.agentRef, ...l };
   }
 
   queueItems(): QueueItem[] {
@@ -2358,7 +2413,7 @@ export class AgentRuntime {
           kind: e.row.kind === "system" || isPeer(e) ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
-          from: e.from,
+          from: e.fromMention ?? e.from,
           fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
@@ -2399,9 +2454,9 @@ export class AgentRuntime {
     const dto = await this.d.store.append(this.agent.id, turnId ?? null, event, tx);
     if (!tx) {
       this.retireLive(event);
-      this.d.bus.publish(this.agent.slug, {
+      this.d.bus.publish(this.agent.id, {
         type: "session_event",
-        agent: this.agent.slug,
+        agent: this.agentRef,
         event: dto,
       });
       this.endSubagentLive(event);
@@ -2436,7 +2491,7 @@ export class AgentRuntime {
     await this.d.forward({
       agentId: this.agent.id,
       fact,
-      body: factFor(fact, this.agent.slug, detail),
+      body: factFor(fact, await this.d.store.principalMention(this.agent.id), detail),
     });
   }
 
@@ -2471,9 +2526,9 @@ export class AgentRuntime {
   }
 
   private publishQueue() {
-    this.d.bus.publish(this.agent.slug, {
+    this.d.bus.publish(this.agent.id, {
       type: "queue",
-      agent: this.agent.slug,
+      agent: this.agentRef,
       items: this.queueItems(),
     });
   }
@@ -2536,7 +2591,7 @@ export class AgentRuntime {
     if (this.attempting)
       throw new RecoveryRefusedError(
         "attempt_in_progress",
-        `@${this.agent.slug} is already being recovered. Wait for that attempt to finish.`,
+        `@${this.agent.handle} is already being recovered. Wait for that attempt to finish.`,
       );
   }
 
@@ -2559,7 +2614,7 @@ export class AgentRuntime {
     try {
       done = await this.d.cleanup?.(this.cleanupTarget());
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "cleanup on restart failed");
+      this.d.log.error({ err, agent: this.agent.handle }, "cleanup on restart failed");
       // Docker's last resort (spec §9.6): the container stop failed again, so remove the container.
       done = (await this.removeContainer()) ? { container: "removed" } : undefined;
       if (!done) {
@@ -2652,7 +2707,7 @@ export class AgentRuntime {
         )
       ) {
         if (this.proc) await this.onJobFailure(this.proc, err);
-        else this.d.log.error({ err, agent: this.agent.slug }, what);
+        else this.d.log.error({ err, agent: this.agent.handle }, what);
       }
     }
   }
@@ -2708,7 +2763,7 @@ export class AgentRuntime {
     generation: number,
     onLaunched: () => void,
   ): Promise<boolean> {
-    // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
+    // prepareStart takes the agent's ref lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
     // I2 §7.3: stamped before the prepare reads the config, so a change landing during the prepare is held for the next
     // process (the start may have read the config before it).
@@ -2817,13 +2872,13 @@ export class AgentRuntime {
         proc.claudeCodeVersion ?? null,
       );
       if (dropped)
-        this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
-      this.d.bus.publish(this.agent.slug, {
+        this.d.log.warn({ agent: this.agent.handle, dropped }, "dropped malformed command entries");
+      this.d.bus.publish(this.agent.id, {
         type: "agent_commands_changed",
-        agent: this.agent.slug,
+        agent: this.agentRef,
       });
     } catch (err) {
-      this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
+      this.d.log.warn({ err, agent: this.agent.handle }, "storing the command list failed");
     }
   }
 
@@ -2840,13 +2895,13 @@ export class AgentRuntime {
     try {
       done = await this.d.cleanup({ ...this.agent, runtime: "local" });
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "reaping the previous process failed");
+      this.d.log.error({ err, agent: this.agent.handle }, "reaping the previous process failed");
       // The slot and the cleanup target first: a failing DB write below must not free the slot of a running process.
       this.keepSlotAfterFailedStart = true;
       this.procRuntime = "local"; // Restart's cleanup reaps the journal again
       const message = previousProcessMessage(j?.claude?.pid);
       const logFailure = (e: unknown) =>
-        this.d.log.error({ err: e, agent: this.agent.slug }, "recording stop_failed failed");
+        this.d.log.error({ err: e, agent: this.agent.handle }, "recording stop_failed failed");
       // setErrored sets the in-memory truth first; the DB may be what failed.
       await this.setErrored(message, "stop_failed").catch(logFailure);
       await this.append(null, { type: "error", source: "spawn", message }).catch(logFailure);
@@ -2870,7 +2925,7 @@ export class AgentRuntime {
         : raw;
     const known = err instanceof AgentStartError;
     const message = known ? err.message : "The agent couldn't be prepared to start.";
-    if (!known) this.d.log.error({ err, agent: this.agent.slug }, what);
+    if (!known) this.d.log.error({ err, agent: this.agent.handle }, what);
     await this.append(null, {
       type: "error",
       source: "spawn",
@@ -2904,7 +2959,7 @@ export class AgentRuntime {
     try {
       const r = await docker.containers.ensure({
         agentId: this.agent.id,
-        slug: this.agent.slug,
+        ref: await this.ref(),
         image: launch.image,
         mounts: spec.mounts,
         mountCheck: launch.mountCheck,
@@ -2935,11 +2990,11 @@ export class AgentRuntime {
    */
   private async stopUnlaunchedContainer(): Promise<boolean> {
     try {
-      await this.d.docker?.containers.stopIfRunning(this.agent.id, this.agent.slug);
+      await this.d.docker?.containers.stopIfRunning(this.agent.id, await this.ref());
       return true;
     } catch (err) {
       this.d.log.error(
-        { err, agent: this.agent.slug },
+        { err, agent: this.agent.handle },
         "stopping the container of a start that didn't launch failed",
       );
       // The slot and the cleanup target first: a failing DB write below must not free the slot of a running container.
@@ -2947,7 +3002,7 @@ export class AgentRuntime {
       this.procRuntime = "docker"; // Restart's cleanup stops (or removes) this container, whatever ran last
       // setErrored sets the in-memory truth first; the DB may be what failed.
       await this.setErrored(stopFailedMessage(undefined), "stop_failed").catch((e) =>
-        this.d.log.error({ err: e, agent: this.agent.slug }, "recording stop_failed failed"),
+        this.d.log.error({ err: e, agent: this.agent.handle }, "recording stop_failed failed"),
       );
       this.publishStatus();
       return false;
@@ -2958,16 +3013,30 @@ export class AgentRuntime {
   private async removeContainer(): Promise<boolean> {
     if (this.cleanupTarget().runtime !== "docker" || !this.d.docker) return false;
     try {
-      await this.d.docker.containers.forceRemove(this.agent.id, this.agent.slug);
+      await this.d.docker.containers.forceRemove(this.agent.id, await this.ref());
       return true;
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "removing the container failed");
+      this.d.log.error({ err, agent: this.agent.handle }, "removing the container failed");
       return false;
     }
   }
 
+  /** The ref every frame names the agent by: read in `init()`; reading it earlier throws rather than yield an empty ref. */
+  private agentRefValue: string | undefined;
+  private get agentRef(): string {
+    if (this.agentRefValue === undefined) throw new Error("the runtime was read before init()");
+    return this.agentRefValue;
+  }
+
+  /** The ref its container is named by, read once from `principals` (it never changes). */
+  private refOnce?: Promise<string>;
+  private ref(): Promise<string> {
+    this.refOnce ??= this.d.store.refOfAgent(this.agent.id);
+    return this.refOnce;
+  }
+
   /** The agent as the cleanup port sees it: with the runtime its last process ran under. */
-  private cleanupTarget(): AgentRow {
+  private cleanupTarget(): AgentRecord {
     return { ...this.agent, runtime: this.runningRuntime() };
   }
 
@@ -2985,13 +3054,13 @@ export class AgentRuntime {
   /** The last check before the launch: the stop latches, and an archive or termination that landed during prepare. */
   private refuseBeforeLaunch() {
     if (this.terminated) throw new AgentStartError(TERMINATED_START);
-    if (this.archived) throw new AgentArchivedError(this.agent.slug);
+    if (this.archived) throw new AgentArchivedError(this.agent.handle);
     this.refuseWhileStopping();
   }
 
   /** S7 §8: REST compact, interrupt, restart and reset-session on a terminated agent (`409 agent_terminated`). */
   private refuseTerminated() {
-    if (this.terminated) throw new AgentTerminatedError(this.agent.slug);
+    if (this.terminated) throw new AgentTerminatedError(this.agent.handle);
   }
 
   private async pump(proc: HarnessProcess) {
@@ -3011,7 +3080,7 @@ export class AgentRuntime {
     try {
       for await (const e of proc.live) if (proc === this.proc) this.applyLive(e);
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "live event handling failed");
+      this.d.log.error({ err, agent: this.agent.handle }, "live event handling failed");
     }
   }
 
@@ -3019,17 +3088,17 @@ export class AgentRuntime {
     try {
       this.liveState.apply(e);
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "a live event could not be applied");
+      this.d.log.error({ err, agent: this.agent.handle }, "a live event could not be applied");
     }
   }
 
   private publishLive(body: LiveFrameBody) {
-    this.d.bus.publish(this.agent.slug, { type: "live", agent: this.agent.slug, ...body });
+    this.d.bus.publish(this.agent.id, { type: "live", agent: this.agentRef, ...body });
   }
 
   /** The whole live state as a `reset` frame (U3 §11.3): sent after a subscribe's replay and on `live_snapshot`. */
   liveSnapshot(): LiveFrame {
-    return { type: "live", agent: this.agent.slug, ...this.liveState.snapshot() };
+    return { type: "live", agent: this.agentRef, ...this.liveState.snapshot() };
   }
 
   /** The stdout line of a persisted event (U3 §11.2); unknown (a driver without lines) clears everything. */
@@ -3087,7 +3156,7 @@ export class AgentRuntime {
 
   private async onJobFailure(proc: HarnessProcess, err: unknown) {
     this.d.log.error(
-      { err, agent: this.agent.slug },
+      { err, agent: this.agent.handle },
       "agent event handling failed; stopping the process",
     );
     if (this.deadProc === proc) {
@@ -3112,7 +3181,7 @@ export class AgentRuntime {
         if (!row?.sessionId) await this.d.store.setSessionId(this.agent.id, e.sessionId);
         else if (row.sessionId !== e.sessionId)
           this.d.log.error(
-            { agent: this.agent.slug, stored: row.sessionId, got: e.sessionId },
+            { agent: this.agent.handle, stored: row.sessionId, got: e.sessionId },
             "session id changed",
           );
         // An errored agent's error clears only when its attempt succeeds (spec §9.2), not at session_started.
@@ -3123,7 +3192,7 @@ export class AgentRuntime {
           if (!factory || (factory.status !== "connected" && factory.status !== "pending")) {
             const status = factory?.status ?? "missing";
             this.d.log.warn(
-              { agent: this.agent.slug, status },
+              { agent: this.agent.handle, status },
               "the factory MCP server isn't connected",
             );
             await this.append(null, { type: "mcp_unavailable", status });
@@ -3132,7 +3201,11 @@ export class AgentRuntime {
         const flight = this.inFlight.splice(0);
         for (const batch of flight) await this.d.store.markDelivered(batch.map((m) => m.row.id));
         // A batch written before session_started was pending until now (I1 §6.5): its sender's chat changed.
-        this.chatChanged(flight.flatMap((batch) => batch.map((m) => m.row.fromUserId)));
+        this.chatChanged(
+          flight.flatMap((batch) =>
+            batch.map((m) => (m.fromKind === "human" ? m.row.fromId : null)),
+          ),
+        );
         break;
       }
       case "turn_started":
@@ -3258,7 +3331,7 @@ export class AgentRuntime {
             await this.d.store.recordRateLimit(this.procCredentialId, e, new Date());
         } catch (err) {
           this.d.log.error(
-            { err, agent: this.agent.slug },
+            { err, agent: this.agent.handle },
             "could not record the rate-limit status",
           );
         }
@@ -3605,7 +3678,7 @@ export class AgentRuntime {
       await this.d.store.setNoticeOwed(this.agent.id, false);
       this.agent = { ...this.agent, rateLimitNoticeOwed: false };
       this.d.log.info(
-        { agent: this.agent.slug },
+        { agent: this.agent.handle },
         "credential changed while a continue notice was owed; the notice is dropped",
       );
     }
@@ -3618,7 +3691,7 @@ export class AgentRuntime {
       await this.flush();
     } catch (err) {
       if (this.proc) await this.onJobFailure(this.proc, err);
-      else this.d.log.error({ err, agent: this.agent.slug }, what);
+      else this.d.log.error({ err, agent: this.agent.handle }, what);
     }
   }
 
@@ -3632,7 +3705,7 @@ export class AgentRuntime {
     const exact = reported > now;
     if (!exact)
       this.d.log.warn(
-        { agent: this.agent.slug, resetsAt: e.resetsAt },
+        { agent: this.agent.handle, resetsAt: e.resetsAt },
         "rate limit reached but no reset time was reported; retrying in 30 minutes",
       );
     const p = await this.d.store.pauseCredential(
@@ -3703,7 +3776,7 @@ export class AgentRuntime {
       const what = crash ? "cleanup after a crash failed" : "cleanup after a stop failed";
       // The cause names its source (e.g. the DB read of the journal, the Docker API), not only "the process".
       const why = err instanceof Error ? `: ${err.message}` : "";
-      this.d.log.error({ err, agent: this.agent.slug }, `${what}${why}`);
+      this.d.log.error({ err, agent: this.agent.handle }, `${what}${why}`);
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
       return false;
     }
@@ -3822,7 +3895,7 @@ export class AgentRuntime {
       (r) => {
         if (r.timedOut) void this.escalate(proc);
       },
-      (err) => this.d.log.error({ err, agent: this.agent.slug }, what),
+      (err) => this.d.log.error({ err, agent: this.agent.handle }, what),
     );
   }
 
@@ -3831,7 +3904,7 @@ export class AgentRuntime {
     let p = this.escalations.get(proc);
     if (!p) {
       p = this.run(() => this.escalateNow(proc)).catch((err) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "stop escalation failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "stop escalation failed"),
       );
       this.escalations.set(proc, p);
     }
@@ -3848,20 +3921,20 @@ export class AgentRuntime {
   ) {
     if (proc !== this.proc) return; // its exit was recorded meanwhile
     const how = this.cleanupTarget().runtime === "docker" ? "container_stop" : "sigkill";
-    this.d.log.warn({ agent: this.agent.slug, pid: proc.pid, how }, "stop timed out; escalating");
+    this.d.log.warn({ agent: this.agent.handle, pid: proc.pid, how }, "stop timed out; escalating");
     // A sweep's retry of a stuck terminated agent records the escalation only the first time (one event per process,
     // not one per sweep); a user's Restart is a new act and always records.
     if (!(o.sweep && this.escalationRecorded.has(proc))) {
       this.escalationRecorded.add(proc);
       await this.append(null, { type: "stop_escalated", how }).catch((err) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "recording stop_escalated failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "recording stop_escalated failed"),
       );
     }
     this.escalated.add(proc); // even a failed one: whenever it exits, the exit reaps
     try {
       await proc.forceKill();
     } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug, pid: proc.pid }, "escalation failed");
+      this.d.log.error({ err, agent: this.agent.handle, pid: proc.pid }, "escalation failed");
       // Restart of a stop_failed Docker agent (spec §9.6): the container stop failed again, so remove it, which
       // ends the exec stream and with it the process.
       if (!(o.removeOnFailure && (await this.removeContainer()))) {
@@ -3876,7 +3949,7 @@ export class AgentRuntime {
         if (this.escalationTimer !== timer) return;
         this.escalationTimer = undefined;
         if (proc === this.proc) await this.markStopFailed(proc);
-      }).catch((err) => this.d.log.error({ err, agent: this.agent.slug }, "stop_failed failed"));
+      }).catch((err) => this.d.log.error({ err, agent: this.agent.handle }, "stop_failed failed"));
     }, ESCALATION_EXIT_MS);
     this.escalationTimer = timer;
   }
@@ -3890,7 +3963,7 @@ export class AgentRuntime {
     this.afterExit = { kind: "internal" };
     this.restartPending = false;
     this.pendingWake = false;
-    this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
+    this.d.log.error({ agent: this.agent.handle, pid: proc.pid }, "the process can't be stopped");
     // setErrored sets the in-memory truth first; the DB may be what failed.
     await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});
     // Restart of a stop_failed agent makes one more escalation try (spec §9.6): don't cache this one.
@@ -4020,7 +4093,7 @@ export class AgentRuntime {
         this.owedTimer = undefined;
         if (this.owedNotifications <= 0 || this.openTurnId) return;
         this.d.log.warn(
-          { agent: this.agent.slug, owed: this.owedNotifications },
+          { agent: this.agent.handle, owed: this.owedNotifications },
           "no notification turn within 30 s; no longer waiting for it",
         );
         this.owedNotifications = 0;
@@ -4073,7 +4146,7 @@ export class AgentRuntime {
       await this.persistJournal();
     } catch (err) {
       this.d.log.warn(
-        { err, agent: this.agent.slug, pid: proc.pid },
+        { err, agent: this.agent.handle, pid: proc.pid },
         "process journal snapshot failed",
       );
     }
@@ -4094,13 +4167,13 @@ export class AgentRuntime {
         this.snapshotTimer = undefined; // the end of this job arms the next one while still busy
         if (this.proc) await this.snapshotJournal(this.proc);
       }).catch((err) =>
-        this.d.log.error({ err, agent: this.agent.slug }, "journal snapshot job failed"),
+        this.d.log.error({ err, agent: this.agent.handle }, "journal snapshot job failed"),
       );
     }, JOURNAL_SNAPSHOT_MS);
     this.snapshotTimer = timer;
   }
 
-  /** `by` is the sender as prose writes it: `@handle` for a human, `@slug` for an agent. */
+  /** `by` is the sender as prose writes it: `@handle` for a human or an agent. */
   private async urgentInterrupt(by: string) {
     // idle → normal send; hold active → no second interrupt; a compact in flight is never interrupted (it
     // waits behind the barrier instead)
@@ -4126,7 +4199,7 @@ export class AgentRuntime {
     await this.proc.control("interrupt");
     const hold = setTimeout(() => {
       this.d.log.warn(
-        { agent: this.agent.slug },
+        { agent: this.agent.handle },
         "no result within the interrupt hold timeout; sending anyway",
       );
       void this.run(async () => {
@@ -4141,7 +4214,7 @@ export class AgentRuntime {
           if (this.proc) await this.onJobFailure(this.proc, err);
           else
             this.d.log.error(
-              { err, agent: this.agent.slug },
+              { err, agent: this.agent.handle },
               "flush after the interrupt hold failed",
             );
         }
@@ -4242,7 +4315,7 @@ export class AgentRuntime {
     if (!this.proc) return;
     this.queue.shift();
     if (!this.proc.raw) {
-      this.d.log.error({ agent: this.agent.slug }, "the harness can't take raw input; dropped");
+      this.d.log.error({ agent: this.agent.handle }, "the harness can't take raw input; dropped");
       this.publishQueue();
       return;
     }
@@ -4310,7 +4383,7 @@ export class AgentRuntime {
     const ids = batch.map((m) => m.row.id);
     let envelopes: FactoryMessage[];
     try {
-      envelopes = toEnvelopes(batch); // inside the try: a throw here must not lose the batch
+      envelopes = await toEnvelopes(batch, (t) => this.d.store.mentionLookup(t)); // inside the try: a throw here must not lose the batch
       await proc.send(envelopes);
     } catch (err) {
       this.queue.unshift(...batch);
@@ -4349,9 +4422,9 @@ export class AgentRuntime {
       this.queue.unshift(...batch);
       throw err;
     }
-    this.d.bus.publish(this.agent.slug, {
+    this.d.bus.publish(this.agent.id, {
       type: "session_event",
-      agent: this.agent.slug,
+      agent: this.agentRef,
       event: dto,
     });
     this.lastActivityAt = Date.now();
@@ -4373,6 +4446,6 @@ export class AgentRuntime {
   /** I1 §6.5: each of these humans' chat with this agent changed (never anyone else). */
   chatChanged(userIds: Iterable<string | null>): void {
     for (const u of new Set(userIds))
-      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agent.slug });
+      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agentRef });
   }
 }

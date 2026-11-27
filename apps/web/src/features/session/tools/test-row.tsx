@@ -1,6 +1,8 @@
 import type { AnyEvent, ToolMeta } from "@open-factory/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { screen } from "@testing-library/react";
 import { useState } from "react";
+import { createQueryClient } from "@/lib/query-client";
 import { se } from "@/test/session-fixtures";
 import { buildRows, type ToolRow } from "../rows";
 import { ToolCallRow } from "../tool-call-row";
@@ -29,15 +31,17 @@ export function toolRow(
  *  sibling), toggling like the timeline does. */
 export function RowHarness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
+  // One client per mounted harness, so a test never reads what another left in the cache.
+  const [qc] = useState(() => createQueryClient({ queries: { retry: false } }));
   return (
-    <div>
+    <QueryClientProvider client={qc}>
       <ToolCallRow
         row={row}
         expanded={expanded}
         onToggle={() => setExpanded((x) => !x)}
         rowProps={{ "data-row": row.key }}
       />
-    </div>
+    </QueryClientProvider>
   );
 }
 

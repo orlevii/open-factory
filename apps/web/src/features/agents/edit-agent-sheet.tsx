@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { MentionTextarea } from "@/components/composer/mention-field";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
@@ -28,8 +29,8 @@ import {
 } from "@/components/ui/select";
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
+import { AddressLine } from "@/features/agents/address-line";
 import { PartialSaveError, useAgentFormState } from "@/features/agents/agent-form-state";
 import {
   agentsListQueryOptions,
@@ -43,7 +44,10 @@ import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ManagerCombobox } from "@/features/agents/manager-combobox";
 import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { NO_AGENT_LINE } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { undoRename } from "@/features/profile/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { credentialsQueryOptions, projectsQueryOptions } from "@/features/settings/api";
 import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
@@ -68,7 +72,7 @@ import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-st
 import { isMobileNow } from "@/hooks/use-mobile";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 
-type Spec = { kind: "edit-agent"; slug: string; at?: string };
+type Spec = { kind: "edit-agent"; agentRef: string; at?: string };
 
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const andList = (items: string[]) =>
@@ -76,14 +80,17 @@ const andList = (items: string[]) =>
 /** A process is running, so a save that changes anything restarts it when idle (the server restarts on every field). */
 const isRunning = (a: AgentSummary) => a.status === "working" || a.status === "idle";
 /** The pages that show an agent's name in their header: a save from over one needs no toast for it. */
-const AGENT_PAGES = (slug: string) => [`/agents/${slug}/chat`, `/agents/${slug}/session`];
+const AGENT_PAGES = (agentRef: string) => [
+  `/agents/${agentRef}/chat`,
+  `/agents/${agentRef}/session`,
+];
 const SHEET_CONTENT = "[data-slot=sheet-content], [data-slot=drawer-content]";
 
-/** "@slug · Template name", wrapping, never truncated. */
+/** "@handle · Template name", wrapping, never truncated. */
 function Description({ agent }: { agent: AgentSummary }) {
   return (
     <SheetDescription className="px-4 pt-3 [overflow-wrap:anywhere]">
-      <span className="font-mono text-foreground">@{agent.slug}</span> · Template{" "}
+      <span className="font-mono text-foreground">@{agent.handle}</span> · Template{" "}
       <span className="font-mono text-foreground">{agent.template}</span>
     </SheetDescription>
   );
@@ -117,8 +124,8 @@ function Archived({ agent }: { agent: AgentSummary }) {
   async function restore() {
     if (busy.current) return;
     busy.current = true;
-    setOutcome({ tone: "pending", text: `Restoring @${agent.slug}…` });
-    const failed = await restoreAgent(agent.slug, qc, { inline: true });
+    setOutcome({ tone: "pending", text: `Restoring @${agent.handle}…` });
+    const failed = await restoreAgent(agent, qc, { inline: true });
     busy.current = false;
     setOutcome(failed ? { tone: "error", text: failed } : undefined);
   }
@@ -146,11 +153,11 @@ function Archived({ agent }: { agent: AgentSummary }) {
  * it flips to that state, and the draft (written on every change) is kept for when the form comes back.
  */
 export default function EditAgentSheet(props: BodyProps<Spec>) {
-  const { slug } = props.spec;
-  const { data, error, refetch } = useQuery(agentDetailQueryOptions(slug));
+  const { agentRef } = props.spec;
+  const { data, error, refetch } = useQuery(agentDetailQueryOptions(agentRef));
   const agent = data?.agent;
   if (error instanceof ApiError && error.code === "agent_not_found")
-    return <Plain>There is no agent @{slug}.</Plain>;
+    return <Plain>{NO_AGENT_LINE}</Plain>;
   if (!agent) {
     if (error)
       return (
@@ -170,10 +177,11 @@ export default function EditAgentSheet(props: BodyProps<Spec>) {
 
 function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: AgentSummary }) {
   const qc = useQueryClient();
-  const slug = agent.slug;
-  const draftKey = `edit-agent:${slug}` as const;
+  const agentRef = agent.ref;
+  const draftKey = `edit-agent:${agentRef}` as const;
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({ mode: "edit", agent, draftKey, form });
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const { shown, errors, set, blur, claim, pending, changes } = s;
   const { noCredentials, credentials, staleNotes } = s;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
@@ -249,37 +257,33 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   );
 
   // Who can manage: persistent agents other than this one and everything under it (picking one would make a cycle).
-  // The excluded slugs, joined: a status frame rebuilds the list but not this key, so `canManage` keeps its identity.
+  // The excluded refs, joined: a status frame rebuilds the list but not this key, so `canManage` keeps its identity.
   const excludedKey = useMemo(() => {
     const list = activeAgents.data ?? [];
-    const excluded = new Set<string>([slug]);
+    const excluded = new Set<string>([agentRef]);
     let grew = true;
     while (grew) {
       grew = false;
       for (const a of list) {
-        if (
-          a.reportsTo.kind === "agent" &&
-          excluded.has(a.reportsTo.handle) &&
-          !excluded.has(a.slug)
-        ) {
-          excluded.add(a.slug);
+        if (a.reportsTo.kind === "agent" && excluded.has(a.reportsTo.ref) && !excluded.has(a.ref)) {
+          excluded.add(a.ref);
           grew = true;
         }
       }
     }
     return [...excluded].sort().join("\n");
-  }, [activeAgents.data, slug]);
+  }, [activeAgents.data, agentRef]);
   const canManage = useMemo(() => {
     const excluded = new Set(excludedKey.split("\n"));
-    return (slug: string) => !excluded.has(slug);
+    return (agentRef: string) => !excluded.has(agentRef);
   }, [excludedKey]);
 
   const running = isRunning(agent);
   // A display name or description change also restarts the agent's live direct reports (their prompt names their
   // manager); only the running ones restart anything.
   const runningReports = (activeAgents.data ?? [])
-    .filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.handle === slug && isRunning(a))
-    .map((a) => `@${a.slug}`);
+    .filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.ref === agentRef && isRunning(a))
+    .map((a) => `@${a.handle}`);
   // A colour change is identity only: it never restarts the agent (spec §11).
   const restartFields = changes.filter((f) => f !== "color");
   const selfRestarts = running && (restartFields.length > 0 || s.modelEffortChanged);
@@ -319,14 +323,14 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     const patched = Object.keys(body).length > 0;
     let saved: AgentSummary = agent;
     try {
-      if (patched) saved = await updateAgent(slug, body);
+      if (patched) saved = await updateAgent(agentRef, body);
     } catch (err) {
       // Dismissed (or the form replaced by another state) while saving: the error has no form to land in. The draft
       // is kept for "Open form".
       if (!stillOpen() && draftGeneration() === generation)
         notify({
-          text: `Couldn't save @${slug}: ${err instanceof ApiError ? err.message : "can't reach the server."}`,
-          action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", slug }) },
+          text: `Couldn't save @${agent.handle}: ${err instanceof ApiError ? err.message : "can't reach the server."}`,
+          action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", agentRef }) },
         });
       throw err;
     }
@@ -334,18 +338,18 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     if (draftGeneration() !== generation) return undefined;
     if (patched) {
       // The response is the saved agent: show it now; the lists and the detail's queue catch up in the background.
-      qc.setQueryData(agentDetailQueryOptions(slug).queryKey, (d) =>
+      qc.setQueryData(agentDetailQueryOptions(agentRef).queryKey, (d) =>
         d ? { ...d, agent: saved } : d,
       );
       void qc.invalidateQueries({ queryKey: ["agents"] });
-      void qc.invalidateQueries({ queryKey: ["agent", slug] });
+      void qc.invalidateQueries({ queryKey: ["agent", agentRef] });
       // The Inbox chat rows carry the agent's colour.
       void qc.invalidateQueries({ queryKey: inboxQueryKey });
     }
     // The second write. When it fails the first has landed, and the outcome says which part is saved.
     if (modelEffort) {
       try {
-        await saveModelEffort(qc, slug, modelEffort);
+        await saveModelEffort(qc, agentRef, modelEffort);
       } catch (err) {
         const why = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
         const message = patched
@@ -353,8 +357,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           : `Model and Effort weren't saved: ${why}`;
         if (!stillOpen() && draftGeneration() === generation)
           notify({
-            text: `@${slug}: ${message}`,
-            action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", slug }) },
+            text: `@${agent.handle}: ${message}`,
+            action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", agentRef }) },
           });
         throw new PartialSaveError(patched ? saved : undefined, message);
       }
@@ -369,14 +373,21 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       closeSheet();
     } else if (clearDraftIf(draftKey, snapshot)) {
       const parent = getSheetState().parent;
-      if (parent?.kind === "edit-agent" && parent.slug === slug && parent.id !== sheetId)
+      if (parent?.kind === "edit-agent" && parent.agentRef === agentRef && parent.id !== sheetId)
         closeSheet();
     }
+    // A rename is announced wherever the user is, with the way back; the sheet already closed.
+    const renamed = body.handle !== undefined && body.handle !== agent.handle;
+    if (renamed)
+      notify({
+        text: `@${agent.handle} is now @${saved.handle}${saved.restartPending || restartsNow ? ". Restarts when idle." : ""}`,
+        undo: () => undoRename(agent.handle, (handle) => updateAgent(agentRef, { handle })),
+      });
     // Silent only when the session under the sheet already shows the result (its header shows the name).
-    if (saved.restartPending || restartsNow)
-      notify({ text: `Saved @${slug}. Restarts when idle.` });
-    else if (late || !AGENT_PAGES(slug).includes(spec.at ?? "") || !nameOnly)
-      notify({ text: `Saved @${slug}.` });
+    else if (saved.restartPending || restartsNow)
+      notify({ text: `Saved @${agent.handle}. Restarts when idle.` });
+    else if (late || !AGENT_PAGES(agentRef).includes(spec.at ?? "") || !nameOnly)
+      notify({ text: `Saved @${agent.handle}.` });
     return saved;
   }
 
@@ -404,8 +415,22 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             onBlur={(e) => blur("displayName", e)}
             autoComplete="off"
           />
+          <AddressLine
+            name={shown.displayName}
+            handle={shown.handle}
+            handleTouched
+            agentRef={agentRef}
+            avatar={{
+              template: agent.template,
+              avatarVersion: agent.avatarVersion,
+              color: shown.color,
+            }}
+            onHandle={(v) => set("handle", v)}
+            onBlur={(e) => blur("handle", e)}
+            error={errors.handle}
+          />
           <ColourField
-            slug={slug}
+            agentRef={agentRef}
             value={shown.color}
             onChange={(c) => set("color", c)}
             avatarVersion={agent.avatarVersion}
@@ -431,15 +456,16 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           </FieldShell>
           <FieldShell name="description" label="Description" error={errors.description}>
             {(a) => (
-              <Textarea
+              <MentionTextarea
                 id={a.id}
                 name="description"
                 rows={3}
                 data-vaul-no-drag=""
+                source={at}
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
                 value={shown.description}
-                onChange={(e) => set("description", e.target.value)}
+                onValueChange={(next) => set("description", next)}
                 onFocus={() => claim("description")}
                 onBlur={(e) => blur("description", e)}
               />

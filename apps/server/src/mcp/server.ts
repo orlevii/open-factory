@@ -1,5 +1,5 @@
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import type { AgentRow } from "@open-factory/db";
+import type { AgentRecord } from "../principals/principal-store.ts";
 
 export type { McpServer };
 
@@ -40,8 +40,8 @@ export function toolError(message: string) {
 export function createFactoryMcp(d: {
   version: string;
   onerror(err: Error): void;
-  loadCaller(agentId: string): Promise<AgentRow | undefined>;
-  tools(caller: AgentRow): ToolRegistration[];
+  loadCaller(agentId: string): Promise<AgentRecord | undefined>;
+  tools(caller: AgentRecord): ToolRegistration[];
 }) {
   // The server is built per request, so each caller gets its own tool list (spec §7.1; verified live in Task 1).
   const handler = createMcpHandler(

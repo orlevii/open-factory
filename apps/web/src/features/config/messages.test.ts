@@ -6,7 +6,6 @@ import {
   CONFIG_FIELD_MSG,
   CONFIG_PAGE_MSG,
   fileHasEdits,
-  noAgentLine,
   restartNotice,
   restartPendingLine,
   savedRestarts,
@@ -32,7 +31,6 @@ test("the page's interpolated lines (spec §12.4)", () => {
   expect(restartPendingLine("model")).toBe("Restarts when idle to apply: model.");
   expect(archivedLine("ana")).toBe("@ana is archived. Changes apply when it's restored.");
   expect(brokenTemplateLine("dev", "ana")).toBe("Template dev has errors. @ana can't start.");
-  expect(noAgentLine("x")).toBe("There is no agent @x.");
 });
 
 test("the template tab's copy and plurals (spec §12.5)", () => {

@@ -21,8 +21,8 @@ import { sessionQueryOptions } from "@/lib/session";
 import { shouldIgnore } from "@/lib/shortcuts";
 import { PREFETCH_REST_MS } from "@/lib/timing";
 import {
+  chatRefOf,
   chatRowId,
-  chatSlugOf,
   type InboxItem,
   prefetchChat,
   prefetchPane,
@@ -68,12 +68,12 @@ function interleave(
   const rows: Row[] = [];
   for (const chat of chats)
     if (oldest === undefined || chat.latest.createdAt >= oldest)
-      rows.push({ kind: "chat", id: chatRowId(chat.agent.slug), at: chat.latest.createdAt, chat });
+      rows.push({ kind: "chat", id: chatRowId(chat.agent.ref), at: chat.latest.createdAt, chat });
   for (const chat of updates)
     if (oldest === undefined || chat.latest.createdAt >= oldest)
       rows.push({
         kind: "update",
-        id: updateRowId(chat.agent.slug),
+        id: updateRowId(chat.agent.ref),
         at: chat.latest.createdAt,
         chat,
       });
@@ -116,19 +116,19 @@ export function InboxList({
   // The selected chat stays a row once it has been read (or never was unread): the last row seen, else
   // the one the route builds, shown read. The ref is written during render because the same render reads
   // it (an effect would show one frame without the row); the write is idempotent.
-  const selectedSlug = chatSlugOf(selectedId);
+  const selectedRef = chatRefOf(selectedId);
   const lastSelected = useRef<ChatRow>(undefined);
-  const inList = selectedSlug ? chats.find((c) => c.agent.slug === selectedSlug) : undefined;
+  const inList = selectedRef ? chats.find((c) => c.agent.ref === selectedRef) : undefined;
   if (inList) lastSelected.current = inList;
-  else if (lastSelected.current?.agent.slug !== selectedSlug) lastSelected.current = undefined;
+  else if (lastSelected.current?.agent.ref !== selectedRef) lastSelected.current = undefined;
 
   const live = useMemo(() => {
     const shown = [...chats];
     const fallback = lastSelected.current ?? selectedChat;
-    if (selectedSlug && !inList && fallback?.agent.slug === selectedSlug)
+    if (selectedRef && !inList && fallback?.agent.ref === selectedRef)
       shown.push({ ...fallback, unread: 0 });
     return interleave(shown, updates, items, q.hasNextPage);
-  }, [chats, updates, items, q.hasNextPage, selectedSlug, inList, selectedChat]);
+  }, [chats, updates, items, q.hasNextPage, selectedRef, inList, selectedChat]);
   const held = useHeldList(live, rowKey, asRead, selectedId);
   const rows = held.rows;
 
@@ -145,7 +145,7 @@ export function InboxList({
     (id: string | undefined) => {
       const n = id ? latest.current.find((r) => r.id === id) : undefined;
       if (n?.kind === "item") prefetchPane(qc, n.item);
-      else if (n?.kind === "chat") prefetchChat(qc, n.chat.agent.slug);
+      else if (n?.kind === "chat") prefetchChat(qc, n.chat.agent.ref);
     },
     [qc],
   );
@@ -180,18 +180,18 @@ export function InboxList({
   );
 
   const onOpenChat = useCallback(
-    (slug: string, e: MouseEvent) => {
+    (agentRef: string, e: MouseEvent) => {
       if (onSelect && plainClick(e)) {
         e.preventDefault();
-        onSelect(chatRowId(slug), false);
+        onSelect(chatRowId(agentRef), false);
       }
     },
     [onSelect],
   );
 
   const onOpenUpdate = useCallback(
-    (slug: string) => {
-      const row = latest.current.find((r) => r.id === updateRowId(slug));
+    (agentRef: string) => {
+      const row = latest.current.find((r) => r.id === updateRowId(agentRef));
       if (row?.kind === "update") openUpdate(row.chat);
     },
     [openUpdate],
@@ -212,7 +212,7 @@ export function InboxList({
     if (!target) return;
     // On a chat, Enter and `r` also move focus to the pane's composer (it never takes it by itself).
     if (target.kind === "chat" && (e.key === "Enter" || e.key === "r")) {
-      requestComposerFocus(target.chat.agent.slug);
+      requestComposerFocus(target.chat.agent.ref);
       if (e.key === "Enter") return; // the link's own click selects it
       e.preventDefault();
       runInstantOn(el, () => onSelect(target.id, false));

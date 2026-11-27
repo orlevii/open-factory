@@ -3,14 +3,14 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 
 /** S9 UI design §4.2: names the crons lost; the button names the action. Failures stay in the dialog's alert line. */
 export function StopCronsDialog({
-  slug,
+  handle,
   crons,
   open,
   onOpenChange,
   onConfirm,
   onCloseAutoFocus,
 }: {
-  slug: string;
+  handle: string;
   crons: LiveCron[];
   open: boolean;
   onOpenChange(o: boolean): void;
@@ -22,7 +22,7 @@ export function StopCronsDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Stop @${slug}'s crons?`}
+      title={`Stop @${handle}'s crons?`}
       body={
         <>
           These crons stop and can't be restored:
@@ -34,7 +34,7 @@ export function StopCronsDialog({
               </span>
             ))}
           </span>
-          @{slug} hibernates now, or when its current work finishes, and is told you stopped them.
+          @{handle} hibernates now, or when its current work finishes, and is told you stopped them.
         </>
       }
       confirmLabel={label}

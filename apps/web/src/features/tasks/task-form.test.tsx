@@ -5,6 +5,7 @@ import { notify } from "@/components/ui/toaster";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { pickComboOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -45,7 +46,7 @@ const openMore = async () =>
 
 const agents = () =>
   json({
-    agents: [agentSummary({ slug: "dev", displayName: "Dev" })],
+    agents: [agentSummary({ handle: "dev", displayName: "Dev" })],
     more: false,
     running: { count: 0 },
   });
@@ -55,7 +56,7 @@ const summary = (n: number, status = "open") => ({
   status,
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: "2026-11-19T10:00:00.000Z",
 });
 const detail = (n: number) => ({
@@ -190,7 +191,7 @@ test("creating sends the task, closes the sheet and toasts; the button reads Cre
   expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
     title: "Plan",
     body: "",
-    assignee: "dev",
+    assignee: refFor("dev"),
     dependsOn: [],
     links: [],
   });
@@ -291,8 +292,8 @@ test("arrow keys in the Assignee picker don't assign; Enter does", async () => {
     "GET /api/agents?": () =>
       json({
         agents: [
-          agentSummary({ slug: "dev", displayName: "Dev" }),
-          agentSummary({ slug: "qa", displayName: "QA" }),
+          agentSummary({ handle: "dev", displayName: "Dev" }),
+          agentSummary({ handle: "qa", displayName: "QA" }),
         ],
         more: false,
         running: { count: 0 },
@@ -548,7 +549,7 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
     "GET /api/agents?": (_b, url) =>
       url.includes("ended=only")
         ? json({
-            agents: [agentSummary({ slug: "ada", displayName: "Ada" })],
+            agents: [agentSummary({ handle: "ada", displayName: "Ada" })],
             more: false,
             running: { count: 0 },
           })
@@ -556,7 +557,7 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
     "POST /api/tasks": () => json({ task: detail(42) }, 201),
   });
   renderApp("/tasks", alice);
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
+  act(() => openSheet({ kind: "new-task", assignee: refFor("ada") }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   expect(await assigneeField()).toHaveAttribute("aria-invalid", "true");
   await userEvent.type(screen.getByLabelText("Title"), "Plan");

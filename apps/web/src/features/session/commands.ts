@@ -15,12 +15,12 @@ import { formatTime } from "./format";
 /** The list changes only when the agent's process starts, so an opening menu refreshes it at most this often. */
 const COMMANDS_STALE_MS = 30_000;
 
-/** `GET /api/agents/:slug/commands` (U3 §13.3): the allowed set, prefetched when the session opens (m11). */
-export const commandsQueryOptions = (slug: string) =>
+/** `GET /api/agents/:agentRef/commands` (U3 §13.3): the allowed set, prefetched when the session opens (m11). */
+export const commandsQueryOptions = (agentRef: string) =>
   queryOptions({
-    queryKey: ["agent-commands", slug],
+    queryKey: ["agent-commands", agentRef],
     queryFn: ({ signal }) =>
-      apiFetch(`/api/agents/${encodeURIComponent(slug)}/commands`, {
+      apiFetch(`/api/agents/${encodeURIComponent(agentRef)}/commands`, {
         schema: agentCommandsResponseSchema,
         signal,
       }),
@@ -173,8 +173,8 @@ const toItem = ({ command: c, alias, prefix, exact }: RankedCommand): Completion
  * is the server's list, for autocomplete only: accepting a row inserts `/name `, and everything sent
  * goes to `/input` as typed.
  */
-export function commandSource(qc: QueryClient, slug: string): CompletionSource {
-  const key = commandsQueryOptions(slug).queryKey;
+export function commandSource(qc: QueryClient, agentRef: string): CompletionSource {
+  const key = commandsQueryOptions(agentRef).queryKey;
   const read = () => qc.getQueryData<AgentCommandsResponse>(key);
   return {
     trigger: "/",
@@ -218,11 +218,11 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
     // While the menu is open: the list loads if the prefetch hasn't (or is stale), an invalidation
     // (the agent started) fetches it again, and its arrival re-reads the rows without a keystroke.
     watch(onChange) {
-      void qc.prefetchQuery(commandsQueryOptions(slug));
+      void qc.prefetchQuery(commandsQueryOptions(agentRef));
       const hash = hashKey(key);
       return qc.getQueryCache().subscribe((e) => {
         if (e.type === "updated" && e.action.type === "invalidate" && e.query.queryHash === hash)
-          void qc.prefetchQuery(commandsQueryOptions(slug));
+          void qc.prefetchQuery(commandsQueryOptions(agentRef));
         // A failed GET decides too (a stored command then stays text).
         if (
           e.type === "updated" &&
@@ -236,7 +236,7 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
 }
 
 /** One `/` source per agent: identity-stable, so it never breaks the composer's `memo` (M3). */
-export function useCommandSource(slug: string): CompletionSource {
+export function useCommandSource(agentRef: string): CompletionSource {
   const qc = useQueryClient();
-  return useMemo(() => commandSource(qc, slug), [qc, slug]);
+  return useMemo(() => commandSource(qc, agentRef), [qc, agentRef]);
 }

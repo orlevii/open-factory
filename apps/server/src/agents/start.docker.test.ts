@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import { createFakeClaude, type FakeScenario } from "@open-factory/harness/testing";
 import { type AnyEvent, templateYamlSchema } from "@open-factory/shared";
@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import {
   ContainerManager,
   containerName,
@@ -24,9 +25,15 @@ import {
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle, claimTestHandleSql, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
+import {
+  principalSql,
+  refOfHandle,
+  seedTestPrincipal,
+  testManagerUserId,
+  testRef,
+} from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -55,8 +62,8 @@ let seq = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -74,12 +81,13 @@ interface World {
   containers: ContainerManager;
   runtimes: AgentRuntimes;
   rt: AgentRuntime;
-  agent: AgentRow;
+  agent: AgentRecord;
   workspace: Workspace;
   prepareStart: PrepareStart;
   cliBundle: string;
   fakeBin: string;
   fakeLog: () => { kind: string; code?: number }[];
+  ref: string;
   workdir: string;
 }
 let world: World | undefined;
@@ -110,7 +118,7 @@ async function setup(
   const hs = realpathSync(mkdtempSync(path.join(tmpdir(), "hs-")));
   const cliBundle = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), "cli-"))), "of.js");
   writeFileSync(cliBundle, "//");
-  const slug = `dock-${seq}`;
+  const handle = `dock-${seq}`;
   const config = templateYamlSchema.parse({
     name: "dock",
     display_name: "Dock",
@@ -137,18 +145,17 @@ async function setup(
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
-  await claimTestHandle(t.db, slug, "agent");
+  const { ref } = await seedTestPrincipal(t.db, "agent", handle, `0123abcd-${seq}`);
   const [agent] = await t.db
     .insert(schema.agents)
     .values({
       id: `0123abcd-${seq}`,
-      slug,
       displayName: "Dock",
       template: "dock",
       config: {},
       runtime: "docker",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
   if (!agent) throw new Error("seed failed");
@@ -162,17 +169,16 @@ async function setup(
     lock,
   });
   const input = {
-    slug,
+    handle: handle,
     displayName: "Dock",
     description: "",
     template: "dock",
     config,
-    manager: { kind: "user" as const, handle: "or", name: "Or" },
+    manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
     grants: [],
   };
   await workspace.materialize(
-    agent.id,
-    slug,
+    ref,
     { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } },
     input,
   );
@@ -248,20 +254,21 @@ async function setup(
       }),
     },
   });
-  const rt = await runtimes.bySlug(slug);
+  const rt = await runtimes.byRef(await refOfHandle(t.db, handle));
   if (!rt) throw new Error("no runtime");
   world = {
     docker,
     containers,
     runtimes,
     rt,
-    agent,
+    agent: { ...agent, handle, ref: testRef(agent.id) },
     workspace,
     prepareStart,
     cliBundle,
     fakeBin: fake.bin,
     fakeLog: () => fake.log(),
-    workdir: workspace.workdir(slug),
+    ref,
+    workdir: workspace.workdir(ref),
   };
   return world;
 }
@@ -277,7 +284,7 @@ const execRuns = (w: World) =>
   w.docker.calls
     .filter((c) => c.op === "execRun")
     .map((c) => (c.args[1] as { cmd: string[]; user: string }).cmd);
-const container = (w: World) => w.docker.containers.get(containerName(w.agent.slug, w.agent.id));
+const container = (w: World) => w.docker.containers.get(containerName(w.ref));
 
 /** A started agent whose turn ended. */
 async function idleAgent(w: World) {
@@ -289,7 +296,7 @@ test("a Docker wake stops a running container, prepares, ensures, then execs", a
   const w = await setup();
   // A container left running (a missed reconciliation): it must be stopped before anything is prepared.
   const left = await w.docker.create({
-    name: containerName(w.agent.slug, w.agent.id),
+    name: containerName(w.ref),
     Labels: { [LABEL_AGENT_ID]: w.agent.id },
   });
   await w.docker.start(left);

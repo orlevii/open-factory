@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
@@ -7,27 +6,41 @@ import {
   type AgentOverlay,
   type AgentSummary,
   actorBy,
+  actorMention,
   agentOverlaySchema,
   agentPolicyIssues,
   type ConfigDoc,
   type CreateAgentBody,
+  handleSchema,
   LOCAL_RUNTIME_REFUSAL,
   nameSchema,
   type PatchAgentBody,
   type PutAgentConfigResponse,
   type ReportsTo,
   type ResolvedValue,
-  slugSchema,
   touchesLocalRuntime,
   treeOrder,
 } from "@open-factory/shared";
+import { agentMentionOf, unknownRefError } from "@open-factory/shared/mentions";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { isSlugUnique } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
-import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
+import { resolveAgentArg, resolveArg } from "../principals/principal-args.ts";
+import type { PublishPrincipal } from "../principals/principal-events.ts";
+import {
+  agentRowByRef,
+  createPrincipal,
+  HandleTakenError,
+  isHandleTaken,
+  mentionOfPrincipal,
+  type Principal,
+  principalById,
+  principalsByHandles,
+  principalsByIds,
+} from "../principals/principal-store.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { avatarStat } from "../templates/avatar.ts";
@@ -55,20 +68,30 @@ export type UpdatePlan = {
 /** A subject with no neighbours to leave behind (a join reads the neighbourhood after the change). */
 const noPeers = { managerId: null, peerIds: [] };
 
-type Managers = { agents: Map<string, string>; users: Map<string, string> };
+/** The principals a set of rows name as their manager or terminator, by id. */
+type Managers = Map<string, Principal>;
 
-/** The row's manager as the DTO says it: an agent's slug or a user's handle (a spawned agent's is its spawner). */
+/** The row's manager as the DTO says it (a spawned agent's is its spawner). */
 function reportsToOf(r: AgentRow, m: Managers): ReportsTo {
-  if (r.reportsTo) return { kind: "agent", handle: m.agents.get(r.reportsTo) ?? "" };
-  return { kind: "user", handle: m.users.get(r.reportsToUser ?? "") ?? "" };
+  const p = m.get(r.reportsTo);
+  // The FK makes a miss impossible.
+  if (!p) throw new Error(`agent ${r.id} reports to unknown principal ${r.reportsTo}`);
+  return { kind: p.kind, ref: p.ref, handle: p.handle };
+}
+
+/** The agent's own principal (its ref and handle); the FK makes a miss impossible. */
+function principalOf(r: AgentRow, m: Managers): Principal {
+  const p = m.get(r.id);
+  if (!p) throw new Error(`agent ${r.id} has no principal`);
+  return p;
 }
 
 /** A resolved manager: an active persistent agent, or an enabled user. */
 type Manager =
-  | { kind: "agent"; row: AgentRow }
-  | { kind: "user"; id: string; handle: string; name: string };
+  | { kind: "agent"; row: AgentRow; ref: string; handle: string }
+  | { kind: "human"; id: string; ref: string; handle: string; name: string };
 
-const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
+const handleTaken = () => new FieldError("handle", FIELD_MSG.handleTaken, "handle_taken");
 
 /** A materialize failure as the API's: the template's folders didn't pass the workspace checks. */
 function materializeFailure(err: unknown, actor: Actor): unknown {
@@ -84,15 +107,17 @@ function materializeFailure(err: unknown, actor: Actor): unknown {
 }
 
 /** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
-function spawnedMessage(spawner: string, slugs: string[]): string {
-  return `@${spawner} has live spawned agents: ${slugs.map((s) => `@${s}`).join(", ")}. Terminate them first.`;
+function spawnedMessage(spawner: string, handles: string[]): string {
+  return `@${spawner} has live spawned agents: ${handles.map((h) => `@${h}`).join(", ")}. Terminate them first.`;
 }
 
-function reportsMessage(slugs: string[]): string {
-  const tags = slugs.map((s) => `@${s}`);
+function reportsMessage(handles: string[]): string {
+  const mentions = handles.map((h) => `@${h}`);
   const who =
-    tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags[tags.length - 1]}`;
-  return `${who} ${tags.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
+    mentions.length === 1
+      ? mentions[0]
+      : `${mentions.slice(0, -1).join(", ")} and ${mentions[mentions.length - 1]}`;
+  return `${who} ${mentions.length === 1 ? "reports" : "report"} to this agent. Change their manager first.`;
 }
 
 /** The ended list's cap (S7 §14): the newest 200; one more row is read to know whether older ones exist. */
@@ -113,11 +138,12 @@ export function endedAgentsQuery(db: Exec) {
 }
 
 /** S7 §14: a terminated agent's fields; the grace end only while its workspace still exists. */
-function terminationFields(r: AgentRow) {
+function terminationFields(r: AgentRow, m: Managers) {
   if (!r.terminatedAt) return {};
+  const by = r.terminatedBy ? m.get(r.terminatedBy) : undefined;
   return {
     terminatedAt: r.terminatedAt.toISOString(),
-    ...(r.terminatedBy ? { terminatedBy: r.terminatedBy } : {}),
+    terminatedBy: by ? { ref: by.ref, handle: by.handle } : null,
     workspacePinned: r.workspacePinned,
     ...(r.workspaceDeletedAt
       ? { workspaceDeletedAt: r.workspaceDeletedAt.toISOString() }
@@ -147,6 +173,8 @@ export class AgentService {
       /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
       store: Pick<EventStore, "append">;
       bus: Pick<EventBus, "publishAll">;
+      /** Tells the browsers a principal was created or changed; called after the change committed. */
+      publishPrincipal: PublishPrincipal;
       /** I2 §7.2: an overlay save writes its event and notice and schedules the restart check here. */
       configChanges: Pick<ConfigChanges, "overlaySaved">;
       /** The factory's local-runtime gate (`config.allowLocalRuntime`), read live. */
@@ -172,9 +200,9 @@ export class AgentService {
     }
   }
 
-  /** The `by` of a peer event (spec I7 §8.2): an agent actor's `@slug`; a human's act is visible in the UI. */
+  /** The `by` of a peer event (spec I7 §8.2): an agent actor's mention; a human's act is visible in the UI. */
   private byOf(actor: Actor): { by?: string } {
-    return actor.kind === "agent" ? { by: actorBy(actor) } : {};
+    return actor.kind === "agent" ? { by: actorMention(actor) } : {};
   }
 
   /** I7 §8.3: the human bus hears of an agent actor's create, archive or unarchive, after the commit. */
@@ -212,44 +240,32 @@ export class AgentService {
     const managers = await this.managersOf(rows);
     const order = treeOrder(
       rows.map((r) => ({
-        slug: r.slug,
+        ref: principalOf(r, managers).ref,
+        handle: principalOf(r, managers).handle,
         displayName: r.displayName,
         reportsTo: reportsToOf(r, managers),
       })),
     );
-    const bySlug = new Map(rows.map((r) => [r.slug, r]));
+    const byRef = new Map(rows.map((r) => [principalOf(r, managers).ref, r]));
     return this.summarize(
-      order.map(({ slug, depth }) => {
-        const row = bySlug.get(slug);
-        if (!row) throw new Error("tree order returned an unknown slug");
+      order.map(({ ref, depth }) => {
+        const row = byRef.get(ref);
+        if (!row) throw new Error("tree order returned an unknown ref");
         return { row, depth };
       }),
       managers,
     );
   }
 
-  /** The managers' handles of `rows`, agents and users, read for those managers only. */
+  /** The principals of `rows`, their managers and their terminators, read for those principals only. */
   private async managersOf(rows: AgentRow[]): Promise<Managers> {
-    const agentIds = [...new Set(rows.flatMap((r) => (r.reportsTo ? [r.reportsTo] : [])))];
-    const userIds = [...new Set(rows.flatMap((r) => (r.reportsToUser ? [r.reportsToUser] : [])))];
-    const [agents, users] = await Promise.all([
-      agentIds.length
-        ? this.d.db
-            .select({ id: schema.agents.id, handle: schema.agents.slug })
-            .from(schema.agents)
-            .where(inArray(schema.agents.id, agentIds))
-        : [],
-      userIds.length
-        ? this.d.db
-            .select({ id: schema.users.id, handle: schema.users.handle })
-            .from(schema.users)
-            .where(inArray(schema.users.id, userIds))
-        : [],
-    ]);
-    return {
-      agents: new Map(agents.map((m) => [m.id, m.handle])),
-      users: new Map(users.map((m) => [m.id, m.handle])),
-    };
+    const ids = new Set<string>();
+    for (const r of rows) {
+      ids.add(r.id);
+      ids.add(r.reportsTo);
+      if (r.terminatedBy) ids.add(r.terminatedBy);
+    }
+    return principalsByIds(this.d.db, [...ids]);
   }
 
   /** I9 §4.6: each shown agent's model and effort, from its overlay, else the template's last valid doc, else neither. */
@@ -377,7 +393,8 @@ export class AgentService {
 
     return Promise.all(
       shown.map(async ({ row: r, depth }) => ({
-        slug: r.slug,
+        ref: principalOf(r, managers).ref,
+        handle: principalOf(r, managers).handle,
         displayName: r.displayName,
         description: r.description,
         kind: r.kind as "persistent" | "ephemeral",
@@ -396,21 +413,21 @@ export class AgentService {
         projects: (projectsOf.get(r.id) ?? []).sort(),
         depth,
         archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
-        ...terminationFields(r),
+        ...terminationFields(r, managers),
         ...(await this.d.runtimes.liveFields(r.id, r)),
       })),
     );
   }
 
   /** A live agent's summary comes from the live tree (its depth); an ended one's is read alone. */
-  async summary(slug: string): Promise<AgentSummary> {
-    const [row] = await this.d.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-    if (!row) throw this.notFound(slug);
+  async summary(ref: string): Promise<AgentSummary> {
+    const row = await agentRowByRef(this.d.db, ref);
+    if (!row) throw this.notFound();
     const found =
       row.archivedAt || row.terminatedAt
         ? (await this.summarize([{ row, depth: 0 }]))[0]
-        : (await this.listLive()).find((a) => a.slug === slug);
-    if (!found) throw this.notFound(slug);
+        : (await this.listLive()).find((a) => a.ref === ref);
+    if (!found) throw this.notFound();
     return found;
   }
 
@@ -497,13 +514,13 @@ export class AgentService {
     }
   }
 
-  private notFound(slug: string) {
-    return new ApiError(404, "agent_not_found", `No agent named ${slug}`);
+  private notFound() {
+    return new ApiError(404, "agent_not_found", "No agent at this ref");
   }
 
-  private async rowBySlug(slug: string): Promise<AgentRow> {
-    const [row] = await this.d.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-    if (!row) throw this.notFound(slug);
+  private async rowByRef(ref: string): Promise<AgentRow> {
+    const row = await agentRowByRef(this.d.db, ref);
+    if (!row) throw this.notFound();
     return row;
   }
 
@@ -518,7 +535,7 @@ export class AgentService {
 
   /** In the write transaction: a human manager is still enabled (FOR SHARE serializes with a disable). */
   private async assertUserEnabled(tx: Tx, manager: Manager | undefined) {
-    if (manager?.kind !== "user") return;
+    if (manager?.kind !== "human") return;
     const rows = await tx
       .select({ id: schema.users.id })
       .from(schema.users)
@@ -527,24 +544,54 @@ export class AgentService {
     if (!rows.length) throw new FieldError("reportsTo", FIELD_MSG.chooseManager);
   }
 
-  /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
-  private async resolveManager(handle: string): Promise<Manager> {
+  /**
+   * The agent an org tool's argument names (a mention, a ref or a handle), for the services that take refs, with the
+   * plain-mention warning when it was a plain handle. A ref nobody holds is refused with the fix-it sentence; a name that
+   * isn't an agent is a 404.
+   */
+  async agentOf(
+    raw: string,
+  ): Promise<{ ref: string; handle: string; mention: string; warning?: string }> {
+    const r = await resolveAgentArg(this.d.db, raw);
+    if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
+    if (r.kind === "not_agent")
+      throw new ApiError(404, "agent_not_found", `No agent named ${r.name}`);
+    return {
+      ref: r.ref,
+      handle: r.handle,
+      mention: agentMentionOf({ ref: r.ref, handle: r.handle }),
+      ...(r.warning ? { warning: r.warning } : {}),
+    };
+  }
+
+  /** `agentOf` for a manager, who may be an agent or a person: an agent writer's unknown ref gets the fix-it sentence. */
+  async managerHandleOf(raw: string): Promise<{ handle: string; warning?: string }> {
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
+    if (r.kind === "principal")
+      return { handle: r.p.handle, ...(r.warning ? { warning: r.warning } : {}) };
+    return { handle: raw.trim().replace(/^@/, "") };
+  }
+
+  private async resolveManager(raw: string): Promise<Manager> {
     const refuse = () => new FieldError("reportsTo", FIELD_MSG.chooseManager);
-    const kind = await handleKind(this.d.db, handle);
-    if (kind === "user") {
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind !== "principal") throw refuse();
+    const { p } = r;
+    if (p.kind === "human") {
       const [u] = await this.d.db
-        .select({ id: schema.users.id, handle: schema.users.handle, name: schema.users.name })
+        .select({ id: schema.users.id, name: schema.users.name })
         .from(schema.users)
-        .where(and(eq(schema.users.handle, handle), isNull(schema.users.disabledAt)));
+        .where(and(eq(schema.users.id, p.id), isNull(schema.users.disabledAt)));
       if (!u) throw refuse();
-      return { kind: "user", ...u };
+      return { kind: "human", ...u, ref: p.ref, handle: p.handle };
     }
     const [m] = await this.d.db
       .select()
       .from(schema.agents)
       .where(
         and(
-          eq(schema.agents.slug, handle),
+          eq(schema.agents.id, p.id),
           eq(schema.agents.kind, "persistent"),
           isNull(schema.agents.archivedAt),
           isNull(schema.agents.terminatedAt),
@@ -552,7 +599,7 @@ export class AgentService {
       );
     // S7 §9.3: no spawned managers, so reports never hang under an agent that gets terminated.
     if (!m) throw refuse();
-    return { kind: "agent", row: m };
+    return { kind: "agent", row: m, ref: p.ref, handle: p.handle };
   }
 
   /** Registered projects by name, in the order given; the first unknown name is a field error. */
@@ -618,23 +665,31 @@ export class AgentService {
   async create(
     b: CreateAgentBody & { config?: AgentOverlay },
     actor: Actor,
+    warnings: string[] = [],
   ): Promise<AgentSummary> {
-    const slugOk = slugSchema.safeParse(b.slug);
-    if (!slugOk.success)
-      throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
+    const handleOk = handleSchema.safeParse(b.handle);
+    if (!handleOk.success)
+      throw new FieldError("handle", handleOk.error.issues[0]?.message ?? FIELD_MSG.handleInvalid);
     if (b.manageOrg !== undefined && actor.kind === "agent")
       throw new OrgRefusedError("Only a human can grant manage_org.");
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor);
-    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor));
+    return this.d.lock.run(`create:${b.handle}`, () => this.createLocked(b, actor, warnings));
   }
 
   private async createLocked(
     b: CreateAgentBody & { config?: AgentOverlay },
     actor: Actor,
+    warnings: string[],
   ): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
-    if (await handleKind(db, b.slug)) throw slugTaken();
+    // The cheap pre-read before materialising; the principal insert in the transaction is the guarantee (spec §4.1).
+    if ((await principalsByHandles(db, [b.handle])).size) throw handleTaken();
+    // Spec §4.3: the description's mentions are stored as `<@ref>`; an unknown ref refuses the create.
+    b = {
+      ...b,
+      description: (await resolveField(db, b.description, actor.kind, "description", warnings))
+        .text,
+    };
     const tpl = await this.d.templates.loadValid(b.template);
     // Re-check under the lock against the template as just parsed: last_valid may have moved since the pre-check.
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor, tpl.config.runtime);
@@ -644,34 +699,40 @@ export class AgentService {
     const config = b.config ? await this.checkedOverlay(b.config, tpl, actor) : {};
 
     const prep: MaterializeCheck = {
-      slug: b.slug,
+      handle: b.handle,
       displayName: b.displayName,
       description: b.description,
       template: b.template,
       config: tpl.config,
       manager:
         manager.kind === "agent"
-          ? { kind: "agent", slug: manager.row.slug, displayName: manager.row.displayName }
-          : { kind: "user", handle: manager.handle, name: manager.name },
+          ? {
+              kind: "agent",
+              ref: manager.ref,
+              handle: manager.handle,
+              displayName: manager.row.displayName,
+            }
+          : { kind: "human", ref: manager.ref, handle: manager.handle, name: manager.name },
       grants: projects.map((p) => ({ name: p.name, hostPath: p.hostPath })),
     };
+    // Spec §4.4: the principal first (it settles the handle and gives the ref the folder is named by), then the
+    // folder under the ref's lock, then the rows. A failure after the folder removes it; the rollback removes the
+    // principal.
+    const made: { ref?: string; stage: "principal" | "folder" | "rows" } = { stage: "principal" };
+    let id: string;
     try {
-      await workspace.lock.run(b.slug, () => workspace.materialize(b.slug, b.slug, tpl, prep));
-    } catch (err) {
-      // folder_exists means the folder isn't ours: leave it alone.
-      if (!(err instanceof FieldError && err.code === "folder_exists"))
-        await workspace.discard(b.slug).catch(() => {});
-      throw materializeFailure(err, actor);
-    }
-
-    const id = randomUUID();
-    try {
-      await db.transaction(async (tx) => {
-        if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
+      id = await db.transaction(async (tx) => {
+        const principal = await createPrincipal(tx, "agent", b.handle);
+        const { id } = principal;
+        made.ref = principal.ref;
+        made.stage = "folder";
+        await workspace.lock.run(principal.ref, () =>
+          workspace.materialize(principal.ref, tpl, prep),
+        );
+        made.stage = "rows";
         await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
-          slug: b.slug,
           displayName: b.displayName,
           description: b.description,
           descriptionBy: actor.kind === "agent" ? actor.id : null,
@@ -679,8 +740,7 @@ export class AgentService {
           // I2 §5.1: the overlay starts empty (the agent runs the live template) unless the creator gave one.
           config,
           runtime: tpl.config.runtime,
-          reportsTo: manager.kind === "agent" ? manager.row.id : null,
-          reportsToUser: manager.kind === "user" ? manager.id : null,
+          reportsTo: manager.kind === "agent" ? manager.row.id : manager.id,
           credentialId,
           manageOrg: b.manageOrg ?? false,
         });
@@ -688,15 +748,22 @@ export class AgentService {
           await tx
             .insert(schema.agentProjectGrants)
             .values(projects.map((p) => ({ agentId: id, projectId: p.id })));
+        return id;
       });
     } catch (err) {
-      await workspace.discard(b.slug).catch(() => {});
-      if (isSlugUnique(err)) throw slugTaken();
-      throw err;
+      if (err instanceof HandleTakenError) throw handleTaken();
+      // folder_exists means the folder isn't ours: leave it alone.
+      const foreign = err instanceof FieldError && err.code === "folder_exists";
+      if (made.ref && made.stage !== "principal" && !foreign)
+        await workspace.discard(made.ref).catch(() => {});
+      throw made.stage === "folder" ? materializeFailure(err, actor) : err;
     }
     await this.peerEvents(id, { kind: "joined", ...this.byOf(actor) }, noPeers);
-    this.orgAction(actor, "agent_created", b.slug);
-    return this.summary(b.slug);
+    const ref = made.ref;
+    if (!ref) throw new Error("create finished without a principal");
+    await this.d.publishPrincipal(id);
+    this.orgAction(actor, "agent_created", ref);
+    return this.summary(ref);
   }
 
   /**
@@ -727,8 +794,13 @@ export class AgentService {
     return parsed.data;
   }
 
-  async update(slug: string, b: PatchAgentBody, actor: Actor): Promise<AgentSummary> {
-    const plan = await this.planUpdate(slug, b, actor);
+  async update(
+    ref: string,
+    b: PatchAgentBody,
+    actor: Actor,
+    warnings: string[] = [],
+  ): Promise<AgentSummary> {
+    const plan = await this.planUpdate(ref, b, actor, warnings);
     await this.d.db.transaction(async (tx) => {
       await this.lockAgent(tx, plan.row.id);
       await plan.write(tx);
@@ -743,21 +815,22 @@ export class AgentService {
    * requests of both run after the commit.
    */
   async updateWithOverlay(
-    slug: string,
+    ref: string,
     b: PatchAgentBody,
     c: OverlayPlan | undefined,
     actor: Actor,
+    warnings: string[] = [],
   ): Promise<{ agent: AgentSummary; config?: PutAgentConfigResponse }> {
-    const u = await this.planUpdate(slug, b, actor);
+    const u = await this.planUpdate(ref, b, actor, warnings);
     await this.d.db.transaction(async (tx) => {
       const locked = await this.lockAgent(tx, u.row.id);
-      if (!locked) throw this.notFound(slug);
+      if (!locked) throw this.notFound();
       await c?.write(tx, locked);
       await u.write(tx);
     });
     // The manager notice goes to the manager as committed, which the identity half may have just changed.
     // (`after` closes over this same row object.)
-    if (c) c.row.reportsTo = (await this.rowBySlug(slug)).reportsTo;
+    if (c) c.row.reportsTo = (await this.rowByRef(ref)).reportsTo;
     const config = await c?.after();
     return { agent: await u.after(), ...(config ? { config } : {}) };
   }
@@ -767,11 +840,16 @@ export class AgentService {
    * the caller's transaction after it locked the row (it locks nothing itself), `after()` the refresh, peer events and
    * restarts once that commits.
    */
-  async planUpdate(slug: string, b: PatchAgentBody, actor: Actor): Promise<UpdatePlan> {
+  async planUpdate(
+    ref: string,
+    b: PatchAgentBody,
+    actor: Actor,
+    warnings: string[] = [],
+  ): Promise<UpdatePlan> {
     const { db, runtimes } = this.d;
     if (b.manageOrg !== undefined && actor.kind === "agent")
       throw new OrgRefusedError("Only a human can grant manage_org.");
-    const row = await this.rowBySlug(slug);
+    const row = await this.rowByRef(ref);
     this.assertPersistent(row);
     this.assertNotLocal(actor, { agentRuntime: row.runtime });
     const currentGrants = await this.grantNames(row.id);
@@ -784,8 +862,13 @@ export class AgentService {
       set.displayName = b.displayName;
       changed.text = true;
     }
-    if (b.description !== undefined && b.description !== row.description) {
-      set.description = b.description;
+    // Spec §4.3: the description's mentions are stored as `<@ref>`; an unknown ref refuses the change.
+    const description =
+      b.description === undefined
+        ? undefined
+        : (await resolveField(db, b.description, actor.kind, "description", warnings)).text;
+    if (description !== undefined && description !== row.description) {
+      set.description = description;
       set.descriptionBy = actor.kind === "agent" ? actor.id : null;
       changed.text = true;
     }
@@ -798,6 +881,9 @@ export class AgentService {
       set.runtime = b.runtime;
       changed.feeds = true;
     }
+    // A handle is the principal's, not the agent's: written to `principals`, never feeds the process, so it restarts nothing.
+    const renamed =
+      b.handle !== undefined && b.handle !== (await this.handleOfId(row.id)) ? b.handle : undefined;
     // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.
     if (b.color !== undefined && b.color !== row.color) set.color = b.color;
     if (b.credential !== undefined) {
@@ -810,14 +896,12 @@ export class AgentService {
     if (b.reportsTo !== undefined) {
       const manager = await this.resolveManager(b.reportsTo);
       if (manager.kind === "agent") await this.assertNoCycle(row.id, manager.row);
-      const same =
-        manager.kind === "agent"
-          ? manager.row.id === row.reportsTo
-          : manager.id === row.reportsToUser;
-      if (!same) {
-        set.reportsTo = manager.kind === "agent" ? manager.row.id : null;
-        set.reportsToUser = manager.kind === "user" ? manager.id : null;
-        moved = { to: manager.kind === "agent" ? manager.row.slug : manager.handle };
+      const managerId = manager.kind === "agent" ? manager.row.id : manager.id;
+      if (managerId !== row.reportsTo) {
+        set.reportsTo = managerId;
+        moved = {
+          to: await mentionOfPrincipal(db, manager.kind === "agent" ? manager.row.id : manager.id),
+        };
         movedTo = manager;
         changed.feeds = true;
       }
@@ -837,13 +921,17 @@ export class AgentService {
       row,
       write: async (tx) => {
         await this.assertUserEnabled(tx, movedTo);
+        if (renamed !== undefined) await this.rename(tx, row.id, renamed);
         if (Object.keys(set).length)
           await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
         if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
         children = await this.syncChildren(tx, row.id);
       },
       after: async () => {
+        // After a rename the loaded runtime's cached handle is stale (it names the agent in refusals and logs).
         await runtimes.refresh(row.id);
+        if (renamed !== undefined || set.displayName !== undefined || set.color !== undefined)
+          await this.d.publishPrincipal(row.id);
         await this.applyToChildren(children);
         if (moved && before)
           await this.peerEvents(
@@ -864,9 +952,19 @@ export class AgentService {
             .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
           for (const r of reports) await runtimes.requestRestart(r.id);
         }
-        return this.summary(slug);
+        return this.summary(ref);
       },
     };
+  }
+
+  /** Writes the agent's new handle in the caller's transaction; a handle another principal holds is a field error. */
+  private async rename(tx: Tx, id: string, handle: string) {
+    try {
+      await tx.update(schema.principals).set({ handle }).where(eq(schema.principals.id, id));
+    } catch (err) {
+      if (isHandleTaken(err)) throw handleTaken();
+      throw err;
+    }
   }
 
   private async grantNames(agentId: string): Promise<string[]> {
@@ -904,15 +1002,28 @@ export class AgentService {
     }
   }
 
+  private async handleOfId(agentId: string): Promise<string> {
+    const p = await principalById(this.d.db, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.handle;
+  }
+
+  /** The ref its workdir, container and workspace lock are named by (spec §4.4). */
+  private async refOf(agentId: string): Promise<string> {
+    const p = await principalById(this.d.db, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.ref;
+  }
+
   /** Fails closed: a Docker agent whose container state can't be read (Docker down) is treated as running. */
   private async containerRunning(row: AgentRow): Promise<boolean> {
     if (row.runtime !== "docker") return false;
     if (!this.d.containers) return true;
     try {
-      return await this.d.containers.isRunning(row.id, row.slug);
+      return await this.d.containers.isRunning(row.id, await this.refOf(row.id));
     } catch (err) {
       this.d.log.warn(
-        { err, agent: row.slug },
+        { err, agent: row.id },
         "couldn't check the container; staging the persona reset",
       );
       return true;
@@ -926,11 +1037,12 @@ export class AgentService {
    * waiting in `prepare` holds none of the locks taken here.
    */
   async resetPersona(
-    slug: string,
+    ref: string,
+    /** The requester's mention, `<@ref>`: the `config_changed` event's `by`. */
     by: string,
   ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
     const { runtimes, workspace } = this.d;
-    const row = await this.rowBySlug(slug);
+    const row = await this.rowByRef(ref);
     this.assertPersistent(row);
     const tpl = await this.d.templates.loadValid(row.template);
     const agentsMd = path.join(tpl.dir, "AGENTS.md");
@@ -949,12 +1061,12 @@ export class AgentService {
     if (!(await templateFileOk())) throw badTemplate();
     let r: Awaited<ReturnType<Workspace["resetPersona"]>>;
     try {
-      r = await workspace.lock.run(slug, async () => {
+      r = await workspace.lock.run(ref, async () => {
         // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
         // must not be running either (spec §11.4 part 4).
         const rt = await runtimes.get(row.id);
         const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
-        return workspace.resetPersona(slug, agentsMd, { canWriteNow });
+        return workspace.resetPersona(ref, agentsMd, { canWriteNow });
       });
     } catch (err) {
       // The template file went away after the check above: the template's fault, not the workdir's.
@@ -964,12 +1076,13 @@ export class AgentService {
       throw err;
     }
     // Applied now with nothing differing changes nothing: no notice, no event.
-    if (r.changed) this.scheduleResetEffects(row, by, r);
+    if (r.changed) this.scheduleResetEffects(row, ref, by, r);
     return { applied: r.applied, ...(r.backupDir ? { backupDir: r.backupDir } : {}) };
   }
 
   private scheduleResetEffects(
     row: AgentRow,
+    ref: string,
     by: string,
     r: { applied: "now" | "on_restart"; backupDir?: string },
   ): void {
@@ -984,7 +1097,7 @@ export class AgentService {
       // Through the runtime when loaded (published in seq order), else straight to the store, as ConfigChanges does.
       if (rt) jobs.push(rt.appendConfigChanged(by, [what]));
       else await store.append(row.id, null, { type: "config_changed", by, changes: [what] });
-      bus.publishAll({ type: "config_changed", agent: row.slug });
+      bus.publishAll({ type: "config_changed", agent: ref });
       if (!row.archivedAt) {
         jobs.push(runtimes.recordConfigNotice(row.id, [`${what}${saved}`]));
         if (staged)
@@ -992,9 +1105,9 @@ export class AgentService {
       }
       for (const j of await Promise.allSettled(jobs))
         if (j.status === "rejected")
-          log.error({ err: j.reason, agent: row.slug }, "applying a persona reset failed");
+          log.error({ err: j.reason, agent: row.id }, "applying a persona reset failed");
     })();
-    work.catch((err) => log.error({ err, agent: row.slug }, "applying a persona reset failed"));
+    work.catch((err) => log.error({ err, agent: row.id }, "applying a persona reset failed"));
   }
 
   /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */
@@ -1002,14 +1115,14 @@ export class AgentService {
     return row.config as Record<string, unknown>;
   }
 
-  async archive(slug: string, actor: Actor): Promise<AgentSummary> {
+  async archive(ref: string, actor: Actor): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
-    const row = await this.rowBySlug(slug);
+    const row = await this.rowByRef(ref);
     if (actor.kind === "agent" && actor.id === row.id)
       throw new OrgRefusedError("Ask a human to archive you.");
     this.assertNotLocal(actor, { agentRuntime: row.runtime });
     this.assertPersistent(row);
-    if (row.archivedAt) return this.summary(slug);
+    if (row.archivedAt) return this.summary(ref);
     // S7 §5.7: the row lock first (`FOR NO KEY UPDATE`, never `FOR UPDATE`), then the live reports in the same
     // transaction, so a spawn committing in between can't leave an archived spawner a live child.
     const before = await db.transaction(async (tx) => {
@@ -1020,19 +1133,29 @@ export class AgentService {
         .for("no key update");
       // A concurrent archive committed while this one waited on the lock: it wrote the peer events.
       if (locked?.archivedAt) return undefined;
-      const live = await tx
-        .select({ slug: schema.agents.slug, kind: schema.agents.kind })
+      const liveRows = await tx
+        .select({ id: schema.agents.id, kind: schema.agents.kind })
         .from(schema.agents)
         .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
+      const handles = await principalsByIds(
+        tx,
+        liveRows.map((r) => r.id),
+      );
+      const live = liveRows.map((r) => ({ kind: r.kind, handle: handles.get(r.id)?.handle ?? "" }));
       const spawned = live
         .filter((r) => r.kind === "ephemeral")
-        .map((r) => r.slug)
+        .map((r) => r.handle)
         .sort();
       if (spawned.length)
-        throw new ApiError(409, "has_reports", spawnedMessage(row.slug, spawned), {
-          reports: spawned,
-        });
-      const reports = live.map((r) => r.slug).sort();
+        throw new ApiError(
+          409,
+          "has_reports",
+          spawnedMessage(await this.handleOfId(row.id), spawned),
+          {
+            reports: spawned,
+          },
+        );
+      const reports = live.map((r) => r.handle).sort();
       if (reports.length)
         throw new ApiError(409, "has_reports", reportsMessage(reports), { reports });
       const snap = await this.snapshot(row.id, tx);
@@ -1042,13 +1165,13 @@ export class AgentService {
         .where(eq(schema.agents.id, row.id));
       return snap;
     });
-    if (!before) return this.summary(slug);
+    if (!before) return this.summary(ref);
     const rt = await runtimes.get(row.id);
     rt?.markArchived();
     try {
       await rt?.stop({ graceMs: 3000, termWaitMs: 10_000 });
     } catch (err) {
-      this.d.log.error({ err, slug }, "Stopping an archived agent failed");
+      this.d.log.error({ err, agent: ref }, "Stopping an archived agent failed");
     }
     await runtimes.refresh(row.id);
     await this.peerEvents(
@@ -1056,18 +1179,21 @@ export class AgentService {
       { kind: "left", reason: "archived", ...this.byOf(actor) },
       before,
     );
-    this.orgAction(actor, "agent_archived", slug);
-    return this.summary(slug);
+    await this.d.publishPrincipal(row.id);
+    this.orgAction(actor, "agent_archived", ref);
+    return this.summary(ref);
   }
 
-  async unarchive(slug: string, actor: Actor): Promise<AgentSummary> {
+  async unarchive(ref: string, actor: Actor): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
-    const row = await this.rowBySlug(slug);
+    const row = await this.rowByRef(ref);
     if (actor.kind === "agent" && row.manageOrg)
-      throw new OrgRefusedError(`Only a human can unarchive @${slug}: it can manage the org.`);
+      throw new OrgRefusedError(
+        `Only a human can unarchive @${await this.handleOfId(row.id)}: it can manage the org.`,
+      );
     this.assertNotLocal(actor, { agentRuntime: row.runtime });
     this.assertPersistent(row);
-    if (!row.archivedAt) return this.summary(slug);
+    if (!row.archivedAt) return this.summary(ref);
     // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules). The manager
     // check is inside the lock too, and a concurrent unarchive that lost the race changes nothing and emits nothing.
     const changed = await db.transaction(async (tx) => {
@@ -1083,7 +1209,9 @@ export class AgentService {
       if (!locked?.archivedAt) return false;
       // A human may have granted manage_org since the read above.
       if (actor.kind === "agent" && locked.manageOrg)
-        throw new OrgRefusedError(`Only a human can unarchive @${slug}: it can manage the org.`);
+        throw new OrgRefusedError(
+          `Only a human can unarchive @${await this.handleOfId(row.id)}: it can manage the org.`,
+        );
       if (locked.reportsTo) {
         const [m] = await tx
           .select()
@@ -1093,20 +1221,21 @@ export class AgentService {
           throw new ApiError(
             409,
             "manager_archived",
-            `Its manager @${m.slug} is archived. Change its manager first.`,
+            `Its manager @${await this.handleOfId(m.id)} is archived. Change its manager first.`,
           );
       }
       await tx.update(schema.agents).set({ archivedAt: null }).where(eq(schema.agents.id, row.id));
       await this.d.scheduling?.recomputeForTarget(tx, row.id);
       return true;
     });
-    if (!changed) return this.summary(slug);
+    if (!changed) return this.summary(ref);
     await runtimes.refresh(row.id);
     // After the refresh: a firing in the millisecond before it reaches a runtime that still thinks the agent is
     // archived and is rejected (accepted, spec §10.1).
     this.d.scheduling?.changed();
     await this.peerEvents(row.id, { kind: "joined", ...this.byOf(actor) }, noPeers);
-    this.orgAction(actor, "agent_unarchived", slug);
-    return this.summary(slug);
+    await this.d.publishPrincipal(row.id);
+    this.orgAction(actor, "agent_unarchived", ref);
+    return this.summary(ref);
   }
 }

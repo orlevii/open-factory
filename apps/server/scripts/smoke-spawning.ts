@@ -30,11 +30,12 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import type { AnyEvent, Envelope, SessionEvent } from "@open-factory/shared";
+import { type AnyEvent, type Envelope, refOf, type SessionEvent } from "@open-factory/shared";
 import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { byHandle } from "./by-handle.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
@@ -100,7 +101,7 @@ const PLAN = path.join(repo, "plan.md");
 
 // ---------- server log capture (pino JSON lines, never printed raw) ----------
 /** Each agent process's system/init tool list, read from the driver's debug log of claude's stdout. */
-const inits: { slug: string; time: number; tools: string[] }[] = [];
+const inits: { handle: string; time: number; tools: string[] }[] = [];
 const serverWarnings: string[] = [];
 const logStream = new Writable({
   write(chunk, _enc, cb) {
@@ -118,7 +119,7 @@ const logStream = new Writable({
         if (o.msg === "claude stdout" && typeof o.line === "string" && o.agent) {
           const l = JSON.parse(o.line) as { type?: string; subtype?: string; tools?: unknown };
           if (l.type === "system" && l.subtype === "init" && Array.isArray(l.tools))
-            inits.push({ slug: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
+            inits.push({ handle: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
         }
         if ((o.level ?? 0) >= 40)
           serverWarnings.push(
@@ -149,8 +150,10 @@ function cleanup(): Promise<void> {
     // Read before anything closes; the containers are removed through Docker directly, so after app.close() too.
     try {
       if (sql)
-        for (const r of await sql<{ id: string; slug: string }[]>`select id, slug from agents`)
-          ids.set(r.slug, r.id);
+        for (const r of await sql<
+          { id: string; handle: string }[]
+        >`select a.id, p.handle from agents a join principals p on p.id = a.id`)
+          ids.set(r.handle, r.id);
     } catch (e) {
       console.error(redact(`cleanup: listing this run's agents failed: ${e}`));
     }
@@ -206,14 +209,14 @@ const freePort = () =>
       srv.close(() => resolve(port));
     });
   });
-const idOf = (slug: string) => {
-  const id = ids.get(slug);
-  if (!id) throw new Error(`no agent ${slug}`);
+const idOf = (handle: string) => {
+  const id = ids.get(handle);
+  if (!id) throw new Error(`no agent ${handle}`);
   return id;
 };
-const since = (slug: string, seq = 0): Promise<SessionEvent[]> =>
-  app.store.after(idOf(slug), seq, 10_000);
-const lastSeq = async (slug: string) => (await since(slug)).at(-1)?.seq ?? 0;
+const since = (handle: string, seq = 0): Promise<SessionEvent[]> =>
+  app.store.after(idOf(handle), seq, 10_000);
+const lastSeq = async (handle: string) => (await since(handle)).at(-1)?.seq ?? 0;
 const textOf = (es: SessionEvent[]) =>
   es.flatMap((e) => (e.event.type === "assistant_text" ? [e.event.text] : [])).join("\n");
 const toolTrace = (es: SessionEvent[]) =>
@@ -267,23 +270,23 @@ async function until<T>(
 let orUser = { userId: "", handle: "or" };
 
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
-async function send(slug: string, body: string) {
-  const from = await lastSeq(slug);
-  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+async function send(handle: string, body: string) {
+  const from = await lastSeq(handle);
+  const [sent] = (await app.router.send(orUser, [handle], body, false)).results;
   if (!sent || sent.status === "refused" || sent.status === "start_failed")
     throw new Error(
-      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+      `send to ${handle} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
     );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
-async function turnOf(slug: string, id: string, from: number, ms = 240_000) {
+async function turnOf(handle: string, id: string, from: number, ms = 240_000) {
   return until(
-    `${slug}'s turn for message ${id}`,
+    `${handle}'s turn for message ${id}`,
     async () => {
-      const es = await since(slug, from);
+      const es = await since(handle, from);
       const err = es.find((e) => e.event.type === "error" && e.event.source !== "api");
-      if (err) throw new Error(`${slug}: ${brief(JSON.stringify(err.event))}`);
+      if (err) throw new Error(`${handle}: ${brief(JSON.stringify(err.event))}`);
       const i = es.findIndex(
         (e) =>
           e.event.type === "message_in" &&
@@ -299,31 +302,31 @@ async function turnOf(slug: string, id: string, from: number, ms = 240_000) {
 }
 /** A prompt is retried at most twice, each time tightened, and the retry is printed. `accept` returns undefined to retry. */
 async function ask<T>(
-  slug: string,
+  handle: string,
   prompts: string[],
   accept: (turn: SessionEvent[]) => T | undefined,
 ): Promise<{ turn: SessionEvent[]; got: T }> {
   let last: SessionEvent[] = [];
   for (const [n, prompt] of prompts.slice(0, 3).entries()) {
-    if (n > 0) say(`    retry ${n}: ${slug} did not follow the prompt; tightened prompt sent`);
-    const s = await send(slug, prompt);
-    last = await turnOf(slug, s.id, s.from);
+    if (n > 0) say(`    retry ${n}: ${handle} did not follow the prompt; tightened prompt sent`);
+    const s = await send(handle, prompt);
+    last = await turnOf(handle, s.id, s.from);
     const got = accept(last);
     if (got !== undefined) return { turn: last, got };
   }
   throw new Error(
-    `${slug} did not follow the prompt after retries; tools: ${toolTrace(last) || "none"}; reply: ${brief(textOf(last))}`,
+    `${handle} did not follow the prompt after retries; tools: ${toolTrace(last) || "none"}; reply: ${brief(textOf(last))}`,
   );
 }
 /** No open turn and nothing queued for 10 s in a row. */
-async function quiet(slugs: string[]) {
+async function quiet(handles: string[]) {
   let since0 = 0;
   await until(
-    `${slugs.join(", ")} to go quiet`,
+    `${handles.join(", ")} to go quiet`,
     async () => {
       const busy = [];
-      for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+      for (const s of handles) {
+        const rt = await byHandle(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -360,11 +363,11 @@ const updatesFrom = async (from: string) =>
   envelopes(await since("lead")).flatMap((b) =>
     b.envs.filter((m) => m.kind === "member_update" && m.from === from),
   );
-const agentRow = async (slug: string) =>
+const agentRow = async (handle: string) =>
   (
     await sql<
       { id: string; kind: string; reports_to: string | null; terminated_at: string | null }[]
-    >`select id, kind, reports_to, terminated_at::text as terminated_at from agents where slug = ${slug}`
+    >`select a.id, a.kind, a.reports_to, a.terminated_at::text as terminated_at from agents a join principals p on p.id = a.id where p.handle = ${handle}`
   )[0];
 
 function writeTemplate(name: string, files: Record<string, string>) {
@@ -546,7 +549,7 @@ try {
       headers: { cookie: or.cookie, origin: app.config.publicOrigin },
       payload: {
         template: "lead",
-        slug: "lead",
+        handle: "lead",
         displayName: "Lead",
         description: "Smoke spawning lead",
         reportsTo: "or",
@@ -554,7 +557,11 @@ try {
       },
     });
     if (res.statusCode !== 201) throw new Error(`${res.statusCode}: ${brief(res.body)}`);
-    const id = (await sql<{ id: string }[]>`select id from agents where slug = 'lead'`)[0]?.id;
+    const id = (
+      await sql<
+        { id: string }[]
+      >`select a.id from agents a join principals p on p.id = a.id where p.handle = 'lead'`
+    )[0]?.id;
     if (!id) throw new Error(`no agent lead after ${brief(res.body)}`);
     ids.set("lead", id);
   });
@@ -577,7 +584,7 @@ try {
   say(`    lead: ${toolTrace(t1.turn)}`);
 
   // 2. The lead's system/init lists spawn_agent.
-  const leadInit = inits.find((i) => i.slug === "lead");
+  const leadInit = inits.find((i) => i.handle === "lead");
   check(
     `2. lead's system/init lists ${SPAWN}`,
     Boolean(leadInit?.tools.includes(SPAWN)),
@@ -610,7 +617,7 @@ try {
       ),
     );
   const childInit = await step(`4. ${CHILD}'s system/init arrived`, () =>
-    until(`${CHILD}'s system/init`, async () => inits.find((i) => i.slug === CHILD), 120_000),
+    until(`${CHILD}'s system/init`, async () => inits.find((i) => i.handle === CHILD), 120_000),
   );
   check(
     `4. ${CHILD}'s system/init lists ${SEND} but neither ${SPAWN} nor ${TERMINATE}`,
@@ -668,9 +675,9 @@ try {
     ask(
       "lead",
       [
-        "Call mcp__factory__terminate_agent with slug helper-one.",
-        'Call the tool mcp__factory__terminate_agent exactly once with {"slug": "helper-one"}. Then stop.',
-        'You must call mcp__factory__terminate_agent now with {"slug": "helper-one"}. No other tool.',
+        "Call mcp__factory__terminate_agent with target helper-one.",
+        'Call the tool mcp__factory__terminate_agent exactly once with {"target": "helper-one"}. Then stop.',
+        'You must call mcp__factory__terminate_agent now with {"target": "helper-one"}. No other tool.',
       ],
       (es) => okCalls(es, TERMINATE)[0],
     ),
@@ -761,20 +768,20 @@ try {
     n === 0
       ? `Call mcp__factory__spawn_agent ${left.length === 1 ? "once" : `${left.length} times, in this order`}, with exactly these arguments: ${left.map((s) => JSON.stringify(spawnArgs[s])).join(" ; then ")}. Then stop.`
       : `You must call mcp__factory__spawn_agent now, once for each of these argument objects, copied exactly: ${left.map((s) => JSON.stringify(spawnArgs[s])).join(" ; ")}. No other tool.`;
-  const notSpawned = async (slugs: string[]) => {
+  const notSpawned = async (handles: string[]) => {
     const left = [];
-    for (const s of slugs) {
+    for (const s of handles) {
       const r = await agentRow(s);
       if (r) ids.set(s, r.id);
       else left.push(s);
     }
     return left;
   };
-  const isEphemeralChild = async (slug: string) => {
-    const r = await agentRow(slug);
-    if (!r) throw new Error(`no agent ${slug}`);
+  const isEphemeralChild = async (handle: string) => {
+    const r = await agentRow(handle);
+    if (!r) throw new Error(`no agent ${handle}`);
     if (r.kind !== "ephemeral" || r.reports_to !== idOf("lead"))
-      throw new Error(`${slug}: kind ${r.kind}, reports_to ${r.reports_to}`);
+      throw new Error(`${handle}: kind ${r.kind}, reports_to ${r.reports_to}`);
   };
 
   // 8. The lead spawns the pair (the reviewer first, so it exists when the tech lead messages it).
@@ -843,9 +850,9 @@ try {
   await step(`10. ${TL}, ${RV} and lead are quiet`, () => quiet([TL, RV, "lead"]));
 
   // 11. The lead terminates both.
-  const terminated = async (slugs: string[]) => {
+  const terminated = async (handles: string[]) => {
     const left = [];
-    for (const s of slugs) if (!(await agentRow(s))?.terminated_at) left.push(s);
+    for (const s of handles) if (!(await agentRow(s))?.terminated_at) left.push(s);
     return left;
   };
   const t11 = await step(
@@ -855,8 +862,8 @@ try {
         () => terminated([TL, RV]),
         (left, n) =>
           n === 0
-            ? `Call mcp__factory__terminate_agent for each of: ${left.map((s) => JSON.stringify({ slug: s })).join(" and ")}. Then stop.`
-            : `You must call mcp__factory__terminate_agent now, once with each of ${left.map((s) => JSON.stringify({ slug: s })).join(" and ")}. No other tool.`,
+            ? `Call mcp__factory__terminate_agent for each of: ${left.map((s) => JSON.stringify({ target: s })).join(" and ")}. Then stop.`
+            : `You must call mcp__factory__terminate_agent now, once with each of ${left.map((s) => JSON.stringify({ target: s })).join(" and ")}. No other tool.`,
       ),
   );
   say(`    lead: ${toolTrace(t11)}`);
@@ -955,7 +962,7 @@ try {
   await step(`15. @or terminates ${DEV} through POST /api/agents/${DEV}/terminate`, async () => {
     const res = await app.inject({
       method: "POST",
-      url: `/api/agents/${DEV}/terminate`,
+      url: `/api/agents/${refOf(idOf(DEV))}/terminate`,
       headers: { cookie: or.cookie, origin: app.config.publicOrigin },
     });
     if (res.statusCode >= 300) throw new Error(`${res.statusCode}: ${brief(res.body)}`);

@@ -1,7 +1,8 @@
 import { apiFetch, type RefusalCode, sendMessagesResponseSchema } from "@open-factory/shared";
+import { refOfWho, whoHandle } from "@/features/session/who";
 
 export type SendMessagesInput = {
-  /** Agent slugs, the chat's own first. */
+  /** Agent refs, the chat's own first. */
   to: string[];
   body: string;
   urgent: boolean;
@@ -39,5 +40,8 @@ export const refusedBecause = (r: {
   reason?: string | undefined;
 }) => (r.code && WHY[r.code]) ?? (r.reason?.replace(/\.$/, "") || "refused");
 
-/** A result's recipient as a slug: results name them `@slug`. */
-export const slugOf = (to: string) => to.replace(/^@/, "").toLowerCase();
+/** A result names its recipient as a mention, `<@ref|handle>` (the label as of the send). */
+export const handleOfResult = (to: string) => whoHandle(to).toLowerCase();
+
+/** Whether a result is for the chat's agent: its mention names the agent's ref. */
+export const isResultFor = (to: string, agentRef: string) => refOfWho(to) === agentRef;

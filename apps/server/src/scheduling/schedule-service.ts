@@ -12,9 +12,11 @@ import {
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import { and, eq, or } from "drizzle-orm";
 import type { EventStore, Exec } from "../agents/event-store.ts";
-import { resolveName } from "../messaging/principals.ts";
+import { resolveArg } from "../principals/principal-args.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import { withDeadlockRetry } from "../tasks/task-service.ts";
 import { ScheduleError } from "./errors.ts";
 import { AGENT_AT_HORIZON_MS, MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "./limits.ts";
@@ -39,7 +41,7 @@ export type ScheduleInput = {
   body: string;
 };
 export type PatchInput = Partial<Omit<ScheduleInput, "timezone">> & { timezone?: string };
-export type CreateResult = { item: ScheduleItem; note?: string };
+export type CreateResult = { item: ScheduleItem; note?: string; warnings?: string[] };
 /** What `list_schedules` returns for one schedule (spec §9). */
 export type AgentScheduleView = {
   id: string;
@@ -56,10 +58,10 @@ export type AgentScheduleView = {
   truncated?: true;
 };
 
-/** A principal as prose or the `by` attribute writes it: `@handle` for a human, the bare slug for an agent. */
+/** A principal as prose or the `by` attribute writes it: `@handle` for a human, the bare handle for an agent. */
 const label = (a: ScheduleRecord["createdBy"], at = false) =>
-  a.kind === "user" ? `@${a.handle}` : at ? `@${a.slug}` : a.slug;
-const isAgent = (a: Actor): a is { agentId: string } => "agentId" in a;
+  a.kind === "human" || at ? `@${a.handle}` : a.handle;
+const isAgent = (a: Actor) => a.kind === "agent";
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 const notFound = (name: string) =>
@@ -69,10 +71,10 @@ const notFound = (name: string) =>
     404,
     "target",
   );
-const endedSentence = (slug: string, why: "archived" | "terminated") =>
+const endedSentence = (handle: string, why: "archived" | "terminated") =>
   why === "archived"
-    ? `@${slug} is archived and can't receive messages.`
-    : `@${slug} was terminated and can't receive messages.`;
+    ? `@${handle} is archived and can't receive messages.`
+    : `@${handle} was terminated and can't receive messages.`;
 
 export class ScheduleService {
   constructor(
@@ -96,20 +98,23 @@ export class ScheduleService {
   async create(actor: Actor, input: ScheduleInput): Promise<CreateResult> {
     const now = this.d.now();
     const when = this.checkTiming(actor, input, now);
-    const body = input.body;
-    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
-    if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
+    if (bytes(input.body) < 1)
+      throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     const target = await this.resolveTarget(actor, input.target);
+    const warnings: string[] = target.warning ? [target.warning] : [];
 
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction(async (tx) => {
+        // Spec §4.3: the body's mentions are stored as `<@ref>`; the limit counts the stored text.
+        const { text: body } = await resolveField(tx, input.body, actor.kind, "body", warnings);
+        if (bytes(body) > SCHEDULE_BODY_MAX)
+          throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
         const wants: LockWant[] = [{ id: target.id, mode: "share" }];
-        if (isAgent(actor)) wants.push({ id: actor.agentId, mode: "update" });
+        if (isAgent(actor)) wants.push({ id: actor.id, mode: "update" });
         const locked = await this.d.schedules.lockAgents(tx, wants);
         const byId = new Map(locked.map((a) => [a.id, a]));
         if (isAgent(actor)) {
-          const me = byId.get(actor.agentId);
+          const me = byId.get(actor.id);
           if (!me || me.archivedAt || me.terminatedAt)
             throw new ScheduleError(
               "ended",
@@ -121,10 +126,10 @@ export class ScheduleService {
             throw new ScheduleError("forbidden", "Spawned agents can't schedule messages.", 403);
         }
         const t = byId.get(target.id);
-        if (!t) throw notFound(target.slug);
+        if (!t) throw notFound(target.handle);
         this.requireLive(t);
         if (isAgent(actor)) {
-          const n = await this.d.schedules.countActiveCreatedBy(tx, actor.agentId);
+          const n = await this.d.schedules.countActiveCreatedBy(tx, actor.id);
           if (n >= MAX_AGENT_SCHEDULES)
             throw new ScheduleError(
               "schedule_limit",
@@ -147,7 +152,11 @@ export class ScheduleService {
       }),
     );
     this.d.onChanged();
-    return { item: this.toItem(out.rec), ...this.noteFor(actor, out.target, out.rec) };
+    return {
+      item: this.toItem(out.rec),
+      ...this.noteFor(actor, out.target, out.rec),
+      ...(warnings.length ? { warnings } : {}),
+    };
   }
 
   /** Cron or at: exactly one; valid; in the future; within the agent limits. Returns the stored form. */
@@ -195,17 +204,30 @@ export class ScheduleService {
   }
 
   /** Resolves the target name without locks (§12.1 step 1). An agent's default is itself. */
-  private async resolveTarget(actor: Actor, raw: string | undefined) {
+  private async resolveTarget(
+    actor: Actor,
+    raw: string | undefined,
+  ): Promise<{ id: string; handle: string; warning?: string }> {
     const name = raw?.trim() ?? "";
     if (isAgent(actor) && (name === "" || name === "me")) {
-      const me = await this.d.store.agentById(actor.agentId);
+      const me = await this.d.store.agentById(actor.id);
       if (!me)
         throw new ScheduleError("ended", "You can't schedule messages: you were terminated.", 409);
-      return { id: me.id, slug: me.slug };
+      return { id: me.id, handle: me.handle };
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
-    const r = await resolveName(this.d.db, name);
-    if (r.kind === "agent") return { id: r.agent.id, slug: r.agent.slug };
+    const r = await resolveArg(this.d.db, name);
+    if (r.kind === "unknown_ref")
+      throw new ScheduleError("target_not_found", unknownRefError(r.ref), 404, "target");
+    if (r.kind === "principal") {
+      const agent = r.p.kind === "agent" ? await this.d.store.agentById(r.p.id) : undefined;
+      if (agent)
+        return {
+          id: agent.id,
+          handle: r.p.handle,
+          ...(r.warning ? { warning: r.warning } : {}),
+        };
+    }
     if (r.kind === "none" || r.kind === "channel") throw notFound(r.name);
     if (r.kind === "reserved")
       throw new ScheduleError(
@@ -224,9 +246,9 @@ export class ScheduleService {
 
   private requireLive(t: LockedAgent) {
     if (t.terminatedAt)
-      throw new ScheduleError("target_ended", endedSentence(t.slug, "terminated"), 409, "target");
+      throw new ScheduleError("target_ended", endedSentence(t.handle, "terminated"), 409, "target");
     if (t.archivedAt)
-      throw new ScheduleError("target_ended", endedSentence(t.slug, "archived"), 409, "target");
+      throw new ScheduleError("target_ended", endedSentence(t.handle, "archived"), 409, "target");
   }
 
   /** A note for an agent's tool result (spec §9). */
@@ -234,9 +256,9 @@ export class ScheduleService {
     if (!isAgent(actor)) return {};
     if (this.d.statusOf?.({ id: target.id, status: target.status }) === "errored")
       return {
-        note: `@${target.slug} is errored; it will see this after it is restarted (restart_agent, or a human).`,
+        note: `@${target.handle} is errored; it will see this after it is restarted (restart_agent, or a human).`,
       };
-    if (target.id === actor.agentId && rec.cron)
+    if (target.id === actor.id && rec.cron)
       return {
         note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",
       };
@@ -254,7 +276,7 @@ export class ScheduleService {
     return this.toItem(r);
   }
 
-  /** Humans' list (spec §11): active by next run, then paused, then done newest first, then key; at most 500. */
+  /** Humans' list (spec §11; `target` is an agent's normalised ref): active by next run, then paused, then done newest first, then key; at most 500. */
   async list(
     f: { target?: string; done?: boolean } = {},
   ): Promise<{ items: ScheduleItem[]; more: boolean }> {
@@ -263,7 +285,7 @@ export class ScheduleService {
     const at = (r: ScheduleRecord) => r.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
     const doneAt = (r: ScheduleRecord) => (r.lastFiredAt ?? r.runAt)?.getTime() ?? 0;
     const shown = rows
-      .filter((r) => (f.target ? r.target.slug === f.target : true))
+      .filter((r) => (f.target ? r.target.ref === f.target : true))
       .filter((r) => (f.done ? true : !isDone(r)))
       .sort(
         (a, b) =>
@@ -280,7 +302,7 @@ export class ScheduleService {
       this.d.db,
       and(
         this.d.schedules.live(),
-        or(eq(schedules.createdByAgentId, agentId), eq(schedules.targetAgentId, agentId)),
+        or(eq(schedules.createdById, agentId), eq(schedules.targetAgentId, agentId)),
       ),
     );
     return rows
@@ -292,7 +314,7 @@ export class ScheduleService {
         const long = chars.length > TOOL_BODY_CAP;
         return {
           id: formatKey("S", r.number),
-          to: r.target.slug,
+          to: r.target.handle,
           created_by: label(r.createdBy),
           by: label(r.bodyAuthor),
           ...(r.cron ? { cron: r.cron } : {}),
@@ -300,7 +322,7 @@ export class ScheduleService {
           timezone: r.timezone,
           next_run: r.nextRunAt ? formatOffsetIso(r.nextRunAt, r.timezone) : null,
           paused: r.pausedAt !== null,
-          yours: r.createdByAgentId === agentId,
+          yours: r.createdById === agentId,
           body: long ? chars.slice(0, TOOL_BODY_CAP).join("") : r.body,
           ...(long ? { truncated: true as const } : {}),
         };
@@ -346,7 +368,7 @@ export class ScheduleService {
    * Human edit (spec §6.3, Q18): only the fields present are validated and changed. Timing changes recompute
    * `next_run_at` from now; a body change makes the editor the author; a pending firing is never touched.
    */
-  async edit(actor: { userId: string }, key: string, patch: PatchInput): Promise<ScheduleItem> {
+  async edit(actor: Actor, key: string, patch: PatchInput): Promise<ScheduleItem> {
     const n = this.keyOrThrow(key);
     const now = this.d.now();
     if (patch.cron !== undefined && patch.at !== undefined)
@@ -366,19 +388,20 @@ export class ScheduleService {
         if (target) {
           const locked = await this.d.schedules.lockAgents(tx, [{ id: target.id, mode: "share" }]);
           const t = locked[0];
-          if (!t) throw notFound(target.slug);
+          if (!t) throw notFound(target.handle);
           this.requireLive(t);
         }
         const row = await this.d.schedules.lockByNumber(tx, n);
         if (!row || row.deletedAt) throw this.gone();
         const set: Partial<ScheduleRow> = { updatedAt: now };
         if (target) set.targetAgentId = target.id;
-        if (patch.body !== undefined && patch.body !== row.body) {
-          set.body = patch.body;
-          set.bodyAuthorUserId = actor.userId;
-          set.bodyAuthorAgentId = null;
-        } else if (patch.body !== undefined) {
+        if (patch.body !== undefined) {
+          const { text: body } = await resolveField(tx, patch.body, actor.kind, "body");
           // Unchanged text: the editor is not its author.
+          if (body !== row.body) {
+            set.body = body;
+            set.bodyAuthorId = actor.id;
+          }
         }
         if (
           patch.timezone !== undefined &&
@@ -440,7 +463,7 @@ export class ScheduleService {
     return this.toItem(rec);
   }
 
-  async pause(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async pause(_actor: Actor, key: string): Promise<ScheduleItem> {
     return this.mutate(key, (row, now) => {
       if (isDone(row))
         throw new ScheduleError(
@@ -458,7 +481,7 @@ export class ScheduleService {
     });
   }
 
-  async resume(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async resume(_actor: Actor, key: string): Promise<ScheduleItem> {
     return this.mutate(
       key,
       (row, now) => {
@@ -482,7 +505,7 @@ export class ScheduleService {
   }
 
   /** Undo of a delete: humans only; refused when the target ended (R2); recomputes from now. */
-  async restore(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async restore(_actor: Actor, key: string): Promise<ScheduleItem> {
     const n = this.keyOrThrow(key);
     const probe = await this.d.schedules.recordByNumber(this.d.db, n);
     if (!probe) throw this.gone();
@@ -490,19 +513,20 @@ export class ScheduleService {
       this.d.db.transaction(async (tx) => {
         // Agents first (§12.1): the target FOR SHARE, and an agent creator FOR NO KEY UPDATE so the limit can't be raced.
         const wants: LockWant[] = [{ id: probe.targetAgentId, mode: "share" }];
-        if (probe.createdByAgentId) wants.push({ id: probe.createdByAgentId, mode: "update" });
+        if (probe.createdBy.kind === "agent") wants.push({ id: probe.createdById, mode: "update" });
         const locked = await this.d.schedules.lockAgents(tx, wants);
         const t = locked.find((a) => a.id === probe.targetAgentId);
         if (t?.terminatedAt)
-          throw new ScheduleError("target_ended", `@${t.slug} was terminated.`, 409);
-        if (t?.archivedAt) throw new ScheduleError("target_ended", `@${t.slug} is archived.`, 409);
+          throw new ScheduleError("target_ended", `@${t.handle} was terminated.`, 409);
+        if (t?.archivedAt)
+          throw new ScheduleError("target_ended", `@${t.handle} is archived.`, 409);
         const row = await this.d.schedules.lockByNumber(tx, n);
         if (!row) throw this.gone();
         if (row.deletedAt) {
           // A restore counts like a create toward an agent creator's 20 (delete + restore must not bypass it); a
           // one-shot that restores as done doesn't count.
           const asDone = row.runAt !== null && row.runAt.getTime() <= this.d.now().getTime();
-          const creator = locked.find((a) => a.id === row.createdByAgentId);
+          const creator = locked.find((a) => a.id === row.createdById);
           if (
             creator &&
             !asDone &&
@@ -510,7 +534,7 @@ export class ScheduleService {
           )
             throw new ScheduleError(
               "schedule_limit",
-              `@${creator.slug} already has ${MAX_AGENT_SCHEDULES} schedules; delete one first.`,
+              `@${creator.handle} already has ${MAX_AGENT_SCHEDULES} schedules; delete one first.`,
               409,
             );
           await this.d.schedules.update(tx, row.id, { deletedAt: null, updatedAt: this.d.now() });
@@ -530,14 +554,14 @@ export class ScheduleService {
     const id = n === null ? key : formatKey("S", n);
     if (!rec || rec.deletedAt)
       throw new ScheduleError("schedule_not_found", `There is no schedule ${id}.`, 404);
-    if (rec.createdByAgentId !== agentId)
+    if (rec.createdById !== agentId)
       throw new ScheduleError(
         "forbidden",
         `${id} was created by ${label(rec.createdBy, true)}; only its creator or a human can cancel it.`,
         403,
       );
     await this.mutate(key, (row, now) => {
-      if (row.createdByAgentId !== agentId)
+      if (row.createdById !== agentId)
         throw new ScheduleError(
           "forbidden",
           `${id} was created by someone else; only its creator or a human can cancel it.`,
@@ -602,15 +626,17 @@ export class ScheduleService {
       a.kind === "agent"
         ? {
             kind: "agent" as const,
-            slug: a.slug,
+            ref: a.ref,
+            handle: a.handle,
             archived: a.archivedAt !== null,
             terminated: a.terminatedAt !== null,
           }
-        : { kind: "user" as const, handle: a.handle };
+        : { kind: "human" as const, ref: a.ref, handle: a.handle };
     return {
       key: formatKey("S", r.number),
       target: {
-        slug: r.target.slug,
+        ref: r.target.ref,
+        handle: r.target.handle,
         displayName: r.target.displayName,
         archived: r.target.archivedAt !== null,
         terminated: r.target.terminatedAt !== null,

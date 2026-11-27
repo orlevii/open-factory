@@ -2,6 +2,7 @@ import type { ScheduleItem, ServerMessage } from "@open-factory/shared";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef, UNKNOWN_REF } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Awaited<ReturnType<typeof signUp>>;
@@ -12,7 +13,7 @@ const clock = new Date("2026-11-20T10:00:00Z");
 beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver(), clock: () => clock });
   or = await signUp(h.app, { handle: "or" });
-  for (const slug of ["ceo", "dev"]) ids[slug] = (await h.seedAgent({ slug })).id;
+  for (const handle of ["ceo", "dev"]) ids[handle] = (await h.seedAgent({ handle })).id;
   frames = [];
   h.app.bus.subscribeAll((m) => frames.push(m));
 });
@@ -37,7 +38,7 @@ test.each([
   ["POST", "/api/schedules/S-1/resume"],
   ["DELETE", "/api/schedules/S-1"],
   ["POST", "/api/schedules/S-1/restore"],
-  ["POST", "/api/agents/ceo/stop-crons"],
+  ["POST", `/api/agents/${UNKNOWN_REF}/stop-crons`],
 ] as const)(
   "%s %s needs a human session: no auth and a live agent token both get 401",
   async (method, url) => {
@@ -61,7 +62,7 @@ test("POST creates (201) as the human and publishes schedules_changed once", asy
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     nextRunAt: "2026-11-23T08:00:00.000Z",
-    createdBy: { kind: "user", handle: "or" },
+    createdBy: { kind: "human", ref: testRef(or.user.id), handle: "or" },
     state: "active",
   });
   expect(changes()).toBe(1);
@@ -118,10 +119,10 @@ test("edit, pause, resume, delete and restore with their conflict codes; every c
 });
 
 test("restore of a schedule whose target ended is 409 target_ended", async () => {
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string}, reports_to_user = null where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string} where id = (select id from principals where handle = 'dev')`;
   const s = await create({ target: "dev" });
   await call("DELETE", `/api/schedules/${s.key}`);
-  await h.sql`update agents set terminated_at = now(), terminated_by = '@or' where slug = 'dev'`;
+  await h.sql`update agents set terminated_at = now(), terminated_by = null where id = (select id from principals where handle = 'dev')`;
   const r = await call("POST", `/api/schedules/${s.key}/restore`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({ code: "target_ended" });
@@ -140,7 +141,16 @@ test("list: ?done and ?target reach the query (order is the service test's)", as
     );
   expect(await keys()).not.toContain(once.key);
   expect(await keys("?done=true")).toContain(once.key);
-  expect(await keys("?target=dev")).toEqual([sooner.key]);
+  expect(await keys(`?target=${h.seededRef("dev")}`)).toEqual([sooner.key]);
+});
+
+test("list: a ?target that is a handle, not a ref, is a 400 and an uppercase ref still filters", async () => {
+  const mine = await create({ cron: "0 9 * * *", target: "dev" });
+  await create({ cron: "0 10 * * *" });
+  const bad = await call("GET", "/api/schedules?target=dev");
+  expect(bad.statusCode).toBe(400);
+  const upper = await call("GET", `/api/schedules?target=${h.seededRef("dev").toUpperCase()}`);
+  expect((upper.json().schedules as ScheduleItem[]).map((x) => x.key)).toEqual([mine.key]);
 });
 
 test("the agent summary counts schedules targeting it that are neither deleted nor done", async () => {
@@ -151,14 +161,14 @@ test("the agent summary counts schedules targeting it that are neither deleted n
   const gone = await create();
   await call("DELETE", `/api/schedules/${gone.key}`);
   void a;
-  const summary = (await call("GET", "/api/agents/ceo")).json();
+  const summary = (await call("GET", `/api/agents/${await h.refOf("ceo")}`)).json();
   expect(summary.agent.scheduleCount).toBe(2);
   expect(summary.agent.crons).toEqual([]);
 });
 
 test("stop-crons: 409 no_crons for an agent without crons, 404 for an unknown agent", async () => {
-  const r = await call("POST", "/api/agents/ceo/stop-crons");
+  const r = await call("POST", `/api/agents/${await h.refOf("ceo")}/stop-crons`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({ code: "no_crons", message: "@ceo has no crons." });
-  expect((await call("POST", "/api/agents/nobody/stop-crons")).statusCode).toBe(404);
+  expect((await call("POST", `/api/agents/${UNKNOWN_REF}/stop-crons`)).statusCode).toBe(404);
 });

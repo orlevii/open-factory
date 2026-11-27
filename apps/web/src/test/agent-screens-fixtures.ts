@@ -84,12 +84,43 @@ export function mockWorld(w: World = {}): MockApi {
     "GET /api/projects": () => json({ projects: w.projects ?? [project("app"), project("docs")] }),
     "GET /api/secrets": () => json({ secrets: w.secrets ?? [] }),
     "GET /api/users": () => json({ users: w.users ?? [] }),
+    // The principals cache names everyone the lists do.
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          ...[...agents, ...(w.archived ?? [])].map((a) => ({
+            id: a.ref,
+            ref: a.ref,
+            kind: "agent" as const,
+            handle: a.handle,
+            name: a.displayName,
+            state: a.archivedAt ? ("archived" as const) : ("live" as const),
+            avatar: null,
+          })),
+          ...(
+            (w.users ?? []) as {
+              ref: string;
+              handle: string;
+              name: string;
+              disabledAt: string | null;
+            }[]
+          ).map((u) => ({
+            id: u.ref,
+            ref: u.ref,
+            kind: "human" as const,
+            handle: u.handle,
+            name: u.name,
+            state: u.disabledAt ? ("disabled" as const) : ("live" as const),
+            avatar: null,
+          })),
+        ],
+      }),
   };
   const details = w.details ?? { lead: templateDetail(templateConfig()) };
   for (const [name, d] of Object.entries(details))
     routes[`GET /api/templates/${name}`] = () => json(d);
   for (const a of [...agents, ...(w.archived ?? [])]) {
-    routes[`GET /api/agents/${a.slug}`] = () => json({ agent: a, queue: [], lastSeq: 0 });
+    routes[`GET /api/agents/${a.ref}`] = () => json({ agent: a, queue: [], lastSeq: 0 });
   }
   return mockApi({ ...routes, ...w.extra });
 }

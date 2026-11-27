@@ -54,21 +54,24 @@ export type CreateScheduleBody = z.infer<typeof createScheduleBodySchema>;
 export const patchScheduleBodySchema = createScheduleBodySchema.partial();
 export type PatchScheduleBody = z.infer<typeof patchScheduleBodySchema>;
 
+/** A principal on a schedule: its kind, ref and current handle; an agent also says whether it ended. */
 export const scheduleAuthorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("agent"),
-    slug: z.string(),
+    ref: z.string(),
+    handle: z.string(),
     archived: z.boolean(),
     terminated: z.boolean(),
   }),
-  z.object({ kind: z.literal("user"), handle: z.string() }),
+  z.object({ kind: z.literal("human"), ref: z.string(), handle: z.string() }),
 ]);
 export type ScheduleAuthor = z.infer<typeof scheduleAuthorSchema>;
 
 export const scheduleItemSchema = z.object({
   key: z.string(),
   target: z.object({
-    slug: z.string(),
+    ref: z.string(),
+    handle: z.string(),
     displayName: z.string(),
     archived: z.boolean(),
     terminated: z.boolean(),

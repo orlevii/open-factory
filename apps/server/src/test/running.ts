@@ -1,7 +1,7 @@
-import type { AgentRow } from "@open-factory/db";
 import type { FastifyInstance } from "fastify";
 import { vi } from "vitest";
 import type { Effective } from "../agents/config-resolver.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 
 const startedBy = new WeakMap<object, Map<string, Effective>>();
 
@@ -11,7 +11,7 @@ const startedBy = new WeakMap<object, Map<string, Effective>>();
  * effective config (resolved now: call it again after changing the config). Other agents keep the real `startedOf`.
  * `vi.restoreAllMocks()` undoes it; a later call installs it again.
  */
-export async function asRunning(app: FastifyInstance, ...agents: AgentRow[]): Promise<void> {
+export async function asRunning(app: FastifyInstance, ...agents: AgentRecord[]): Promise<void> {
   const runtimes = app.runtimes;
   let started = startedBy.get(runtimes);
   if (!started || !vi.isMockFunction(runtimes.startedOf)) {
@@ -23,7 +23,7 @@ export async function asRunning(app: FastifyInstance, ...agents: AgentRow[]): Pr
   }
   for (const a of agents) {
     const row = await app.store.agentById(a.id);
-    if (!row) throw new Error(`asRunning: no agent ${a.slug}`);
+    if (!row) throw new Error(`asRunning: no agent ${a.handle}`);
     started.set(a.id, await app.resolver.effective(row));
   }
 }

@@ -24,7 +24,7 @@ const human = (id: string, body: string): FactoryMessage => ({
 
 const spec = (bin: string, over: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSpec => ({
   agentId: "a1",
-  slug: "dev",
+  ref: "dev",
   cwd: mkdtempSync(path.join(tmpdir(), "agent-")),
   env: {
     PATH: process.env.PATH ?? "",

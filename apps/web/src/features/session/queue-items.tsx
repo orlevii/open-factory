@@ -25,10 +25,11 @@ const messageReason = (q: QueueItem, fallback: string | undefined) =>
 
 /** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
  *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
-const cancellable = (q: QueueItem, self: string | undefined) =>
+const cancellable = (q: QueueItem, selfMention: string | undefined) =>
   (q.kind === "message" || q.kind === "raw") &&
-  self !== undefined &&
-  q.from === `@${self}` &&
+  // A held item names its sender by mention.
+  selfMention !== undefined &&
+  q.from === selfMention &&
   q.taskKey === undefined &&
   q.scheduleKey === undefined;
 
@@ -44,7 +45,7 @@ export const QueueItems = memo(function QueueItems({
   items,
   agent,
   cancelled = NO_CANCELLED,
-  self,
+  selfMention,
   onCancel,
   onUndo,
   sending = NO_SENDING,
@@ -54,8 +55,8 @@ export const QueueItems = memo(function QueueItems({
   sending?: readonly SendingBlock[];
   agent: AgentSummary;
   cancelled?: ReadonlyMap<string, CancelledEntry>;
-  /** The viewer's handle: their own held messages offer Cancel. */
-  self?: string;
+  /** The signed-in human's mention: held items name their sender that way, and your own offer Cancel. */
+  selfMention?: string;
   onCancel?: (item: QueueItem) => void;
   onUndo?: (id: string, entry: CancelledEntry) => void;
 }) {
@@ -106,7 +107,7 @@ export const QueueItems = memo(function QueueItems({
                 body={q.body ?? ""}
                 urgent={q.urgent}
                 brief
-                slug={agent.slug}
+                agentRef={agent.ref}
                 // The reason once, on the first held block; the rest only say they wait (U3 §7.6).
                 {...(young
                   ? {}
@@ -130,7 +131,7 @@ export const QueueItems = memo(function QueueItems({
                   ) : undefined
                 }
                 action={
-                  onCancel && cancellable(q, self) ? (
+                  onCancel && cancellable(q, selfMention) ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -168,13 +169,13 @@ export const QueueItems = memo(function QueueItems({
           // The queued item's shape (block, then the slot for its cancel error): nothing remounts.
           <>
             <MessageBlock
-              from={`@${self ?? "you"}`}
+              from={selfMention ?? "@you"}
               fromKind="human"
               body={b.body}
               urgent={b.urgent}
               brief
               attachments={b.attachments}
-              slug={agent.slug}
+              agentRef={agent.ref}
               sending={
                 slow ? { label: b.urgent ? "Sending · will interrupt the turn" : "Sending…" } : {}
               }

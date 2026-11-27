@@ -6,6 +6,7 @@ import type {
   EventsPage,
   SessionEvent,
 } from "@open-factory/shared";
+import { refFor } from "@/test/refs";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
@@ -16,7 +17,7 @@ export const envelope = (e: Omit<Envelope, "parts"> & { parts?: Envelope["parts"
 });
 export const se = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId,
   at,
   event,
@@ -27,7 +28,8 @@ export const resetSeq = () => {
 
 /** A complete AgentSummary: a root, local, active agent from the `dev` template. */
 export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => ({
-  slug: "dev",
+  ref: refFor(over.handle ?? "dev"),
+  handle: "dev",
   displayName: "Dev agent",
   description: "",
   status: "idle",
@@ -36,7 +38,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   kind: "persistent",
   manageOrg: false,
   template: "dev",
-  reportsTo: { kind: "user", handle: "or" },
+  reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
   reports: 0,
   openTasks: 0,
   credential: "work",

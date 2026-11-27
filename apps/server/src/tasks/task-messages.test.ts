@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { Router } from "../messaging/router.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -14,14 +14,14 @@ beforeEach(async () => {
   const { user } = await signUp(h.app, { handle: "or" });
   creatorId = user.id;
   taskId = randomUUID();
-  await h.sql`insert into tasks (id, title, created_by_user_id) values (${taskId}, 'Plan the migration', ${creatorId})`;
-  await h.seedAgent({ slug: "dev" });
+  await h.sql`insert into tasks (id, title, created_by_id) values (${taskId}, 'Plan the migration', ${creatorId})`;
+  await h.seedAgent({ handle: "dev" });
 });
 afterEach(() => h.close());
 
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
+const proc = (handle: string) => driver.startsOf(handle).at(-1);
 async function dev() {
-  const a = await h.app.store.agentBySlug("dev");
+  const a = await agentRowOf(h.app, "dev");
   if (!a) throw new Error("seed");
   return a;
 }
@@ -50,7 +50,7 @@ async function handOff(
     h.app.router.handOffTaskRows([{ row, wake }]);
     await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
     await deliver.mock.results[0]?.value;
-    await (await h.app.runtimes.bySlug("dev"))?.settled();
+    await (await runtimeOf(h.app, "dev"))?.settled();
   } finally {
     deliver.mockRestore();
   }
@@ -95,9 +95,10 @@ test("to an errored agent a task_message stays pending and starts no attempt", a
   await makeErrored();
   const row = await update();
   await handOff(row, "task_message");
-  const [a] = await h.sql`select status, attempting from agents where slug = 'dev'`;
+  const [a] =
+    await h.sql`select status, attempting from agents where id = (select id from principals where handle = 'dev')`;
   expect(a).toEqual({ status: "errored", attempting: false });
-  expect(driver.starts.filter((p) => p.spec.slug === "dev")).toHaveLength(0);
+  expect(driver.startsOf("dev")).toHaveLength(0);
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("pending");
 });
 
@@ -105,7 +106,7 @@ test("a human's task comment to an errored agent starts an attempt with the mess
   await makeErrored();
   const a = await dev();
   const commentId = randomUUID();
-  await h.sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, ${creatorId}, '@dev look')`;
+  await h.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, ${creatorId}, '@dev look')`;
   const row = await h.app.store.createTaskMessage(h.db, {
     kind: "task_comment",
     taskId,
@@ -118,13 +119,17 @@ test("a human's task comment to an errored agent starts an attempt with the mess
   expect(proc("dev")).toBeDefined();
   expect(await startedReasons()).toContain("message");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));
-  expect(proc("dev")?.sent[0]?.[0]).toMatchObject({ from: "@or", kind: "task_comment", commentId });
+  expect(proc("dev")?.sent[0]?.[0]).toMatchObject({
+    from: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
+    kind: "task_comment",
+    commentId,
+  });
 });
 
 test("boot wakes an agent whose only pending row is a task row", async () => {
   await update();
   const wakes = await h.app.store.bootWakes();
-  expect(wakes.map((w) => w.slug)).toEqual(["dev"]);
+  expect(wakes.map((w) => w.handle)).toEqual(["dev"]);
 });
 
 test("createHumanMessage: a task_update to a user is a task_event inbox item", async () => {
@@ -146,7 +151,7 @@ test("createHumanMessage: a task_update to a user is a task_event inbox item", a
 test("createHumanMessage: `all` is for factory facts only; a comment can't address every human", async () => {
   await signUp(h.app, { handle: "sam" });
   const commentId = randomUUID();
-  await h.sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, ${creatorId}, 'hi')`;
+  await h.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, ${creatorId}, 'hi')`;
   await expect(
     h.app.store.createHumanMessage({
       kind: "task_comment",

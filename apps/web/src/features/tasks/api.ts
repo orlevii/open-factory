@@ -56,11 +56,11 @@ export const tasksListOptions = (f: TaskFilters) =>
 
 /** An agent's few open and in-progress tasks for Agent details (the list's default status, so no
  *  `status` parameter): not infinite (`tasksListOptions` pages 50 at a time). */
-export const agentTasksOptions = (slug: string) =>
+export const agentTasksOptions = (ref: string) =>
   queryOptions({
-    queryKey: [...tasksQueryKey, "agent", slug] as const,
+    queryKey: [...tasksQueryKey, "agent", ref] as const,
     queryFn: () =>
-      apiFetch(`/api/tasks?${new URLSearchParams({ assignee: slug, limit: "5" })}`, {
+      apiFetch(`/api/tasks?${new URLSearchParams({ assignee: ref, limit: "5" })}`, {
         schema: taskPageSchema,
       }),
     select: (page) => page.tasks,

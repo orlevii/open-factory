@@ -6,6 +6,7 @@ import { inboxItemOptions } from "@/features/inbox/api";
 import { INBOX_DWELL_MS } from "@/lib/timing";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { detail } from "@/test/session-fixtures";
 
@@ -30,12 +31,12 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(50 - n),
-  link: { kind: "session", agentSlug: "dev", seq: 40 + n },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 40 + n },
   ...o,
 });
 const items = [
@@ -59,7 +60,7 @@ beforeEach(() => {
     "GET /api/setup": () => json({ hasCredential: true, hasTemplate: true, hasAgent: true }),
     // The pane loads what it shows; unanswered (404), an errored query refetches for every new
     // observer, which isn't what these tests are about.
-    "GET /api/agents/dev": () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
     "GET /api/tasks/T-7": () =>
       json({
         key: "T-7",
@@ -67,7 +68,7 @@ beforeEach(() => {
         status: "open",
         assignee: null,
         blockedBy: [],
-        createdBy: { kind: "user", handle: "alice" },
+        createdBy: { kind: "human", ref: refFor("alice"), handle: "alice" },
         updatedAt: at(0),
         body: "",
         createdAt: at(0),
@@ -113,7 +114,7 @@ test("≥1024 plain click selects: push ?item=, marks read once, row aria-curren
   const pane = screen.getByRole("region", { name: "Reading pane" });
   expect(within(pane).getByRole("link", { name: "Open in session" })).toHaveAttribute(
     "href",
-    "/agents/dev/session?event=42",
+    `/agents/${refFor("dev")}/session?event=42`,
   );
   expect(screen.queryByText("No item selected.")).toBeNull();
 });
@@ -204,7 +205,9 @@ test("Space on a focused row selects it like Enter", async () => {
 test("<1024 rows navigate to their target, and a ?item= goes to the item's own target", async () => {
   fakeMatchMedia.installWidth(800);
   const app = renderApp("/inbox?item=i2", alice);
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/dev/session"));
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("dev")}/session`),
+  );
   expect(app.router.state.location.search).toEqual({ event: 42 });
   expect(screen.queryByRole("region", { name: "Reading pane" })).toBeNull();
 });
@@ -228,7 +231,11 @@ test("a j/k sweep prefetches only once the selection rests", async () => {
     await act(async () => vi.advanceTimersByTime(50));
   }
   // Nothing for a neighbour while the selection moves.
-  expect(api.calls.slice(start).filter((c) => c.method === "GET")).toEqual([]);
+  expect(
+    api.calls
+      .slice(start)
+      .filter((c) => c.method === "GET" && !c.url.startsWith("/api/principals")),
+  ).toEqual([]);
   await act(async () => vi.advanceTimersByTime(200));
   // Resting on i4: its neighbour i3 is the mention (task T-7).
   expect(api.calls.slice(start).map((c) => c.url)).toContain("/api/tasks/T-7");
@@ -382,7 +389,9 @@ test("<1024 a keyboard sweep through the rows fetches no task or agent; hover st
     api.calls
       .slice(start)
       .filter(
-        (c) => c.method === "GET" && (c.url === "/api/tasks/T-7" || c.url === "/api/agents/dev"),
+        (c) =>
+          c.method === "GET" &&
+          (c.url === "/api/tasks/T-7" || c.url === `/api/agents/${refFor("dev")}`),
       );
   for (let n = 0; n < 4; n++) {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown", repeat: n > 0 });

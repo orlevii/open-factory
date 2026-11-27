@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -25,8 +26,9 @@ function daily(n: number, cost = 0.5, turns = 1) {
     return { date: d.toISOString().slice(0, 10), ...totals({ costUsd: cost, turns }) };
   });
 }
-const usageRow = (o: Partial<AgentUsageRow> & { slug: string }): AgentUsageRow => ({
-  displayName: o.slug,
+const usageRow = (o: Partial<AgentUsageRow> & { handle: string }): AgentUsageRow => ({
+  ref: refFor(o.handle),
+  displayName: o.handle,
   kind: "persistent",
   archived: false,
   terminated: false,
@@ -66,27 +68,27 @@ const page = () => screen.findByRole("heading", { level: 1, name: "Usage" });
 
 const leadFamily = (): AgentUsageRow[] => [
   usageRow({
-    slug: "writer",
+    handle: "writer",
     own: totals({ costUsd: 0.5, turns: 4 }),
     total: totals({ costUsd: 0.5, turns: 4 }),
   }),
   usageRow({
-    slug: "lead",
+    handle: "lead",
     own: totals({ costUsd: 1.2, turns: 12 }),
     spawned: totals({ costUsd: 3.4, turns: 29 }),
     total: totals({ costUsd: 4.6, turns: 41 }),
   }),
-  ...["lead-a1", "lead-b2", "lead-c3"].map((slug, i) =>
+  ...["lead-a1", "lead-b2", "lead-c3"].map((handle, i) =>
     usageRow({
-      slug,
+      handle: handle,
       kind: "ephemeral",
-      spawnerSlug: "lead",
+      spawner: { ref: refFor("lead"), handle: "lead" },
       terminated: i === 0,
       own: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
       total: totals({ costUsd: 1 + i * 0.2, turns: 9 + i }),
     }),
   ),
-  ...Array.from({ length: 8 }, (_, i) => usageRow({ slug: `idle-${i}` })),
+  ...Array.from({ length: 8 }, (_, i) => usageRow({ handle: `idle-${i}` })),
 ];
 
 test("Usage: range, Daily chart, estimate line, and the Agents table sorted by total", async () => {
@@ -115,7 +117,7 @@ test("Usage: range, Daily chart, estimate line, and the Agents table sorted by t
   expect(bodyRows[0]).toHaveTextContent("$3.40");
   expect(bodyRows[0]).toHaveTextContent("$4.60");
   const lead = within(table).getByRole("link", { name: "@lead" });
-  expect(lead).toHaveAttribute("href", "/agents/lead/usage");
+  expect(lead).toHaveAttribute("href", `/agents/${refFor("lead")}/usage`);
   expect(within(table).queryByText("@lead-a1")).not.toBeInTheDocument();
 
   const disclosure = within(table).getByRole("button", { name: "Show 3 spawned agents of @lead" });
@@ -123,7 +125,7 @@ test("Usage: range, Daily chart, estimate line, and the Agents table sorted by t
   await userEvent.click(disclosure);
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
   const child = within(table).getByRole("link", { name: "@lead-c3" });
-  expect(child).toHaveAttribute("href", "/agents/lead-c3/usage");
+  expect(child).toHaveAttribute("href", `/agents/${refFor("lead-c3")}/usage`);
   const childRow = child.closest("tr") as HTMLElement;
   const cells = within(childRow).getAllByRole("cell");
   // Agent, turns, own, spawned (blank), total.
@@ -145,7 +147,7 @@ test("Usage: agents with no usage fold into one row with Show", async () => {
   await userEvent.click(show);
   expect(within(table).getByRole("link", { name: "@idle-7" })).toHaveAttribute(
     "href",
-    "/agents/idle-7/usage",
+    `/agents/${refFor("idle-7")}/usage`,
   );
 });
 
@@ -157,8 +159,8 @@ test("Usage: the By credential table with cost, top agents and the rate-limit li
       credUsage({
         totals: totals({ costUsd: 4.12, turns: 30 }),
         agents: [
-          { slug: "lead", costUsd: 3 },
-          { slug: "writer", costUsd: 1.12 },
+          { ref: refFor("lead"), handle: "lead", costUsd: 3 },
+          { ref: refFor("writer"), handle: "writer", costUsd: 1.12 },
         ],
         rateLimit: {
           status: "allowed_warning",
@@ -190,7 +192,7 @@ test("Usage: the By credential table with cost, top agents and the rate-limit li
   expect(r).toHaveTextContent("$4.12");
   expect(within(r).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead/usage",
+    `/agents/${refFor("lead")}/usage`,
   );
   expect(cells[4]).toHaveTextContent("82% of the 5-hour limit used");
 });
@@ -213,7 +215,7 @@ test("the rate-limit lines' usage credentials refetch every minute while Usage i
 test("Usage: all-zero days show the empty line instead of the chart; credentials stay", async () => {
   world({
     daily: daily(30, 0, 0),
-    agents: [usageRow({ slug: "lead" })],
+    agents: [usageRow({ handle: "lead" })],
     credentials: [credUsage()],
   });
   renderApp("/usage", alice);

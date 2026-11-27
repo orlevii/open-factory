@@ -2,8 +2,10 @@ import { z } from "zod";
 import { avatarColorSchema } from "./avatar.ts";
 import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
+import { handleSchema } from "./handle.ts";
 import { MSG } from "./messages.ts";
-import { nameSchema, slugSchema } from "./names.ts";
+import { nameSchema } from "./names.ts";
+import { normaliseRef } from "./ref.ts";
 import { liveCronSchema } from "./schedules.ts";
 import { templateIssueSchema } from "./templates.ts";
 
@@ -56,7 +58,11 @@ export const agentLiveShape = {
 };
 
 /** I9 §4.5: who an agent reports to; never null. A persistent agent's manager is an agent or a human, an ephemeral agent's its spawner. `handle` is bare. */
-export const reportsToSchema = z.object({ kind: z.enum(["agent", "user"]), handle: z.string() });
+export const reportsToSchema = z.object({
+  kind: z.enum(["agent", "human"]),
+  ref: z.string(),
+  handle: z.string(),
+});
 export type ReportsTo = z.infer<typeof reportsToSchema>;
 
 /** I9 §4.6: a resolved config value and where it comes from: the agent's own overlay, its template, or neither (Claude Code's default). */
@@ -66,15 +72,18 @@ export const resolvedValueSchema = z.object({
 });
 export type ResolvedValue = z.infer<typeof resolvedValueSchema>;
 
-/** `"@handle"` of an agent or a person; the leading `@` is optional and dropped. Whether it exists is the service's to judge. */
+/** The ref of an agent or a person (a typed or copied one is normalised). Whether it exists is the service's to judge. */
 export const managerRefSchema = z
   .string()
   .trim()
-  .transform((s) => (s.startsWith("@") ? s.slice(1) : s))
-  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerUnknown));
+  .min(1, MSG.managerRequired)
+  .transform((s) => normaliseRef(s) ?? "")
+  .pipe(z.string().min(1, MSG.managerUnknown));
 
 export const agentSummarySchema = z.object({
-  slug: z.string(),
+  /** The agent's principal ref: what URLs and protocol keys name it by. `handle` is its current, renamable name. */
+  ref: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   description: z.string(),
   status: agentStatusSchema,
@@ -100,7 +109,8 @@ export const agentSummarySchema = z.object({
   depth: z.number().int().nonnegative(),
   archivedAt: z.string().nullable(),
   terminatedAt: z.string().optional(),
-  terminatedBy: z.string().optional(),
+  /** Who ended it; null when the factory did (the idle TTL). Absent while the agent isn't terminated. */
+  terminatedBy: z.object({ ref: z.string(), handle: z.string() }).nullable().optional(),
   workspacePinned: z.boolean().optional(),
   workspaceGraceEndsAt: z.string().optional(),
   workspaceDeletedAt: z.string().optional(),
@@ -167,6 +177,7 @@ export type EventsPage = z.infer<typeof eventsPageSchema>;
 
 /** I1 §6.6: one human message to one to ten agents; attachments only with a single recipient. */
 export const sendMessagesBodySchema = z.object({
+  /** Refs of the recipients (agents or people). */
   to: z.array(z.string().min(1).max(65)).min(1).max(10),
   body: z
     .string()
@@ -175,7 +186,7 @@ export const sendMessagesBodySchema = z.object({
     .refine((s) => utf8.encode(s).length <= MAX_BODY_BYTES, "Message is larger than 64 KB"),
   urgent: z.boolean().default(false),
   clientMessageId: z.string().uuid().optional(),
-  /** U3 §13.5: upload ids from `POST /api/agents/:slug/uploads`, at most 10. */
+  /** U3 §13.5: upload ids from `POST /api/agents/:ref/uploads`, at most 10. */
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
 /** Why a recipient was refused: the router's codes, so a client never parses `reason`. */
@@ -209,7 +220,7 @@ export const sendMessageToolSchema = z.object({
     .array(
       z
         .string()
-        .max(65)
+        .max(80)
         .refine((s) => s.trim().length > 0, "Name a recipient"),
     )
     .min(1)
@@ -218,7 +229,7 @@ export const sendMessageToolSchema = z.object({
   urgent: z.boolean().default(false),
 });
 export const sendCommandToolSchema = z.object({
-  target: z.string().max(65), // a handle (64) with its @
+  target: z.string().max(80), // a mention <@ref|handle>, a ref or an @handle
   command: z.string(),
 });
 export const listPeersToolSchema = z.object({
@@ -252,10 +263,10 @@ export const spawnAgentToolSchema = (templates: [string, ...string[]]) =>
     description: z.string().describe("What this agent is for (one or two sentences)"),
     prompt: z.string().describe("The brief; it becomes the agent's first message"),
   });
-export const terminateAgentToolSchema = z.strictObject({ slug: z.string().min(1).max(64) });
+export const terminateAgentToolSchema = z.strictObject({ target: z.string().min(1).max(80) });
 export const createAgentBodySchema = z.object({
   template: nameSchema,
-  slug: slugSchema,
+  handle: handleSchema,
   displayName: z.string().trim().min(1, "Enter a display name.").max(80),
   description: z.string().trim().max(500),
   reportsTo: managerRefSchema,
@@ -267,6 +278,7 @@ export type CreateAgentBody = z.infer<typeof createAgentBodySchema>;
 export const patchAgentBodySchema = z
   .strictObject({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
+    handle: handleSchema,
     description: z.string().trim().max(500),
     reportsTo: managerRefSchema,
     credential: nameSchema,
@@ -285,7 +297,7 @@ export const resetPersonaResponseSchema = z.object({
   backupDir: z.string().optional(),
 });
 
-/** `GET /api/agents/:slug/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
+/** `GET /api/agents/:ref/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
 export const agentConfigResponseSchema = z.object({
   overlay: z.record(z.string(), z.unknown()),
   version: z.string(),
@@ -300,7 +312,7 @@ export const agentConfigResponseSchema = z.object({
 export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;
 
 /**
- * `PUT /api/agents/:slug/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
+ * `PUT /api/agents/:ref/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
  * with `issues` (paths and constant messages) instead of a generic body error.
  */
 export const putAgentConfigBodySchema = z.object({

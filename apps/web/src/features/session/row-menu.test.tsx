@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { envelope } from "@/test/session-fixtures";
 import { formatTime } from "./format";
@@ -89,19 +90,39 @@ const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
 });
 
 test("Open in chat: on your own messages with this agent, and on a send to you", () => {
-  const chat = (row: Row, self?: string) =>
-    rowMenuItems(row, "dev", self).filter((i) => i.kind === "chat");
-  expect(chat(messageFrom("@or", "human"), "or")).toEqual([
-    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m4" },
+  // Stored envelopes and send results write principals as mentions; your ref is what says "you".
+  const OR = "<@k7x2m9qd|or>";
+  const SAM = "<@p3dh8vcn|sam>";
+  const chat = (row: Row, selfRef?: string) =>
+    rowMenuItems(row, "dev", selfRef).filter((i) => i.kind === "chat");
+  expect(chat(messageFrom(OR, "human"), "k7x2m9qd")).toEqual([
+    { kind: "chat", label: "Open in chat", agentRef: "dev", messageId: "m4" },
   ]);
-  // Someone else's message, or no known handle: it isn't in your chat.
-  expect(chat(messageFrom("@sam", "human"), "or")).toEqual([]);
-  expect(chat(messageFrom("@or", "human"))).toEqual([]);
-  expect(chat(messageFrom("@lead", "agent"), "or")).toEqual([]);
-  expect(chat(outgoing("@or", { results: [reached("@or", "human", "m5")] }), "or")).toEqual([
-    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m5" },
+  // The ref counts, whatever label the envelope carried when it was written.
+  expect(chat(messageFrom("<@k7x2m9qd|old-name>", "human"), "k7x2m9qd")).toHaveLength(1);
+  // Someone else's message, or no known ref: it isn't in your chat.
+  expect(chat(messageFrom(SAM, "human"), "k7x2m9qd")).toEqual([]);
+  expect(chat(messageFrom(OR, "human"))).toEqual([]);
+  expect(chat(messageFrom("<@dev00000|lead>", "agent"), "k7x2m9qd")).toEqual([]);
+  expect(chat(outgoing("@or", { results: [reached(OR, "human", "m5")] }), "k7x2m9qd")).toEqual([
+    { kind: "chat", label: "Open in chat", agentRef: "dev", messageId: "m5" },
   ]);
-  expect(chat(outgoing("@sam", { results: [reached("@sam", "human")] }), "or")).toEqual([]);
+  expect(chat(outgoing("@sam", { results: [reached(SAM, "human")] }), "k7x2m9qd")).toEqual([]);
+});
+
+test("the drawer title names a mentioned sender and a mentioned report by their handle", () => {
+  expect(rowMenuTitle(messageFrom("<@k7x2m9qd|or>", "human"), "dev")).toMatch(
+    /^Message from @or · /,
+  );
+  const group: Row = {
+    kind: "update_group",
+    seq: 5,
+    at,
+    about: "<@dev00000|dev>",
+    envelopes: [],
+    key: "5",
+  };
+  expect(rowMenuTitle(group, "lead")).toMatch(/^Updates about @dev · /);
 });
 
 test("outgoing: View tool call, and Open in inbox only when it went to a human", () => {
@@ -111,7 +132,7 @@ test("outgoing: View tool call, and Open in inbox only when it went to a human",
     "View tool call",
     "Open in inbox",
   ]);
-  expect(labels(outgoing("@b", { results: [reached("@b", "agent")] }))).toEqual([
+  expect(labels(outgoing("@b", { results: [reached("<@b0b00001|b>", "agent")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
@@ -261,7 +282,7 @@ test("a refused clipboard says Couldn't copy inline", async () => {
 
 const timeline = (rows: Row[]) => (
   <Timeline
-    slug="dev"
+    agentRef={refFor("dev")}
     rows={rows}
     failedIds={new Set()}
     interruptedEnds={new Set()}
@@ -340,7 +361,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
       kind: left ? "peer_left" : "peer_joined",
       urgent: false,
       body: "",
-      subject: { slug: "bob", displayName: "Bob", relation: "peer", left },
+      subject: { handle: "bob", displayName: "Bob", relation: "peer", left },
     }),
   });
   expect(rowMenuTitle(peer(), "dev")).toBe("@bob joined");

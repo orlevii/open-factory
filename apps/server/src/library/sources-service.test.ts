@@ -18,12 +18,16 @@ import type { SkillSourceRow } from "@open-factory/db";
 import { MSG } from "@open-factory/shared";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
+import { testRef } from "../test/principals.ts";
 import { runGit } from "./git.ts";
 import { removeTree } from "./git-fetch.ts";
 import { libraryLock } from "./locks.ts";
 import { SourcesService, type SourcesStore } from "./sources-service.ts";
 import { makeFixtureRepo } from "./testing/fixture-repo.ts";
 import { memorySourcesStore } from "./testing/memory-sources-store.ts";
+
+const OR = { id: "u-or", ref: testRef("u-or"), handle: "or" };
+const ANA = { id: "u-ana", ref: testRef("u-ana"), handle: "ana" };
 
 const gate = vi.hoisted(() => ({ delayMs: 0, inflight: 0, max: 0 }));
 vi.mock("./git.ts", async (orig) => {
@@ -156,7 +160,7 @@ const repoDir = () => path.join(tmp, "gh", "acme", "x.git");
 const ghBody = (previewId: string, skills: string[]) =>
   ({ kind: "github", previewId, skills }) as const;
 const preview = (s: Setup, extra: { subpath?: string; branch?: string } = {}) =>
-  s.svc.preview({ kind: "github", repo: "acme/x", ...extra }, "@or");
+  s.svc.preview({ kind: "github", repo: "acme/x", ...extra }, OR);
 
 /** Commit 0 on branch `old`, commit 1 on main. */
 async function twoCommitRepo(
@@ -169,7 +173,7 @@ async function twoCommitRepo(
 /** A source pinned at commit 0 whose branch then follows main, which is at commit 1. */
 async function addedAtOld(s: Setup, skills: string[]) {
   const p = await preview(s, { branch: "old" });
-  const { source } = await s.svc.add(ghBody(p.previewId as string, skills), "@or");
+  const { source } = await s.svc.add(ghBody(p.previewId as string, skills), OR);
   await s.store.update(source.id, { branch: "main" });
   return source;
 }
@@ -211,7 +215,7 @@ describe("preview", () => {
   test("a name another source holds is taken by that source", async () => {
     await makeFixtureRepo(repoDir(), { commits: [{ "tdd/SKILL.md": md("tdd") }] });
     const s = setup();
-    await s.svc.add(ghBody((await preview(s)).previewId as string, ["tdd"]), "@or");
+    await s.svc.add(ghBody((await preview(s)).previewId as string, ["tdd"]), OR);
     const again = await preview(s);
     expect(again.found).toMatchObject([
       { name: "tdd", pickable: false, reason: "taken", takenBy: "acme/x" },
@@ -226,17 +230,17 @@ describe("preview", () => {
     writeFileSync(path.join(tmp, "elsewhere", "SKILL.md"), md("lnk"));
     symlinkSync(path.join(tmp, "elsewhere"), path.join(dir, "lnk"));
     const s = setup();
-    expect((await s.svc.preview({ kind: "folder", path: dir }, "@or")).found).toMatchObject([
+    expect((await s.svc.preview({ kind: "folder", path: dir }, OR)).found).toMatchObject([
       { name: "lnk", pickable: false, reason: "link" },
       { name: "real", pickable: true },
     ]);
-    const one = await s.svc.preview({ kind: "folder", path: path.join(dir, "real") }, "@or");
+    const one = await s.svc.preview({ kind: "folder", path: path.join(dir, "real") }, OR);
     expect(one.found).toMatchObject([{ name: "real", pickable: true }]);
   });
 
   test("a folder preview of the home folder is a field error", async () => {
     const s = setup();
-    const e = await s.svc.preview({ kind: "folder", path: "~" }, "@or").catch((x) => x);
+    const e = await s.svc.preview({ kind: "folder", path: "~" }, OR).catch((x) => x);
     expect(e).toMatchObject({ extra: { fields: { path: MSG.folderHome } } });
   });
 
@@ -285,11 +289,11 @@ describe("add", () => {
     });
     const s = setup();
     const p = (await preview(s)).previewId as string;
-    await expectApi(s.svc.add(ghBody(p, ["bad"]), "@or"), 400, "validation_error");
+    await expectApi(s.svc.add(ghBody(p, ["bad"]), OR), 400, "validation_error");
     // Taken after the preview: a host skill appears before the add.
     mkdirSync(path.join(claude, "skills", "tdd"), { recursive: true });
     writeFileSync(path.join(claude, "skills", "tdd", "SKILL.md"), md("tdd"));
-    await expectApi(s.svc.add(ghBody(p, ["tdd"]), "@or"), 409, "name_taken");
+    await expectApi(s.svc.add(ghBody(p, ["tdd"]), OR), 409, "name_taken");
   });
 
   test("a folder add refuses a name a source holds", async () => {
@@ -297,16 +301,12 @@ describe("add", () => {
     mkdirSync(path.join(dir, "a"), { recursive: true });
     writeFileSync(path.join(dir, "a", "SKILL.md"), md("a"));
     const s = setup();
-    const added = await s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, "@or");
+    const added = await s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, OR);
     expect(added).toMatchObject({
       status: 201,
       source: { kind: "folder", skills: ["a"], state: "ready" },
     });
-    await expectApi(
-      s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, "@or"),
-      409,
-      "name_taken",
-    );
+    await expectApi(s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, OR), 409, "name_taken");
   });
 
   test("a live preview installs the pin read-only and records the trees", async () => {
@@ -315,17 +315,17 @@ describe("add", () => {
     });
     const s = setup();
     const p = await preview(s);
-    const { status, source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@ana");
+    const { status, source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), ANA);
     expect(status).toBe(201);
     expect(source).toMatchObject({ state: "ready", skills: ["tdd"], pin: p.commit });
     const row = (await s.store.all())[0] as SkillSourceRow;
-    expect(row.addedBy).toBe("@ana");
+    expect(row.addedById).toBe(ANA.id);
     expect(Object.keys(row.trees ?? {})).toEqual(["tdd"]);
     const dest = path.join(fh, "state/library/github", row.id, p.commit as string);
     expect(existsSync(path.join(dest, "tdd/SKILL.md"))).toBe(true);
     expect(statSync(path.join(dest, "tdd/SKILL.md")).mode & 0o222).toBe(0);
     // The preview was consumed.
-    await expect(s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@ana")).rejects.toMatchObject({
+    await expect(s.svc.add(ghBody(p.previewId as string, ["tdd"]), ANA)).rejects.toMatchObject({
       extra: { fields: { previewId: expect.any(String) } },
     });
   });
@@ -338,7 +338,7 @@ describe("add", () => {
       recursive: true,
       force: true,
     });
-    const { status, source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
+    const { status, source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), OR);
     expect([status, source.state]).toEqual([202, "adding"]);
     await s.svc.idle();
     const row = (await s.store.all())[0] as SkillSourceRow;
@@ -360,7 +360,7 @@ describe("add", () => {
       force: true,
     });
     rmSync(repoDir(), { recursive: true, force: true });
-    await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
+    await s.svc.add(ghBody(p.previewId as string, ["tdd"]), OR);
     await s.svc.idle();
     expect(await s.store.all()).toEqual([]);
     // The web learns of the failure from the frame (a toast), since the row is gone.
@@ -442,7 +442,7 @@ describe("check and update", () => {
     const s = setup();
     const src = await addedAtOld(s, ["gone", "lint", "tdd"]);
     await s.svc.check(src.id);
-    const upd = await s.svc.update(src.id, r.shas[1] as string, "@ana");
+    const upd = await s.svc.update(src.id, r.shas[1] as string, ANA);
     expect(upd).toMatchObject({ pin: r.shas[1], skills: ["lint", "tdd"], updateCommit: null });
     const row = (await s.store.all())[0] as SkillSourceRow;
     expect(Object.keys(row.trees ?? {})).toEqual(["lint", "tdd"]);
@@ -454,7 +454,7 @@ describe("check and update", () => {
     expect(s.changed).toEqual([
       {
         skills: ["gone", "lint", "tdd"],
-        by: "@ana",
+        by: `<@${ANA.ref}>`,
         before: {
           skills: { gone: "captured", lint: "captured", tdd: "captured" },
         },
@@ -473,7 +473,7 @@ describe("check and update", () => {
     const src = await addedAtOld(s, ["gone", "tdd"]);
     await s.svc.check(src.id);
     const e = await expectApi(
-      s.svc.update(src.id, r.shas[1] as string, "@or"),
+      s.svc.update(src.id, r.shas[1] as string, OR),
       409,
       "update_drops_used",
     );
@@ -494,11 +494,7 @@ describe("check and update", () => {
     const s = setup();
     const src = await addedAtOld(s, ["tdd"]);
     await s.svc.check(src.id);
-    const e = await expectApi(
-      s.svc.update(src.id, r.shas[1] as string, "@or"),
-      409,
-      "empties_source",
-    );
+    const e = await expectApi(s.svc.update(src.id, r.shas[1] as string, OR), 409, "empties_source");
     expect(e.message).toBe(
       "This update removes every skill you picked. Remove the source instead.",
     );
@@ -508,14 +504,14 @@ describe("check and update", () => {
     const r = await twoCommitRepo(A, A);
     const s = setup();
     const src = await addedAtOld(s, ["tdd"]);
-    await expectApi(s.svc.update(src.id, r.shas[1] as string, "@or"), 409, "stale_update");
+    await expectApi(s.svc.update(src.id, r.shas[1] as string, OR), 409, "stale_update");
   });
 
   test("refetch restores a cache that went missing", async () => {
     await makeFixtureRepo(repoDir(), { commits: [A] });
     const s = setup();
     const p = await preview(s);
-    const { source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
+    const { source } = await s.svc.add(ghBody(p.previewId as string, ["tdd"]), OR);
     const dest = path.join(fh, "state/library/github", source.id, p.commit as string);
     await removeTree(dest);
     expect(existsSync(dest)).toBe(false);
@@ -549,7 +545,7 @@ describe("check and update", () => {
         skills: [`s${i}`],
         state: "ready",
         startedAt: new Date(nowMs),
-        addedBy: "@or",
+        addedById: "u-or",
         addedAt: new Date(nowMs + i),
         deletedAt: null,
       });
@@ -570,16 +566,13 @@ describe("find more skills", () => {
       commits: [{ "tdd/SKILL.md": md("tdd"), "lint/SKILL.md": md("lint") }],
     });
     const s = setup();
-    const { source } = await s.svc.add(
-      ghBody((await preview(s)).previewId as string, ["tdd"]),
-      "@or",
-    );
+    const { source } = await s.svc.add(ghBody((await preview(s)).previewId as string, ["tdd"]), OR);
     const found = await s.svc.find(source.id);
     expect(found.found.map((f) => [f.name, f.pickable])).toEqual([
       ["lint", true],
       ["tdd", false],
     ]);
-    const next = await s.svc.addSkills(source.id, ["lint"], "@or");
+    const next = await s.svc.addSkills(source.id, ["lint"], OR);
     expect(next.skills).toEqual(["lint", "tdd"]);
     expect(Object.keys((await s.store.all())[0]?.trees ?? {}).sort()).toEqual(["lint", "tdd"]);
   });
@@ -590,7 +583,7 @@ describe("remove and restore", () => {
     const dir = path.join(tmp, `skills-${name}`);
     mkdirSync(path.join(dir, name), { recursive: true });
     writeFileSync(path.join(dir, name, "SKILL.md"), md(name));
-    return (await s.svc.add({ kind: "folder", path: dir, skills: [name] }, "@or")).source;
+    return (await s.svc.add({ kind: "folder", path: dir, skills: [name] }, OR)).source;
   }
 
   test("remove is refused while the source is used, naming at most three users", async () => {
@@ -616,10 +609,10 @@ describe("remove and restore", () => {
     const src = await folderSource(s);
     await s.svc.remove(src.id);
     nowMs += 29_999;
-    expect(await s.svc.restore(src.id, "@ana")).toMatchObject({ id: src.id, skills: ["a"] });
+    expect(await s.svc.restore(src.id, ANA)).toMatchObject({ id: src.id, skills: ["a"] });
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
     expect(s.changed).toEqual([
-      { skills: ["a"], by: "@ana", before: { skills: { a: "captured" } } },
+      { skills: ["a"], by: `<@${ANA.ref}>`, before: { skills: { a: "captured" } } },
     ]);
     expect(s.lockFreeInCallback).toEqual([true]);
     expect(s.publishDepth).toEqual([0, 0, 0]);
@@ -630,7 +623,7 @@ describe("remove and restore", () => {
     const src = await folderSource(s);
     await s.svc.remove(src.id);
     nowMs += 30_000;
-    await expectApi(s.svc.restore(src.id, "@ana"), 409, "undo_over");
+    await expectApi(s.svc.restore(src.id, ANA), 409, "undo_over");
     expect((await s.store.all())[0]?.deletedAt).not.toBeNull();
   });
 
@@ -641,8 +634,8 @@ describe("remove and restore", () => {
     const dir = path.join(tmp, "other");
     mkdirSync(path.join(dir, "a"), { recursive: true });
     writeFileSync(path.join(dir, "a", "SKILL.md"), md("a"));
-    await s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, "@or");
-    await expectApi(s.svc.restore(first.id, "@ana"), 409, "name_taken");
+    await s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, OR);
+    await expectApi(s.svc.restore(first.id, ANA), 409, "name_taken");
   });
 });
 
@@ -666,12 +659,9 @@ describe("races", () => {
   test("adding skills after the pin moved is refused as stale", async () => {
     await makeFixtureRepo(repoDir(), { commits: [A] });
     const s = setup();
-    const { source } = await s.svc.add(
-      ghBody((await preview(s)).previewId as string, ["tdd"]),
-      "@or",
-    );
+    const { source } = await s.svc.add(ghBody((await preview(s)).previewId as string, ["tdd"]), OR);
     gate.delayMs = 40;
-    const running = expectApi(s.svc.addSkills(source.id, ["lint"], "@or"), 409, "pin_moved");
+    const running = expectApi(s.svc.addSkills(source.id, ["lint"], OR), 409, "pin_moved");
     await sleep(15);
     await s.store.update(source.id, { commit: "f".repeat(40) });
     await running;
@@ -681,11 +671,8 @@ describe("races", () => {
   test("adding a skill the pin doesn't have is a 400, not a git failure", async () => {
     await makeFixtureRepo(repoDir(), { commits: [A] });
     const s = setup();
-    const { source } = await s.svc.add(
-      ghBody((await preview(s)).previewId as string, ["tdd"]),
-      "@or",
-    );
-    await expectApi(s.svc.addSkills(source.id, ["nope"], "@or"), 400, "validation_error");
+    const { source } = await s.svc.add(ghBody((await preview(s)).previewId as string, ["tdd"]), OR);
+    await expectApi(s.svc.addSkills(source.id, ["nope"], OR), 400, "validation_error");
   });
 
   test("a failed re-fetch leaves a row that was meanwhile made ready", async () => {
@@ -697,7 +684,7 @@ describe("races", () => {
       force: true,
     });
     gate.delayMs = 40;
-    await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
+    await s.svc.add(ghBody(p.previewId as string, ["tdd"]), OR);
     await sleep(15);
     const id = (await s.store.all())[0]?.id as string;
     rmSync(repoDir(), { recursive: true, force: true });
@@ -738,7 +725,7 @@ describe("update view and update edge cases", () => {
     const src = await addedAtOld(s, ["lint", "tdd"]);
     await s.svc.check(src.id);
     const e = await expectApi(
-      s.svc.update(src.id, r.shas[1] as string, "@or"),
+      s.svc.update(src.id, r.shas[1] as string, OR),
       409,
       "update_drops_used",
     );
@@ -820,7 +807,7 @@ describe("boot repair", () => {
     skills: ["tdd"],
     state: "adding",
     startedAt: new Date(nowMs),
-    addedBy: "@or",
+    addedById: "u-or",
     addedAt: new Date(nowMs),
     deletedAt: null,
     ...o,
@@ -879,7 +866,7 @@ describe("boot repair", () => {
           skills: [`s${i}`],
           state: "ready",
           startedAt: new Date(nowMs),
-          addedBy: "@or",
+          addedById: "u-or",
           addedAt: new Date(nowMs + i),
           deletedAt: null,
         });

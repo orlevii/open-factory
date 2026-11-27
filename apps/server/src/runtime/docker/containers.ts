@@ -8,7 +8,6 @@ import { containerSpec, specHash } from "./spec-hash.ts";
 export { specHash };
 
 export const LABEL_AGENT_ID = "io.open-factory.agent-id";
-export const LABEL_SLUG = "io.open-factory.slug";
 export const LABEL_SPEC_HASH = "io.open-factory.spec-hash";
 export const LABEL_IMAGE_ID = "io.open-factory.image-id";
 /** The image reference the agent asked for; the container runs the image by id. */
@@ -52,8 +51,8 @@ export class ImageMissingError extends AgentStartError {
   }
 }
 
-export function containerName(slug: string, agentId: string): string {
-  return `open-factory-${slug}-${agentId.slice(0, 8)}`;
+export function containerName(ref: string): string {
+  return `open-factory-${ref}`;
 }
 
 /**
@@ -71,7 +70,6 @@ export function createOptions(i: {
   uid: number;
   gid: number;
   agentId: string;
-  slug: string;
   specHash: string;
 }): ContainerCreateOptions {
   return {
@@ -79,7 +77,6 @@ export function createOptions(i: {
     ...containerSpec({ imageId: i.imageId, mounts: i.mounts, uid: i.uid, gid: i.gid }),
     Labels: {
       [LABEL_AGENT_ID]: i.agentId,
-      [LABEL_SLUG]: i.slug,
       [LABEL_SPEC_HASH]: i.specHash,
       [LABEL_IMAGE_ID]: i.imageId,
       [LABEL_IMAGE]: i.image,
@@ -125,8 +122,8 @@ export class ContainerManager {
   }
 
   /** Stops the agent's container when it runs (bounded). True when it was running. */
-  async stopIfRunning(agentId: string, slug: string): Promise<boolean> {
-    const c = await this.ours(agentId, slug);
+  async stopIfRunning(agentId: string, ref: string): Promise<boolean> {
+    const c = await this.ours(agentId, ref);
     if (!c?.running) return false;
     await this.boundedStop(c.id);
     return true;
@@ -140,7 +137,7 @@ export class ContainerManager {
    */
   async ensure(i: {
     agentId: string;
-    slug: string;
+    ref: string;
     image: string;
     mounts: Mount[];
     mountCheck: MountCheckContext;
@@ -165,14 +162,11 @@ export class ContainerManager {
       return again;
     };
 
-    const name = containerName(i.slug, i.agentId);
-    let existing = await this.ours(i.agentId, i.slug);
+    const name = containerName(i.ref);
+    let existing = await this.ours(i.agentId, i.ref);
     let action: EnsureResult["action"] = "started";
     if (existing && existing.labels[LABEL_SPEC_HASH] !== hash) {
-      this.log.info(
-        { container: existing.id, slug: i.slug },
-        "re-creating container (spec changed)",
-      );
+      this.log.info({ container: existing.id, ref: i.ref }, "re-creating container (spec changed)");
       await this.boundedStop(existing.id);
       await this.docker.remove(existing.id);
       existing = undefined;
@@ -195,13 +189,12 @@ export class ContainerManager {
           uid,
           gid,
           agentId: i.agentId,
-          slug: i.slug,
           specHash: hash,
         }),
       );
       running = false;
       if (action !== "recreated") action = "created";
-      this.log.info({ container: id, slug: i.slug, imageId }, `container ${action}`);
+      this.log.info({ container: id, ref: i.ref, imageId }, `container ${action}`);
     }
 
     if (!running) {
@@ -220,23 +213,23 @@ export class ContainerManager {
   }
 
   /** Stops (never removes: unarchive must keep working) the agent's container. A missing or stopped one is fine. */
-  async stop(agentId: string, slug: string): Promise<void> {
-    await this.stopIfRunning(agentId, slug);
+  async stop(agentId: string, ref: string): Promise<void> {
+    await this.stopIfRunning(agentId, ref);
   }
 
   /**
    * The last resort when a stop failed twice (spec §9.6, Restart of a `stop_failed` agent): force-remove the agent's
    * container (Docker kills it first). Bounded like a stop. A missing container is fine.
    */
-  async forceRemove(agentId: string, slug: string): Promise<boolean> {
-    const c = await this.ours(agentId, slug);
+  async forceRemove(agentId: string, ref: string): Promise<boolean> {
+    const c = await this.ours(agentId, ref);
     if (!c) return false;
     await bounded(
       this.docker.remove(c.id, { force: true }),
       STOP_BOUND_MS,
       `Removing container ${c.id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
     );
-    this.log.warn({ container: c.id, slug }, "container removed after its stop failed");
+    this.log.warn({ container: c.id, ref }, "container removed after its stop failed");
     return true;
   }
 
@@ -244,8 +237,8 @@ export class ContainerManager {
    * Termination (S7 §8 step 4): stop the agent's container when it runs, then remove it (archive and hibernate only
    * stop it). Each step is bounded like a stop. A missing container is fine; false when there was none.
    */
-  async remove(agentId: string, slug: string): Promise<boolean> {
-    const c = await this.ours(agentId, slug);
+  async remove(agentId: string, ref: string): Promise<boolean> {
+    const c = await this.ours(agentId, ref);
     if (!c) return false;
     if (c.running) await this.boundedStop(c.id);
     await bounded(
@@ -253,7 +246,7 @@ export class ContainerManager {
       STOP_BOUND_MS,
       `Removing container ${c.id} didn't finish within ${STOP_BOUND_MS / 1000} s.`,
     );
-    this.log.info({ container: c.id, slug }, "container removed (agent terminated)");
+    this.log.info({ container: c.id, ref }, "container removed (agent terminated)");
     return true;
   }
 
@@ -269,16 +262,16 @@ export class ContainerManager {
     );
   }
 
-  async isRunning(agentId: string, slug: string): Promise<boolean> {
-    return (await this.ours(agentId, slug))?.running ?? false;
+  async isRunning(agentId: string, ref: string): Promise<boolean> {
+    return (await this.ours(agentId, ref))?.running ?? false;
   }
 
   /**
    * The agent's container by name, only when its agent-id label says it is this agent's: the factory never starts,
    * stops or removes a container it didn't create.
    */
-  private async ours(agentId: string, slug: string): Promise<ContainerInfo | undefined> {
-    const name = containerName(slug, agentId);
+  private async ours(agentId: string, ref: string): Promise<ContainerInfo | undefined> {
+    const name = containerName(ref);
     const c = await this.docker.findContainer(name);
     if (c && c.labels[LABEL_AGENT_ID] !== agentId)
       throw new AgentStartError(`A container named ${name} exists that the factory didn't create.`);

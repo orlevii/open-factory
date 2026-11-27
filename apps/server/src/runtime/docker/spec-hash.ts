@@ -56,7 +56,7 @@ function stableJson(v: unknown): string {
 /**
  * Spec §11.2: sha256 over the create options derived from the image id, the mounts and HOST_UID/HOST_GID (and so
  * also the extra hosts, the security options and the tmpfs). Only these inputs are read, so
- * nothing else a caller passes (secrets, the credential, a slug) can re-create a container.
+ * nothing else a caller passes (secrets, the credential, a handle) can re-create a container.
  */
 export function specHash(i: SpecInputs): string {
   const spec = containerSpec({ imageId: i.imageId, mounts: i.mounts, uid: i.uid, gid: i.gid });

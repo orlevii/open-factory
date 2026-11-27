@@ -29,7 +29,7 @@ export const templatesRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook("onRequest", requireUser);
   const humanOf = (req: FastifyRequest): Extract<Actor, { kind: "human" }> => {
     if (!req.user) throw new Error("requireUser did not set request.user");
-    return { kind: "human", handle: req.user.handle };
+    return { kind: "human", ref: req.user.ref, handle: req.user.handle };
   };
 
   app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {

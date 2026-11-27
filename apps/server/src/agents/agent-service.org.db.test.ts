@@ -5,10 +5,12 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { seedTestUser } from "../test/handles.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -17,7 +19,7 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let svc: AgentService;
 let runtimes: AgentRuntimes;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 function writeTemplate(name: string, runtime: "docker" | "local") {
@@ -29,22 +31,22 @@ function writeTemplate(name: string, runtime: "docker" | "local") {
   );
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
 }
-const body = (slug: string, template = "dockertpl") => ({
+const body = (handle: string, template = "dockertpl") => ({
   template,
-  slug,
-  displayName: slug,
+  handle,
+  displayName: handle,
   description: "",
   reportsTo: "or",
   credential: "work",
 });
-const rowOf = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+const rowOf = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
   return r;
 };
-const asAgent = async (slug: string): Promise<Actor> => {
-  const r = await rowOf(slug);
-  if (!r) throw new Error(`no agent ${slug}`);
-  return { kind: "agent", id: r.id, slug };
+const asAgent = async (handle: string): Promise<Actor> => {
+  const r = await rowOf(handle);
+  if (!r) throw new Error(`no agent ${handle}`);
+  return { kind: "agent", id: r.id, ref: testRef(r.id), handle };
 };
 
 beforeAll(async () => {
@@ -52,7 +54,7 @@ beforeAll(async () => {
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
   home = t.factoryHome;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -75,32 +77,32 @@ afterAll(() => t.close());
 test.each([
   ["another agent", "target"],
   ["the caller's own row", "hr-bot"],
-])("an agent can't grant manage_org to %s", async (_n, slug) => {
-  await expect(svc.update(slug, { manageOrg: true }, hr)).rejects.toThrow(
+])("an agent can't grant manage_org to %s", async (_n, handle) => {
+  await expect(svc.update(await t.refOf(handle), { manageOrg: true }, hr)).rejects.toThrow(
     new OrgRefusedError("Only a human can grant manage_org."),
   );
-  expect((await rowOf(slug))?.manageOrg).toBe(false);
+  expect((await rowOf(handle))?.manageOrg).toBe(false);
 });
 
 test("a human grants manage_org and the agent is asked to restart; the same value asks for nothing", async () => {
   const spy = vi.spyOn(runtimes, "requestRestart").mockResolvedValue(undefined);
   try {
     const id = (await rowOf("target"))?.id;
-    expect(await svc.update("target", { manageOrg: true }, human)).toMatchObject({
+    expect(await svc.update(await t.refOf("target"), { manageOrg: true }, human)).toMatchObject({
       manageOrg: true,
     });
     expect(spy).toHaveBeenCalledWith(id);
     spy.mockClear();
-    await svc.update("target", { manageOrg: true }, human);
+    await svc.update(await t.refOf("target"), { manageOrg: true }, human);
     expect(spy).not.toHaveBeenCalled();
-    await svc.update("target", { manageOrg: false }, human);
+    await svc.update(await t.refOf("target"), { manageOrg: false }, human);
   } finally {
     spy.mockRestore();
   }
 });
 
 test("an agent can't archive itself", async () => {
-  await expect(svc.archive("hr-bot", hr)).rejects.toThrow(
+  await expect(svc.archive(await t.refOf("hr-bot"), hr)).rejects.toThrow(
     new OrgRefusedError("Ask a human to archive you."),
   );
   expect((await rowOf("hr-bot"))?.archivedAt).toBeNull();
@@ -108,19 +110,24 @@ test("an agent can't archive itself", async () => {
 
 test("an agent can't unarchive an agent that can manage the org; a human can", async () => {
   await svc.create(body("boss"), human);
-  await svc.update("boss", { manageOrg: true }, human);
-  await svc.archive("boss", human);
-  await expect(svc.unarchive("boss", hr)).rejects.toThrow(
+  await svc.update(await t.refOf("boss"), { manageOrg: true }, human);
+  await svc.archive(await t.refOf("boss"), human);
+  await expect(svc.unarchive(await t.refOf("boss"), hr)).rejects.toThrow(
     new OrgRefusedError("Only a human can unarchive @boss: it can manage the org."),
   );
   expect((await rowOf("boss"))?.archivedAt).not.toBeNull();
-  expect(await svc.unarchive("boss", human)).toMatchObject({ archivedAt: null, manageOrg: true });
+  expect(await svc.unarchive(await t.refOf("boss"), human)).toMatchObject({
+    archivedAt: null,
+    manageOrg: true,
+  });
 });
 
 test("an agent can archive and unarchive an agent that can't manage the org", async () => {
   await svc.create(body("plain"), human);
-  expect(await svc.archive("plain", hr)).toMatchObject({ archivedAt: expect.any(String) });
-  expect(await svc.unarchive("plain", hr)).toMatchObject({ archivedAt: null });
+  expect(await svc.archive(await t.refOf("plain"), hr)).toMatchObject({
+    archivedAt: expect.any(String),
+  });
+  expect(await svc.unarchive(await t.refOf("plain"), hr)).toMatchObject({ archivedAt: null });
 });
 
 test("only a human can grant manage_org at creation; a human's grant is stored", async () => {
@@ -171,11 +178,13 @@ test("a malformed can_spawn gives invalid_config, not a TypeError", async () => 
 
 test("an agent can't edit, archive or unarchive a local agent", async () => {
   const refused = new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
-  await expect(svc.update("loc", { displayName: "Other" }, hr)).rejects.toThrow(refused);
-  await expect(svc.archive("loc", hr)).rejects.toThrow(refused);
-  await svc.archive("loc", human);
-  await expect(svc.unarchive("loc", hr)).rejects.toThrow(refused);
-  await svc.unarchive("loc", human);
+  await expect(svc.update(await t.refOf("loc"), { displayName: "Other" }, hr)).rejects.toThrow(
+    refused,
+  );
+  await expect(svc.archive(await t.refOf("loc"), hr)).rejects.toThrow(refused);
+  await svc.archive(await t.refOf("loc"), human);
+  await expect(svc.unarchive(await t.refOf("loc"), hr)).rejects.toThrow(refused);
+  await svc.unarchive(await t.refOf("loc"), human);
   expect((await rowOf("loc"))?.displayName).toBe("loc");
 });
 
@@ -219,51 +228,54 @@ test("create with a config that fails the schema creates nothing, for a human to
 
 test("an agent actor can make a human the manager of a new agent", async () => {
   expect(await svc.create({ ...body("top"), reportsTo: "or" }, hr)).toMatchObject({
-    reportsTo: { kind: "user", handle: "or" },
+    reportsTo: { kind: "human", ref: expect.any(String), handle: "or" },
     depth: 0,
   });
   const row = await rowOf("top");
-  expect(row?.reportsTo).toBeNull();
-  expect(row?.reportsToUser).toBe("u-or");
+  expect(row?.reportsTo).toBe("u-or");
 });
 
 test("an agent can be created under, and moved to, a human; an unknown or disabled handle is refused with a field error", async () => {
-  await seedTestUser(t.db, { handle: "sam", name: "Sam" });
+  await seedTestUser(t.db, "sam");
   await svc.create(body("under-sam"), human);
-  expect(await svc.update("under-sam", { reportsTo: "sam" }, human)).toMatchObject({
-    reportsTo: { kind: "user", handle: "sam" },
+  expect(await svc.update(await t.refOf("under-sam"), { reportsTo: "sam" }, human)).toMatchObject({
+    reportsTo: { kind: "human", ref: expect.any(String), handle: "sam" },
   });
-  expect(await rowOf("under-sam")).toMatchObject({ reportsTo: null, reportsToUser: "u-sam" });
-  await t.sql`update users set disabled_at = now() where handle = 'sam'`;
+  expect(await rowOf("under-sam")).toMatchObject({ reportsTo: "u-sam" });
+  await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'sam')`;
   const refused = {
     code: "validation_error",
     extra: { fields: { reportsTo: expect.any(String) } },
   };
-  await expect(svc.update("under-sam", { reportsTo: "ghost" }, human)).rejects.toMatchObject(
-    refused,
-  );
-  await expect(svc.update("target", { reportsTo: "sam" }, human)).rejects.toMatchObject(refused);
+  await expect(
+    svc.update(await t.refOf("under-sam"), { reportsTo: "ghost" }, human),
+  ).rejects.toMatchObject(refused);
+  await expect(
+    svc.update(await t.refOf("target"), { reportsTo: "sam" }, human),
+  ).rejects.toMatchObject(refused);
   await expect(svc.create({ ...body("never-sam"), reportsTo: "sam" }, human)).rejects.toMatchObject(
     refused,
   );
   expect(await rowOf("never-sam")).toBeUndefined();
-  expect((await rowOf("target"))?.reportsToUser).toBe("u-or");
+  expect((await rowOf("target"))?.reportsTo).toBe("u-or");
 });
 
 test("an agent can't report to itself, and a write that finds its human manager disabled refuses", async () => {
   await svc.create(body("self-mgr"), human);
-  await expect(svc.update("self-mgr", { reportsTo: "self-mgr" }, human)).rejects.toMatchObject({
+  await expect(
+    svc.update(await t.refOf("self-mgr"), { reportsTo: "self-mgr" }, human),
+  ).rejects.toMatchObject({
     code: "validation_error",
     extra: { fields: { reportsTo: expect.any(String) } },
   });
   // Resolution passed (the user was enabled), then a disable committed before the write: the write refuses.
-  await seedTestUser(t.db, { handle: "late", name: "Late" });
-  const plan = await svc.planUpdate("self-mgr", { reportsTo: "late" }, human);
-  await t.sql`update users set disabled_at = now() where handle = 'late'`;
+  await seedTestUser(t.db, "late");
+  const plan = await svc.planUpdate(await t.refOf("self-mgr"), { reportsTo: "late" }, human);
+  await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'late')`;
   await expect(t.db.transaction((tx) => plan.write(tx))).rejects.toMatchObject({
     code: "validation_error",
   });
-  expect((await rowOf("self-mgr"))?.reportsToUser).toBe("u-or");
+  expect((await rowOf("self-mgr"))?.reportsTo).toBe("u-or");
 });
 
 test("model and effort come from the agent's overlay, else its template, else neither", async () => {
@@ -280,8 +292,8 @@ test("model and effort come from the agent's overlay, else its template, else ne
     human,
   );
   await svc.create(body("mdl-none", "localtpl"), human);
-  const shown = async (slug: string) => {
-    const a = await svc.summary(slug);
+  const shown = async (handle: string) => {
+    const a = await svc.summary(await t.refOf(handle));
     return { model: a.model, effort: a.effort };
   };
   expect(await shown("mdl-tpl")).toEqual({
@@ -299,10 +311,10 @@ test("model and effort come from the agent's overlay, else its template, else ne
 });
 
 test("description_by names the agent that last wrote the description; a human edit clears it", async () => {
-  await svc.update("target", { description: "by agent" }, hr);
+  await svc.update(await t.refOf("target"), { description: "by agent" }, hr);
   if (hr.kind !== "agent") throw new Error("hr is an agent");
   expect((await rowOf("target"))?.descriptionBy).toBe(hr.id);
-  await svc.update("target", { description: "by human" }, human);
+  await svc.update(await t.refOf("target"), { description: "by human" }, human);
   expect((await rowOf("target"))?.descriptionBy).toBeNull();
 });
 
@@ -315,12 +327,13 @@ test("an agent's create, archive and unarchive publish one org_action each, afte
   try {
     await svc.create(body("frame-1"), hr);
     expect(await rowOf("frame-1")).toBeDefined();
-    await svc.archive("frame-1", hr);
-    await svc.unarchive("frame-1", hr);
+    await svc.archive(await t.refOf("frame-1"), hr);
+    await svc.unarchive(await t.refOf("frame-1"), hr);
+    const frame1 = await t.refOf("frame-1");
     expect(orgFrames(spy)).toEqual([
-      { type: "org_action", action: "agent_created", by: "@hr-bot", subject: "frame-1" },
-      { type: "org_action", action: "agent_archived", by: "@hr-bot", subject: "frame-1" },
-      { type: "org_action", action: "agent_unarchived", by: "@hr-bot", subject: "frame-1" },
+      { type: "org_action", action: "agent_created", by: hr.ref, subject: frame1 },
+      { type: "org_action", action: "agent_archived", by: hr.ref, subject: frame1 },
+      { type: "org_action", action: "agent_unarchived", by: hr.ref, subject: frame1 },
     ]);
   } finally {
     spy.mockRestore();
@@ -331,8 +344,8 @@ test("a human's own create, archive and unarchive publish no org_action", async 
   const spy = frames();
   try {
     await svc.create(body("frame-h"), human);
-    await svc.archive("frame-h", human);
-    await svc.unarchive("frame-h", human);
+    await svc.archive(await t.refOf("frame-h"), human);
+    await svc.unarchive(await t.refOf("frame-h"), human);
     expect(orgFrames(spy)).toEqual([]);
   } finally {
     spy.mockRestore();
@@ -341,10 +354,10 @@ test("a human's own create, archive and unarchive publish no org_action", async 
 
 test("an archive that changes nothing and a refused create publish no org_action", async () => {
   await svc.create(body("frame-n"), human);
-  await svc.archive("frame-n", human);
+  await svc.archive(await t.refOf("frame-n"), human);
   const spy = frames();
   try {
-    await svc.archive("frame-n", hr); // already archived
+    await svc.archive(await t.refOf("frame-n"), hr); // already archived
     await expect(svc.create(body("loc-3", "localtpl"), hr)).rejects.toBeInstanceOf(OrgRefusedError);
     expect(orgFrames(spy)).toEqual([]);
   } finally {
@@ -352,12 +365,23 @@ test("an archive that changes nothing and a refused create publish no org_action
   }
 });
 
-const heldBy = async (slug: string) =>
+const heldBy = async (handle: string) =>
   (
-    await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
-                where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
+    await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
+                where a.id = (select id from principals where handle = ${handle}) and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
+/** An agent's mention, as the factory writes it in a body (its principal's ref). */
+const mentionOfHandle = async (handle: string) =>
+  mentionOf(
+    testRef(
+      String(
+        (
+          await t.sql`select id from agents where id = (select id from principals where handle = ${handle})`
+        )[0]?.id,
+      ),
+    ),
+  );
 
 test("an agent actor's create, move and archive name it in the peer events; the recipient who is the actor isn't told", async () => {
   await svc.create({ ...body("pe-lead"), reportsTo: "or" }, human);
@@ -365,34 +389,36 @@ test("an agent actor's create, move and archive name it in the peer events; the 
   await svc.create({ ...body("pe-boss"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
+  const [pmo, hrMention] = [await mentionOfHandle("pe-pmo"), await mentionOfHandle("hr-bot")];
   expect(await heldBy("pe-dev")).toEqual([
     {
       kind: "peer_joined",
       notice: "peer",
-      body: "@pe-pmo (pe-pmo) joined as your peer, by @hr-bot.",
+      body: `${pmo} (pe-pmo) joined as your peer, by ${hrMention}.`,
     },
   ]);
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_joined",
       notice: "report",
-      body: "@pe-pmo (pe-pmo) joined as your report, by @hr-bot.",
+      body: `${pmo} (pe-pmo) joined as your report, by ${hrMention}.`,
     },
   ]);
   await clearPeerRows();
-  await svc.update("pe-dev", { reportsTo: "pe-boss" }, hr);
+  await svc.update(await t.refOf("pe-dev"), { reportsTo: "pe-boss" }, hr);
+  const [dev, boss] = [await mentionOfHandle("pe-dev"), await mentionOfHandle("pe-boss")];
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_left",
       notice: "report",
-      body: "@pe-dev (pe-dev) left: now reports to @pe-boss, by @hr-bot.",
+      body: `${dev} (pe-dev) left: now reports to ${boss}, by ${hrMention}.`,
     },
   ]);
   await clearPeerRows();
-  await svc.archive("pe-pmo", await asAgent("pe-lead"));
+  await svc.archive(await t.refOf("pe-pmo"), await asAgent("pe-lead"));
   // The manager did it itself, so it isn't told; a peer is.
   expect(await heldBy("pe-lead")).toEqual([
-    { kind: "peer_left", notice: "report", body: "@pe-pmo (pe-pmo) left: archived." },
+    { kind: "peer_left", notice: "report", body: `${pmo} (pe-pmo) left: archived.` },
   ]);
   expect(await heldBy("pe-dev")).toEqual([]);
 });
@@ -402,7 +428,11 @@ test("a human's create names no actor in the peer events", async () => {
   await clearPeerRows();
   await svc.create({ ...body("hm-dev"), reportsTo: "hm-lead" }, human);
   expect(await heldBy("hm-lead")).toEqual([
-    { kind: "peer_joined", notice: "report", body: "@hm-dev (hm-dev) joined as your report." },
+    {
+      kind: "peer_joined",
+      notice: "report",
+      body: `${await mentionOfHandle("hm-dev")} (hm-dev) joined as your report.`,
+    },
   ]);
 });
 
@@ -428,9 +458,9 @@ test("recordReportNotice: an archived manager gets no notice; an unloaded one ge
   await svc.create({ ...body("mgr-gone"), reportsTo: "or" }, human);
   await svc.create({ ...body("rep-n"), reportsTo: "mgr-live" }, human);
   const [live, gone, rep] = await Promise.all(["mgr-live", "mgr-gone", "rep-n"].map(rowOf));
-  await svc.archive("mgr-gone", human);
+  await svc.archive(await t.refOf("mgr-gone"), human);
   const pending = (id?: string) =>
-    t.sql`select subject_agent_id from messages where to_agent_id = ${id ?? ""} and notice = 'report_config_changed' and state = 'pending'`;
+    t.sql`select subject_agent_id from messages where to_id = ${id ?? ""} and notice = 'report_config_changed' and state = 'pending'`;
   await runtimes.recordReportNotice(gone?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);
   expect(await pending(gone?.id)).toHaveLength(0);
   await runtimes.recordReportNotice(live?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);

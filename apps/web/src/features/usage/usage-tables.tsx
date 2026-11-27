@@ -129,15 +129,15 @@ export function SpawnedTable({ rows }: { rows: AgentUsage["spawned"] }) {
       }
     >
       {rows.map((r) => (
-        <tr key={r.slug}>
+        <tr key={r.ref}>
           <td className={td}>
             <Link
-              to="/agents/$slug/usage"
-              params={{ slug: r.slug }}
+              to="/agents/$ref/usage"
+              params={{ ref: r.ref }}
               search={{}}
               className={`${linkClass} font-mono text-[0.8125rem]`}
             >
-              @{r.slug}
+              @{r.handle}
             </Link>
             {r.terminated && (
               <span className="ml-2 text-[0.8125rem] text-muted-foreground">Ended</span>

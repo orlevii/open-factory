@@ -6,6 +6,7 @@ import {
   type SessionEvent,
 } from "@open-factory/shared";
 import { expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { agentSummary, envelope } from "@/test/session-fixtures";
 import {
   eventsInOrder,
@@ -18,7 +19,7 @@ import {
 
 const ev = (seq: number): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId: null,
   at: "2026-11-18T00:00:00.000Z",
   event: { type: "turn_started" },
@@ -43,11 +44,11 @@ test("latest mode appends live events and ignores duplicates", () => {
   });
   s = sessionReducer(s, {
     type: "frame",
-    message: { type: "session_event", agent: "dev", event: ev(10) },
+    message: { type: "session_event", agent: refFor("dev"), event: ev(10) },
   });
   s = sessionReducer(s, {
     type: "frame",
-    message: { type: "session_event", agent: "dev", event: ev(10) },
+    message: { type: "session_event", agent: refFor("dev"), event: ev(10) },
   });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([7, 8, 9, 10]);
   expect(highestSeq(s)).toBe(10);
@@ -63,7 +64,7 @@ test("window mode counts live events instead of appending them", () => {
   });
   s = sessionReducer(s, {
     type: "frame",
-    message: { type: "session_event", agent: "dev", event: ev(10) },
+    message: { type: "session_event", agent: refFor("dev"), event: ev(10) },
   });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([3, 4, 5]);
   expect(s.maxSeenSeq).toBe(10);
@@ -83,7 +84,7 @@ test("earlier pages prepend; status, queue and resync frames", () => {
     type: "frame",
     message: {
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       ...noRestart,
@@ -95,12 +96,12 @@ test("earlier pages prepend; status, queue and resync frames", () => {
     type: "frame",
     message: {
       type: "queue",
-      agent: "dev",
+      agent: refFor("dev"),
       items: [{ id: "q", kind: "compact", from: "@or", fromKind: "human", createdAt: "x" }],
     },
   });
   expect(s.queue).toHaveLength(1);
-  s = sessionReducer(s, { type: "frame", message: { type: "resync", agent: "dev" } });
+  s = sessionReducer(s, { type: "frame", message: { type: "resync", agent: refFor("dev") } });
   expect(s.needsReload).toBe(true);
 });
 
@@ -114,7 +115,7 @@ test("frames for other agents are ignored", () => {
   expect(
     sessionReducer(s, {
       type: "frame",
-      message: { type: "session_event", agent: "other", event: ev(2) },
+      message: { type: "session_event", agent: refFor("other"), event: ev(2) },
     }),
   ).toBe(s);
 });
@@ -141,8 +142,8 @@ test("loaded replaces everything, including needsReload; reset clears", () => {
     detail,
     mode: "window",
   });
-  s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(20) }));
-  s = sessionReducer(s, frame({ type: "resync", agent: "dev" }));
+  s = sessionReducer(s, frame({ type: "session_event", agent: refFor("dev"), event: ev(20) }));
+  s = sessionReducer(s, frame({ type: "resync", agent: refFor("dev") }));
   expect(s.needsReload).toBe(true);
   s = sessionReducer(s, { type: "loaded", page: page([7, 8, 9]), detail, mode: "latest" });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([7, 8, 9]);
@@ -165,7 +166,7 @@ test("window mode ignores an already-present live event without counting it", ()
     mode: "window",
   });
   const before = s;
-  s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(4) }));
+  s = sessionReducer(s, frame({ type: "session_event", agent: refFor("dev"), event: ev(4) }));
   expect(s).toBe(before);
   expect(s.maxSeenSeq).toBe(9);
   expect(s.newSpeech).toBe(0);
@@ -177,7 +178,7 @@ test("an agent_status frame without lastError clears the previous one", () => {
     s,
     frame({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "errored",
       turnOpen: false,
       lastError: "boom",
@@ -187,7 +188,13 @@ test("an agent_status frame without lastError clears the previous one", () => {
   expect(s.agent?.lastError).toBe("boom");
   s = sessionReducer(
     s,
-    frame({ type: "agent_status", agent: "dev", status: "idle", turnOpen: false, ...noRestart }),
+    frame({
+      type: "agent_status",
+      agent: refFor("dev"),
+      status: "idle",
+      turnOpen: false,
+      ...noRestart,
+    }),
   );
   expect(s.agent?.lastError).toBeUndefined();
 });
@@ -213,7 +220,7 @@ test("window mode counts each live seq once, even when a reconnect replays it", 
   const frame = (seq: number) =>
     sessionReducer(s, {
       type: "frame",
-      message: { type: "session_event", agent: "dev", event: ev(seq) },
+      message: { type: "session_event", agent: refFor("dev"), event: ev(seq) },
     });
   s = frame(9); // at or below lastSeq: not new
   s = frame(10);
@@ -245,13 +252,13 @@ test("a locally queued item is added once and the next queue frame overrides it"
   expect(s.queue.map((q) => q.id)).toEqual(["q1"]);
   s = sessionReducer(s, {
     type: "frame",
-    message: { type: "queue", agent: "dev", items: [qItem("q2")] },
+    message: { type: "queue", agent: refFor("dev"), items: [qItem("q2")] },
   });
   expect(s.queue.map((q) => q.id)).toEqual(["q2"]);
 });
 
 const liveFrame = (seq: number) =>
-  ({ type: "session_event", agent: "dev", event: ev(seq) }) as const;
+  ({ type: "session_event", agent: refFor("dev"), event: ev(seq) }) as const;
 
 test("a single live event above the max appends without sorting, keeping the prefix", () => {
   const s = loadedLatest();
@@ -332,13 +339,13 @@ test("a frames batch mixes status, queue and window counting like single frames"
     liveFrame(10),
     {
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       ...noRestart,
     } as const,
     liveFrame(11),
-    { type: "session_event", agent: "other", event: ev(12) } as const,
+    { type: "session_event", agent: refFor("other"), event: ev(12) } as const,
   ];
   const batched = sessionReducer(s, { type: "frames", messages });
   const single = messages.reduce((acc, m) => sessionReducer(acc, frame(m)), s);
@@ -350,7 +357,13 @@ test("an agent_status frame keeps events and ordered identical", () => {
   const s = loadedLatest();
   const next = sessionReducer(
     s,
-    frame({ type: "agent_status", agent: "dev", status: "working", turnOpen: true, ...noRestart }),
+    frame({
+      type: "agent_status",
+      agent: refFor("dev"),
+      status: "working",
+      turnOpen: true,
+      ...noRestart,
+    }),
   );
   expect(next.events).toBe(s.events);
   expect(next.ordered).toBe(s.ordered);
@@ -367,7 +380,7 @@ test("an out-of-order live event is placed by seq", () => {
 const status = (turnOpen: boolean) =>
   ({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: turnOpen ? "working" : "idle",
     turnOpen,
     ...noRestart,
@@ -402,7 +415,7 @@ test("a frames batch of already-held events returns the same state", () => {
 const at = "2026-11-21T10:00:00.000Z";
 const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId: "t1",
   at,
   event,
@@ -430,7 +443,11 @@ const loaded = (
   });
 const frames = (events: SessionEvent[]) => ({
   type: "frames" as const,
-  messages: events.map((event) => ({ type: "session_event" as const, agent: "dev", event })),
+  messages: events.map((event) => ({
+    type: "session_event" as const,
+    agent: refFor("dev"),
+    event,
+  })),
 });
 
 test("a message_in matching a queue item removes it in the same step and marks the row handed off", () => {
@@ -444,7 +461,11 @@ test("a message_in matching a queue item removes it in the same step and marks t
   // A single frame does the same.
   const s2 = sessionReducer(loaded({ queue: [qItem("m9")] }), {
     type: "frame",
-    message: { type: "session_event", agent: "dev", event: sessionEvent(10, messageIn("m9")) },
+    message: {
+      type: "session_event",
+      agent: refFor("dev"),
+      event: sessionEvent(10, messageIn("m9")),
+    },
   });
   expect(s2.queue).toEqual([]);
   expect(s2.handedOff.has("10:0")).toBe(true);
@@ -523,7 +544,13 @@ test("a status frame without turnStartedAt or compacting clears them", () => {
   const s0 = loaded({ agent: { turnOpen: true, turnStartedAt: at, compacting: true } });
   const s = sessionReducer(s0, {
     type: "frame",
-    message: { type: "agent_status", agent: "dev", status: "idle", turnOpen: false, ...noRestart },
+    message: {
+      type: "agent_status",
+      agent: refFor("dev"),
+      status: "idle",
+      turnOpen: false,
+      ...noRestart,
+    },
   });
   expect(s.agent?.turnStartedAt).toBeUndefined();
   expect(s.agent?.compacting).toBeUndefined();
@@ -610,7 +637,7 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
 
 // U3 §6.4: Cancel a held message, with Undo.
 const queueFrame = (ids: string[]) =>
-  ({ type: "queue", agent: "dev", items: ids.map(qItem) }) as const;
+  ({ type: "queue", agent: refFor("dev"), items: ids.map(qItem) }) as const;
 const withQueue = (ids: string[]) =>
   sessionReducer(
     sessionReducer(initialSessionState, {
@@ -748,7 +775,7 @@ test("while connected, a 202 with no block left (already delivered) adds nothing
 test("a queue frame echoing the id replaces the block in one step", () => {
   const s = sessionReducer(sendingState(), {
     type: "frame",
-    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+    message: { type: "queue", agent: refFor("dev"), items: [echoItem("m1")] },
   });
   expect(s.sending).toEqual([]);
   expect(s.queue.map((q) => q.id)).toEqual(["m1"]);
@@ -806,7 +833,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
   // Unrelated echoes don't mark anything.
   const other = sessionReducer(withQueue([]), {
     type: "frame",
-    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+    message: { type: "queue", agent: refFor("dev"), items: [echoItem("m1")] },
   });
   expect(other.landed.size).toBe(0);
 });
@@ -814,7 +841,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
 test("a retry's 202 for an item you cancelled doesn't put it back in the queue", () => {
   let s = sessionReducer(withQueue([]), {
     type: "frame",
-    message: { type: "queue", agent: "dev", items: [echoItem("m1")] },
+    message: { type: "queue", agent: refFor("dev"), items: [echoItem("m1")] },
   });
   s = sessionReducer(s, { type: "cancel", id: "m1" });
   s = sessionReducer(s, { type: "frame", message: queueFrame([]) });
@@ -831,7 +858,7 @@ test("a reload of the same session keeps the blocks; another session drops them"
   const other = sessionReducer(s, {
     type: "loaded",
     page: page([1]),
-    detail: { ...detail, agent: agentSummary({ slug: "ops" }) },
+    detail: { ...detail, agent: agentSummary({ handle: "ops" }) },
     mode: "latest",
   });
   expect(other.sending).toEqual([]);
@@ -878,7 +905,7 @@ test("an Undo the server delivers at once leaves no cancelled line (frames befor
 type LiveMsg = Extract<ServerMessage, { type: "live" }>;
 const live = (f: Omit<LiveMsg, "type" | "agent">): ServerMessage => ({
   type: "live",
-  agent: "dev",
+  agent: refFor("dev"),
   ...f,
 });
 const patch = (messageId: string, index: number, offset: number, append: string) =>
@@ -1140,7 +1167,7 @@ test("a reload of the same session keeps live; another session starts empty", ()
   const other = sessionReducer(s, {
     type: "loaded",
     page: page([1]),
-    detail: { ...detail, agent: agentSummary({ slug: "qa" }) },
+    detail: { ...detail, agent: agentSummary({ handle: "qa" }) },
     mode: "latest",
   });
   expect(other.live.texts).toEqual([]);
@@ -1213,7 +1240,7 @@ test("an agent_commands_changed frame leaves the state as it was", () => {
   expect(
     sessionReducer(s, {
       type: "frame",
-      message: { type: "agent_commands_changed", agent: "dev" },
+      message: { type: "agent_commands_changed", agent: refFor("dev") },
     }),
   ).toBe(s);
 });

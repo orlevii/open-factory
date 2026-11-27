@@ -1,16 +1,23 @@
+import { ApiError, apiFetch, type Me, meSchema } from "@open-factory/shared";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
-import { authClient, type Session } from "./auth-client";
+
+/** The signed-in user, as `GET /api/me` answers (handle and ref come from the user's principal). */
+export type Session = { user: Me };
 
 export const sessionQueryOptions = queryOptions({
   queryKey: ["session"],
   queryFn: async (): Promise<Session | null> => {
-    const { data, error } = await authClient.getSession();
-    // Only a definite absence (null body or 401) means "signed out". A 5xx or network error must not
-    // sign the user out of the UI; throwing keeps the cached session and lets callers retry.
-    if (error && error.status !== 401) {
-      throw new Error(`Session check failed: ${error.status} ${error.message ?? error.statusText}`);
+    // Only a 401 means "signed out". A 5xx or network error must not sign the user out of the UI;
+    // throwing keeps the cached session and lets callers retry.
+    try {
+      return { user: await apiFetch("/api/me", { schema: meSchema }) };
+    } catch (e) {
+      if (e instanceof ApiError) {
+        if (e.status === 401) return null;
+        throw new Error(`Session check failed: ${e.status} ${e.message}`);
+      }
+      throw e;
     }
-    return data ?? null;
   },
   staleTime: 60_000,
 });

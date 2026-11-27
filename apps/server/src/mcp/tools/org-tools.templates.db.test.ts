@@ -5,8 +5,9 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { seedTestUser } from "../../test/handles.ts";
+import { agentRecords } from "../../principals/principal-store.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { seedTestUser } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 const TEMPLATE_TOOLS = ["create_template", "write_template_file"];
@@ -14,11 +15,11 @@ const TOKEN = "sk-ant-oat01-tpl";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 const tok: Record<string, string> = {};
-const row = async (slug: string) => {
-  const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
-  if (!r) throw new Error(`no agent ${slug}`);
+const row = async (handle: string) => {
+  const [r] = await agentRecords(t.db).where(eq(schema.principals.handle, handle));
+  if (!r) throw new Error(`no agent ${handle}`);
   return r;
 };
 const dirOf = (name: string) => path.join(t.factoryHome, "templates", name);
@@ -42,7 +43,7 @@ const hashOf = async (who: string, name: string, file: string) =>
 
 beforeAll(async () => {
   t = await makeTestApp();
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   url = `http://127.0.0.1:${t.app.agentListener.port}`;
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
@@ -69,7 +70,7 @@ beforeAll(async () => {
   await t.app.agents.create(
     {
       template: "dev",
-      slug: "hr-bot",
+      handle: "hr-bot",
       displayName: "hr-bot",
       description: "",
       reportsTo: "or",
@@ -77,11 +78,11 @@ beforeAll(async () => {
     },
     human,
   );
-  await t.app.agents.update("hr-bot", { manageOrg: true }, human);
+  await t.app.agents.update(await t.refOf("hr-bot"), { manageOrg: true }, human);
   await t.app.agents.create(
     {
       template: "dev",
-      slug: "plain",
+      handle: "plain",
       displayName: "plain",
       description: "",
       reportsTo: "or",
@@ -117,7 +118,12 @@ test("create_template without from writes the scaffold, lists it and publishes t
       expect.objectContaining({ name: "scaffold", valid: true }),
     );
     expect(orgFrames(spy)).toEqual([
-      { type: "org_action", action: "template_created", by: "@hr-bot", subject: "scaffold" },
+      {
+        type: "org_action",
+        action: "template_created",
+        by: await t.refOf("hr-bot"),
+        subject: "scaffold",
+      },
     ]);
   } finally {
     spy.mockRestore();
@@ -143,7 +149,12 @@ test("create_template with from copies the four files and skills, rewrites the i
     expect(existsSync(path.join(dirOf("copy-of-dev"), "skills", "helper", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(dirOf("copy-of-dev"), "files"))).toBe(false);
     expect(orgFrames(spy)).toEqual([
-      { type: "org_action", action: "template_created", by: "@hr-bot", subject: "copy-of-dev" },
+      {
+        type: "org_action",
+        action: "template_created",
+        by: await t.refOf("hr-bot"),
+        subject: "copy-of-dev",
+      },
     ]);
   } finally {
     spy.mockRestore();

@@ -1,6 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { principalSql } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
@@ -48,7 +48,7 @@ const events = async () =>
   }));
 const types = async () => (await events()).map((e) => e.type);
 const msgRows = () =>
-  t.sql`select id, state, delivered_turn_id from messages where to_agent_id = ${agentId} order by created_at`;
+  t.sql`select id, state, delivered_turn_id from messages where to_id = ${agentId} order by created_at`;
 
 beforeEach(async () => {
   await makeRuntime();
@@ -67,10 +67,10 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
     [
       {
         id: expect.any(String),
-        from: "@or",
+        from: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
         fromKind: "human",
         kind: "message",
-        to: [expect.stringMatching(/^@/)],
+        to: [expect.stringMatching(/^<@[0-9a-z]{8}\|[a-z0-9-]+>$/)],
         urgent: false,
         body: "hello",
         parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],
@@ -191,11 +191,10 @@ test.each([
       startError: new AgentStartError(message, fix, diagnosis),
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
-        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
-        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
+        await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
+        await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
       },
     });
     await rt.reload();
@@ -220,10 +219,10 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     startError: new AgentStartError(message, "secrets"),
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
-      await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
-      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
+      await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
+      await t.sql`insert into agents (id, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
     },
   });
   await rt.reload();
@@ -247,10 +246,10 @@ test("archived: send, compact and interrupt refuse inside the job; a message han
   await makeRuntime();
   rt.markArchived();
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
-  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
   // The Router committed the row before the hand-off (S6 §7.3): its state tells the truth.
-  expect(await t.sql`select state from messages where to_agent_id = ${agentId}`).toEqual([
+  expect(await t.sql`select state from messages where to_id = ${agentId}`).toEqual([
     { state: "rejected" },
   ]);
   expect(rt.queueItems()).toEqual([]);
@@ -260,7 +259,7 @@ test("prepareStart reporting an archived agent marks the runtime archived", asyn
   await makeRuntime({ startError: new AgentArchivedError("dev") });
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
   expect(rt.live().status).not.toBe("errored");
-  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
 test("reload re-reads the row: a rename shows in summaries and archiving refuses sends", async () => {
@@ -271,7 +270,7 @@ test("reload re-reads the row: a rename shows in summaries and archiving refuses
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
-test("the runtime does not hold the slug lock around prepareStart (the real one takes it; KeyedMutex isn't re-entrant)", async () => {
+test("the runtime does not hold the handle lock around prepareStart (the real one takes it; KeyedMutex isn't re-entrant)", async () => {
   await makeRuntime();
   const lock = new KeyedMutex();
   const agent = await store.agentById(agentId);
@@ -285,7 +284,7 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
     driver,
     log: silentLog,
     slots: new RecordingSlots(),
-    prepareStart: (a) => lock.run(a.slug, async () => okSpec(a)),
+    prepareStart: (a) => lock.run(a.handle, async () => okSpec(a)),
   });
   await rt.init();
   const outcome = await Promise.race([
@@ -372,15 +371,19 @@ test("unexpected exit mid-turn: open turn closed as process_exited; the recovery
 });
 
 test("interrupt: 409 while hibernated or starting; allowed with an open turn", async () => {
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError);
   await send("x");
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError); // starting, no turn
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError); // starting, no turn
   driver.last.emit(ev.session(), ev.turn());
   await rt.settled();
   expect(rt.live().turnOpen).toBe(true);
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
-  expect((await events()).at(-1)?.event).toEqual({ type: "control", cmd: "interrupt", by: "@or" });
+  expect((await events()).at(-1)?.event).toEqual({
+    type: "control",
+    cmd: "interrupt",
+    by: "<@or>",
+  });
 });
 
 test("the status frame carries the open turn's start time and a running compaction", async () => {
@@ -404,7 +407,7 @@ test("the status frame carries the open turn's start time and a running compacti
   expect(lastStatus().turnOpen).toBe(false);
   expect(lastStatus()).not.toHaveProperty("turnStartedAt");
 
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   expect(driver.last.controls.at(-1)).toMatchObject({ cmd: "compact" });
   expect(lastStatus().compacting).toBe(true);
   driver.last.emit(ev.turn());

@@ -12,6 +12,7 @@ import {
   type UploadView,
 } from "@/components/composer/attachments";
 import { NETWORK_ERROR } from "@/components/composer/composer";
+import { refOfWho } from "./who";
 
 /** A 413 that isn't the server's JSON: a reverse proxy's own limit (U3 §13.5). */
 export const PROXY_TOO_LARGE =
@@ -90,7 +91,7 @@ export type UploadStore = AttachmentStore & {
 };
 
 /** One agent's uploads (U3 §13.5). Exported for tests; the app uses `uploadsFor`. */
-export function createUploadStore(slug: string): UploadStore {
+export function createUploadStore(agentRef: string): UploadStore {
   const entries = new Map<string, Entry>();
   let keys: readonly string[] = [];
   let summary: UploadSummary = { count: 0, pending: 0, failed: 0 };
@@ -179,7 +180,7 @@ export function createUploadStore(slug: string): UploadStore {
     active++;
     const xhr = new XMLHttpRequest();
     e.xhr = xhr;
-    xhr.open("POST", `/api/agents/${encodeURIComponent(slug)}/uploads`);
+    xhr.open("POST", `/api/agents/${encodeURIComponent(agentRef)}/uploads`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("content-type", "application/octet-stream");
     xhr.setRequestHeader("x-upload-name", encodeURIComponent(e.file.name));
@@ -332,10 +333,13 @@ export function createUploadStore(slug: string): UploadStore {
       e.xhr?.abort();
       const id = e.attachment?.uploadId;
       if (id)
-        void apiFetch(`/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          schema: z.unknown(),
-        }).catch(() => {}); // the 24h sweep deletes what this couldn't
+        void apiFetch(
+          `/api/agents/${encodeURIComponent(agentRef)}/uploads/${encodeURIComponent(id)}`,
+          {
+            method: "DELETE",
+            schema: z.unknown(),
+          },
+        ).catch(() => {}); // the 24h sweep deletes what this couldn't
       e.view.thumb?.close();
       notifyKey(k);
       changed();
@@ -414,12 +418,12 @@ export function createUploadStore(slug: string): UploadStore {
 }
 
 const stores = new Map<string, UploadStore>();
-const storeKey = (user: string | undefined, slug: string) => `${user ?? ""}:${slug}`;
+const storeKey = (user: string | undefined, agentRef: string) => `${user ?? ""}:${agentRef}`;
 /** The agent's uploads for this user, kept for the page's life, so leaving the session and coming back keeps
  *  them. Keyed by the user: another user signing in on this tab never sees them. */
-export function uploadsFor(user: string | undefined, slug: string): UploadStore {
-  const key = storeKey(user, slug);
-  const s = stores.get(key) ?? createUploadStore(slug);
+export function uploadsFor(user: string | undefined, agentRef: string): UploadStore {
+  const key = storeKey(user, agentRef);
+  const s = stores.get(key) ?? createUploadStore(agentRef);
   stores.set(key, s);
   return s;
 }
@@ -470,30 +474,30 @@ export function stripAttachedLines(
 export function uploadsUsedSince(
   ordered: readonly SessionEvent[],
   afterSeq: number,
-  self: string | undefined,
+  selfRef: string | undefined,
 ): string[] {
   const out: string[] = [];
-  if (!self) return out;
+  if (!selfRef) return out;
   for (let i = ordered.length - 1; i >= 0; i--) {
     const se = ordered[i] as SessionEvent;
     if (se.seq <= afterSeq) break;
     if (se.event.type !== "message_in") continue;
     for (const m of se.event.messages)
-      if (m.from === `@${self}`) for (const a of m.attachments ?? []) out.push(a.uploadId);
+      if (refOfWho(m.from) === selfRef) for (const a of m.attachments ?? []) out.push(a.uploadId);
   }
   return out;
 }
 
-/** ↑ in an empty composer (U3 §13.2, I1 §5): your newest raw input in the loaded timeline, as typed. */
+/** ↑ in an empty composer (U3 §13.2, I1 §5): your newest raw input in the loaded timeline, as typed. `selfMention` is
+ *  the signed-in human's mention, which is what a stored `operator_input` names. */
 export function recallText(
   ordered: readonly SessionEvent[],
-  self: string | undefined,
+  selfMention: string | undefined,
 ): string | undefined {
-  if (!self) return undefined;
-  const from = `@${self}`;
+  if (!selfMention) return undefined;
   for (let i = ordered.length - 1; i >= 0; i--) {
     const ev = (ordered[i] as SessionEvent).event;
-    if (ev.type === "operator_input" && ev.by === from) return ev.text;
+    if (ev.type === "operator_input" && ev.by === selfMention) return ev.text;
   }
   return undefined;
 }

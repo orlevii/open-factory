@@ -6,6 +6,7 @@ import { useShortcut } from "@/lib/shortcuts";
 import type { WsOptions } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi, validQuery } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail } from "@/test/session-fixtures";
 
@@ -20,17 +21,21 @@ const task = (key: string, title: string, status: TaskSummary["status"] = "open"
   status,
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "alice" },
+  createdBy: { kind: "human", ref: refFor("alice"), handle: "alice" },
   updatedAt: "2026-11-18T10:00:00.000Z",
 });
 
 const live = [
-  agentSummary({ slug: "dev", displayName: "Dev agent" }),
-  agentSummary({ slug: "devops", displayName: "Ops", reportsTo: { kind: "agent", handle: "dev" } }),
+  agentSummary({ handle: "dev", displayName: "Dev agent" }),
+  agentSummary({
+    handle: "devops",
+    displayName: "Ops",
+    reportsTo: { kind: "agent", ref: refFor("dev"), handle: "dev" },
+  }),
 ];
 const ended = [
   agentSummary({
-    slug: "dev-old",
+    handle: "dev-old",
     displayName: "Old dev",
     terminatedAt: "2026-11-01T00:00:00.000Z",
   }),
@@ -53,8 +58,8 @@ beforeEach(() => {
         });
       return search(url);
     }),
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () => json(conversation()),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () => json(conversation()),
   });
 });
 afterEach(() => vi.useRealTimers());
@@ -156,7 +161,7 @@ test("agents: live first, ended after with 'Ended'; Enter opens the chat; ⇧Ent
   );
   expect(options(dialog)[0]).not.toContain("Ended");
   await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/agents/${refFor("dev")}/chat`));
 
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const again = await screen.findByRole("dialog", { name: "Search" });
@@ -173,7 +178,7 @@ test("agents: live first, ended after with 'Ended'; Enter opens the chat; ⇧Ent
 });
 
 test("the recent agents are read once per opening, not on each keystroke", async () => {
-  localStorage.setItem("of-recent-agents", JSON.stringify(["devops"]));
+  localStorage.setItem("of-recent-agents", JSON.stringify([refFor("devops")]));
   const getItem = vi.spyOn(Storage.prototype, "getItem");
   const recentReads = () => getItem.mock.calls.filter(([k]) => k === "of-recent-agents").length;
   try {
@@ -205,7 +210,7 @@ test("Actions: no 'Mark all read'; 'Agent details' and the view actions only on 
 });
 
 test("'Agent details' is offered on a session page", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByRole("combobox", { name: "Message to Dev agent" });
   fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
   const dialog = await screen.findByRole("dialog", { name: "Search" });
@@ -226,18 +231,23 @@ async function openOn(path: string, composer: string) {
 }
 
 test("in the Chat the palette offers 'Open session' and not 'Open chat'; it goes to the session", async () => {
-  const { actions, router } = await openOn("/agents/dev/chat", "Message to Dev agent");
+  const { actions, router } = await openOn(`/agents/${refFor("dev")}/chat`, "Message to Dev agent");
   expect(within(actions).queryByRole("option", { name: "Open chat" })).toBeNull();
   expect(within(actions).getByRole("option", { name: "Agent details" })).toBeInTheDocument();
   await userEvent.click(within(actions).getByRole("option", { name: "Open session" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("dev")}/session`),
+  );
 });
 
 test("in the Session the palette offers 'Open chat' and not 'Open session'; it goes to the chat", async () => {
-  const { actions, router } = await openOn("/agents/dev/session", "Message to Dev agent");
+  const { actions, router } = await openOn(
+    `/agents/${refFor("dev")}/session`,
+    "Message to Dev agent",
+  );
   expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
   await userEvent.click(within(actions).getByRole("option", { name: "Open chat" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/agents/${refFor("dev")}/chat`));
 });
 
 test("Go to includes Skills, Usage and each Settings page", async () => {
@@ -287,7 +297,7 @@ test("rows are a snapshot of the query: a list change while it's open moves noth
   act(() =>
     queryClient.setQueryData(
       ["agents", "exclude"],
-      [agentSummary({ slug: "devbox", displayName: "Devbox" }), ...live],
+      [agentSummary({ handle: "devbox", displayName: "Devbox" }), ...live],
     ),
   );
   expect(options(dialog)).toEqual(before);
@@ -302,7 +312,7 @@ test.each([768, 900, 1023])(
     const original = window.matchMedia;
     fakeMatchMedia.installWidth(width);
     try {
-      renderApp("/agents/dev/session", alice);
+      renderApp(`/agents/${refFor("dev")}/session`, alice);
       // Opened from the composer: the dialog's focus return would send focus back there.
       const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
       box.focus();
@@ -325,13 +335,13 @@ test.each([768, 900, 1023])(
 
 test("a short query renders a capped agent list, keeping every strong match", async () => {
   const many = Array.from({ length: 80 }, (_, i) =>
-    agentSummary({ slug: `agent-${i}`, displayName: `Agent ${i}` }),
+    agentSummary({ handle: `agent-${i}`, displayName: `Agent ${i}` }),
   );
   api.on("GET /api/agents?ended=exclude", () => json({ agents: many, running: { count: 0 } }));
   api.on("GET /api/agents?ended=only", () =>
     json({
       agents: [
-        agentSummary({ slug: "g", displayName: "Gee", terminatedAt: "2026-11-01T00:00:00.000Z" }),
+        agentSummary({ handle: "g", displayName: "Gee", terminatedAt: "2026-11-01T00:00:00.000Z" }),
       ],
       more: false,
       running: { count: 0 },
@@ -362,7 +372,9 @@ test("⇧Enter to an agent whose session isn't open yet focuses its composer onc
   await userEvent.type(input, "dev");
   await waitFor(() => expect(highlighted(dialog)).toHaveTextContent("@dev"));
   await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("dev")}/session`),
+  );
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Message to Dev agent" })).toHaveFocus(),
   );
@@ -389,12 +401,12 @@ test("ties keep the sidebar tree's order, not the server's", async () => {
   api.on("GET /api/agents?ended=exclude", () =>
     json({
       agents: [
-        agentSummary({ slug: "zed-x", displayName: "Zed" }),
-        agentSummary({ slug: "amy-x", displayName: "Amy" }),
+        agentSummary({ handle: "zed-x", displayName: "Zed" }),
+        agentSummary({ handle: "amy-x", displayName: "Amy" }),
         agentSummary({
-          slug: "kid-x",
+          handle: "kid-x",
           displayName: "Kid",
-          reportsTo: { kind: "agent", handle: "zed-x" },
+          reportsTo: { kind: "agent", ref: refFor("zed-x"), handle: "zed-x" },
         }),
       ],
       running: { count: 0 },

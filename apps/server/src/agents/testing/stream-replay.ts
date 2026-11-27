@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createMapperState, flushMapper, mapLine } from "@open-factory/harness";
+import { mentionOf } from "@open-factory/shared/mentions";
+import { testRef } from "../../test/principals.ts";
 import type { RuntimeHarness } from "./runtime-harness.ts";
 
 /**
@@ -69,8 +71,8 @@ export interface ReplayOptions {
   pace?: (line: TraceLine, prev: TraceLine | undefined) => Promise<void>;
   /** Runs after each stdout line was handed to the runtime and its jobs settled. */
   afterLine?: (lineNo: number, line: TraceLine) => Promise<void>;
-  /** The human's handle for an interrupt in the trace. */
-  byHandle?: string;
+  /** The human's mention for an interrupt in the trace. */
+  by?: string;
 }
 
 /**
@@ -93,7 +95,7 @@ export async function replayTrace(
     if (l.dir === "in") {
       if (l.type === "user") await h.send(String(l.message?.content ?? ""));
       else if (l.type === "control_request" && l.request?.subtype === "interrupt")
-        await h.rt.interrupt({ byHandle: o.byHandle ?? "or" });
+        await h.rt.interrupt({ by: o.by ?? mentionOf(testRef("u1")) });
       await h.rt.settled();
       continue;
     }

@@ -16,20 +16,29 @@ const VERB = {
 type Pending = { frame: OrgActionFrame; count: number; timer: ReturnType<typeof setTimeout> };
 
 /**
- * Toasts for what agents did to the org (spec §8.3). One toast per (actor, action) window: "@hr created @dev" for one
+ * Toasts for what agents did to the org (spec §8.3; the frame names the actor and an agent by ref). One toast per (actor, action) window: "@hr created @dev" for one
  * subject, "@hr created 3 agents" for several. `dispose` clears every pending window.
  */
-export function createOrgToasts(d: { notify: typeof notify; navigate: (to: string) => void }) {
+const subjectName = (handle: string | undefined) => (handle ? `@${handle}` : "an agent");
+
+export function createOrgToasts(d: {
+  notify: typeof notify;
+  navigate: (to: string) => void;
+  /** The current handle of a ref a frame names, if the principals cache knows it. */
+  handleOf: (ref: string) => string | undefined;
+}) {
   const pending = new Map<string, Pending>();
 
   function show({ frame, count }: Pending) {
     const template = frame.action === "template_created";
     const verb = VERB[frame.action];
+    const byHandle = d.handleOf(frame.by);
+    const by = byHandle ? `@${byHandle}` : "An agent";
     if (count === 1) {
       d.notify({
         text: template
-          ? `${frame.by} ${verb} template ${frame.subject}`
-          : `${frame.by} ${verb} @${frame.subject}`,
+          ? `${by} ${verb} template ${frame.subject}`
+          : `${by} ${verb} ${subjectName(d.handleOf(frame.subject))}`,
         action: {
           label: "Open",
           run: () =>
@@ -39,7 +48,7 @@ export function createOrgToasts(d: { notify: typeof notify; navigate: (to: strin
       return;
     }
     d.notify({
-      text: `${frame.by} ${verb} ${count} ${template ? "templates" : "agents"}`,
+      text: `${by} ${verb} ${count} ${template ? "templates" : "agents"}`,
       action: { label: "Open", run: () => d.navigate(template ? "/templates" : "/agents") },
     });
   }

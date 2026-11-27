@@ -140,7 +140,7 @@ export function liveKeys(
   for (const e of entries) {
     const k = entryKey(e);
     if (cursor.has(k)) continue;
-    if (e.kind === "message" ? e.fromKind === "agent" : e.key !== workingKey) live.add(k);
+    if (e.kind === "message" ? e.from.kind === "agent" : e.key !== workingKey) live.add(k);
   }
   return live;
 }
@@ -162,6 +162,9 @@ export function withoutSending(data: ChatData, key: string): ChatData {
   return { ...data, pages: [page, ...data.pages.slice(1)] };
 }
 
+const refsOf = (e: Extract<ChatEntry, { kind: "message" }>) =>
+  e.recipients.map((r) => r.ref).join("\n");
+
 /** Consecutive messages from one sender at most this far apart share a speaker line. */
 export const GROUP_WINDOW_MS = 5 * 60_000;
 
@@ -172,8 +175,8 @@ export const GROUP_WINDOW_MS = 5 * 60_000;
  */
 export function continuesGroup(prev: ChatEntry | undefined, e: ChatEntry): boolean {
   if (prev?.kind !== "message" || e.kind !== "message" || e.urgent) return false;
-  if (prev.from !== e.from || prev.fromKind !== e.fromKind) return false;
-  if (prev.recipients.join("\n") !== e.recipients.join("\n")) return false;
+  if (prev.from.ref !== e.from.ref || prev.from.kind !== e.from.kind) return false;
+  if (refsOf(prev) !== refsOf(e)) return false;
   const gap = Date.parse(e.createdAt) - Date.parse(prev.createdAt);
   return gap >= 0 && gap <= GROUP_WINDOW_MS;
 }

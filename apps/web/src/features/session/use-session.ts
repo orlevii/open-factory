@@ -57,7 +57,7 @@ const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK
 
 /** HTTP pages + WS subscription + dedup by seq + queue + status + the deep-link window. */
 /** Why `?message=` couldn't jump to the message (UI design §2.5); rendered by the session view so the
- *  recipient's `@slug` can be mono. */
+ *  recipient's `@handle` can be mono. */
 export type MessageNotice =
   | { kind: "rejected"; to: string }
   | { kind: "cancelled" }
@@ -98,7 +98,7 @@ const stableFailedIds = (ev: SessionEvent[], prev: ReadonlySet<string> | undefin
 const stableInterruptedEnds = (ev: SessionEvent[], prev: ReadonlySet<number> | undefined) =>
   stableSet(prev, interruptedTurnEnds(ev));
 
-export function useSession(slug: string, eventSeq?: number, message?: string) {
+export function useSession(agentRef: string, eventSeq?: number, message?: string) {
   const ws = useWs();
   const wsRef = useRef(ws);
   wsRef.current = ws;
@@ -140,8 +140,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         // (spec §11); `?event=` and `?message=` need their target before the window can be asked for.
         const plain = explicit === undefined && message === undefined;
         const [detail, latest] = await Promise.all([
-          qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 }),
-          plain ? fetchEvents(slug) : undefined,
+          qc.fetchQuery({ ...agentDetailQueryOptions(agentRef), staleTime: 0 }),
+          plain ? fetchEvents(agentRef) : undefined,
         ]);
         lastSeqRef.current = detail.lastSeq;
         let around = explicit;
@@ -152,16 +152,16 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
             const m = await fetchMessage(message);
             // To this agent: its receiving event. From it (a reply to a human has no recipient event): its sending call.
             const at =
-              m.recipientEvent?.agentSlug === slug
+              m.recipientEvent?.agentRef === agentRef
                 ? m.recipientEvent
-                : m.senderEvent?.agentSlug === slug
+                : m.senderEvent?.agentRef === agentRef
                   ? m.senderEvent
                   : undefined;
             if (m.state === "delivered" && at) {
               around = at.seq;
               setMessageSeq(around);
             } else if (m.state === "rejected") {
-              // The lookup names the recipient as `@slug`; the notice holds the bare slug.
+              // The lookup names the recipient as `@handle`; the notice holds the bare handle.
               setMessageNotice({ kind: "rejected", to: m.to.replace(/^@/, "") });
             } else if (m.state === "cancelled") {
               setMessageNotice({ kind: "cancelled" }); // U3 §6.4
@@ -177,14 +177,14 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         setMissingEvent(undefined);
         if (around !== undefined) {
           try {
-            page = await fetchEvents(slug, { around });
+            page = await fetchEvents(agentRef, { around });
             mode = "window";
           } catch (e) {
             if (!(e instanceof ApiError && e.code === "event_not_found")) throw e;
             setMissingEvent(around);
           }
         }
-        page ??= await fetchEvents(slug);
+        page ??= await fetchEvents(agentRef);
         dispatch({ type: "loaded", page, detail, mode });
         // A no-op after `loaded` (which sets liveAfter). The subscribe's live `reset` frame catches up
         // again in the reducer, in the commit that applies it, so a reconnect's replay never fades
@@ -196,7 +196,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         setError(asApiError(e));
       }
     },
-    [qc, slug, message, dispatch],
+    [qc, agentRef, message, dispatch],
   );
 
   useEffect(() => {
@@ -205,7 +205,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   useEffect(
     () =>
       ws.listen((m) => {
-        if (!("agent" in m) || m.agent !== slug) return; // other agents never touch this state
+        if (!("agent" in m) || m.agent !== agentRef) return; // other agents never touch this state
         // The command list is the global handler's (`invalidateCommands`): no state, no commit.
         if (m.type === "agent_commands_changed") return;
         queue.current.push(m);
@@ -218,17 +218,17 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
           scheduled.current = () => cancelAnimationFrame(id);
         }
       }),
-    [ws, slug, flush],
+    [ws, agentRef, flush],
   );
-  // Unmount or a slug change drops the pending flush and the frames for the old slug.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup runs on every slug change
+  // Unmount or a ref change drops the pending flush and the frames for the old agentRef.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup runs on every agentRef change
   useEffect(
     () => () => {
       scheduled.current?.();
       scheduled.current = null;
       queue.current = [];
     },
-    [slug],
+    [agentRef],
   );
   // The timer kind is picked when the first frame arrives: a tab hidden before its rAF fires would
   // hold the frames until it is shown again, and one shown again need not wait out the 100ms. Either
@@ -250,11 +250,11 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     if (!loadedAt || !ws.openCount) return;
     const s = stateRef.current;
     const afterSeq = s.windowed ? Math.max(lastSeqRef.current, s.maxSeenSeq) : highestSeq(s);
-    wsRef.current.send({ type: "subscribe", agent: slug, afterSeq });
+    wsRef.current.send({ type: "subscribe", agent: agentRef, afterSeq });
     return () => {
-      wsRef.current.send({ type: "unsubscribe", agent: slug });
+      wsRef.current.send({ type: "unsubscribe", agent: agentRef });
     };
-  }, [slug, loadedAt, ws.openCount]);
+  }, [agentRef, loadedAt, ws.openCount]);
 
   useEffect(() => {
     if (state.needsReload) void load(eventSeq); // keeps a deep-link window
@@ -266,8 +266,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   useEffect(() => {
     if (state.snapshotWanted <= snapshotSent.current) return;
     snapshotSent.current = state.snapshotWanted;
-    wsRef.current.send({ type: "live_snapshot", agent: slug });
-  }, [state.snapshotWanted, slug]);
+    wsRef.current.send({ type: "live_snapshot", agent: agentRef });
+  }, [state.snapshotWanted, agentRef]);
 
   // A load that failed while the server was away (a restart: 502, network) retries itself when the
   // socket is back, keeping what is on screen meanwhile; the shell's reconnect strip covers the wait.
@@ -293,7 +293,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     const lowest = events[0]?.seq;
     if (!lowest) return false;
     try {
-      const page = await fetchEvents(slug, { before: lowest });
+      const page = await fetchEvents(agentRef, { before: lowest });
       dispatch({ type: "earlier", page });
       setEarlierError(false);
       return page.events.length > 0;
@@ -301,7 +301,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       setEarlierError(true);
       return false;
     }
-  }, [events, slug, dispatch]);
+  }, [events, agentRef, dispatch]);
 
   const retry = useCallback(() => load(eventSeq), [load, eventSeq]);
 
@@ -318,12 +318,12 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   // Only explicit writes (`setQueryData`); a fetch's result is applied by whoever fetched it (the load,
   // `refreshAgent`), so a slow one never overwrites newer status frames.
   useEffect(() => {
-    const cached = qc.getQueryData<AgentDetail>(["agent", slug])?.agent;
+    const cached = qc.getQueryData<AgentDetail>(["agent", agentRef])?.agent;
     let last = cached && editedFields(cached);
     return qc.getQueryCache().subscribe((e) => {
       if (e.type !== "updated" || e.action.type !== "success" || !e.action.manual) return;
       const [kind, key] = e.query.queryKey;
-      if (kind !== "agent" || key !== slug || e.query.queryKey.length !== 2) return;
+      if (kind !== "agent" || key !== agentRef || e.query.queryKey.length !== 2) return;
       const agent = (e.query.state.data as AgentDetail | undefined)?.agent;
       if (!agent) return;
       const fields = editedFields(agent);
@@ -331,7 +331,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       last = fields;
       dispatch({ type: "agent_edited", fields });
     });
-  }, [qc, slug, dispatch]);
+  }, [qc, agentRef, dispatch]);
 
   /** The 202's item replaces its "Sending" block (U3 §13.2). Otherwise, while the socket is down no
    *  `queue` frame will come, so the accepted item shows at once (UI design §4.4); when connected the
@@ -355,16 +355,16 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
   const cancelItem = useCallback(
     (item: QueueItem, inBox: boolean, onFailed?: () => void) => {
       dispatch({ type: "cancel", id: item.id, inBox });
-      cancelQueued(slug, item.id).catch((e: unknown) => {
+      cancelQueued(agentRef, item.id).catch((e: unknown) => {
         onFailed?.();
         dispatch({ type: "cancel_failed", id: item.id, error: failureText(e) });
       });
     },
-    [slug, dispatch],
+    [agentRef, dispatch],
   );
   const undoCancel = useCallback(
     (id: string, onRestored?: () => void) => {
-      restoreQueued(slug, id).then(
+      restoreQueued(agentRef, id).then(
         () => {
           onRestored?.();
           dispatch({ type: "restored", id });
@@ -372,7 +372,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
         (e: unknown) => dispatch({ type: "restore_failed", id, error: failureText(e) }),
       );
     },
-    [slug, dispatch],
+    [agentRef, dispatch],
   );
   const clearCancelled = useCallback(() => dispatch({ type: "clear_cancelled" }), [dispatch]);
 

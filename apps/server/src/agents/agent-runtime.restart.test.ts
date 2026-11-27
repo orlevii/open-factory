@@ -77,7 +77,7 @@ test.each([
   [
     "a compact in flight",
     async (p: FakeProcess) => {
-      await rt.compact({ byHandle: "or" });
+      await rt.compact({ by: "<@or>" });
       expect(p.controls).toEqual([{ kind: "control", cmd: "compact" }]);
     },
     (p: FakeProcess) => p.emit(ev.turn(), ev.end({ command: "compact" })),
@@ -448,7 +448,7 @@ test("apply-restart with nothing lost and nothing queued stays hibernated", asyn
 const configRows = async () =>
   h.t.sql<{ id: string; body: string; state: string }[]>`
     select id, body, state from messages
-    where to_agent_id = ${agentId} and kind = 'system' and notice = 'config_changed'
+    where to_id = ${agentId} and kind = 'system' and notice = 'config_changed'
     order by created_at`;
 /** Every body a process was sent, batch by batch. */
 const batches = (p: FakeProcess | undefined) => (p?.sent ?? []).map((b) => b.map((m) => m.body));

@@ -4,9 +4,9 @@ import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
 import { count, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
-import { handleSignUp } from "./sign-up-gate.ts";
+import { handleSignUp, signUpContext } from "./sign-up-gate.ts";
 
 /**
  * S10 §9.3 (F2), AC5: invite-only sign-up, checked in the /api/auth/* catch-all on the normalized path,
@@ -97,7 +97,7 @@ describe("bootstrap", () => {
     const res = await rawPost(SIGN_UP, person());
     expect(res.status).toBe(200);
     expect(await userCount()).toBe(1);
-    expect(seen).toEqual([{ type: "users_changed" }]);
+    expect(seen.map((m) => m.type)).toEqual(["users_changed", "principal_updated"]);
   });
 
   test("two concurrent first sign-ups: exactly one succeeds, the other gets invite_required", async () => {
@@ -168,19 +168,18 @@ describe("with one user", () => {
     const inv = await newInvite();
     seen.length = 0;
     expect((await rawPost(SIGN_UP, person({ invite: inv.token }))).status).toBe(200);
-    expect(seen).toEqual([{ type: "users_changed" }]);
+    expect(seen.map((m) => m.type)).toEqual(["users_changed", "principal_updated"]);
   });
 
   describe("after better-auth's 2xx", () => {
-    const fakeAuth = (body: unknown, create?: Record<string, string>) => ({
+    /** Stands in for better-auth: creates the user under the id `handleSignUp` put in the sign-up context. */
+    const fakeAuth = (body: unknown, create?: { email: string }) => ({
       handler: async () => {
         if (create) {
-          await claimTestHandle(h.db, create.handle as string, "user");
           await h.db.insert(schema.users).values({
-            id: create.id as string,
+            id: signUpContext.getStore()?.userId as string,
             name: "Fake",
-            handle: create.handle as string,
-            email: create.email as string,
+            email: create.email,
             emailVerified: false,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -191,18 +190,29 @@ describe("with one user", () => {
     });
     const deps = (auth: ReturnType<typeof fakeAuth>) => {
       const log = { error: vi.fn() };
-      return { log, d: { db: h.db, invites: h.app.invites, auth, bus: h.app.bus, log } };
+      return {
+        log,
+        d: {
+          db: h.db,
+          invites: h.app.invites,
+          auth,
+          bus: h.app.bus,
+          publishPrincipal: h.app.publishPrincipal,
+          log,
+        },
+      };
     };
     const req = () => new Request(`${h.app.config.publicUrl}${SIGN_UP}`, { method: "POST" });
 
-    test("a body without user.id: the user is found by email and the invite marked used", async () => {
+    test("the invite is marked used by the new user's principal id, whatever better-auth answers", async () => {
       const inv = await newInvite();
       const p = person({ invite: inv.token });
-      const { d, log } = deps(fakeAuth({}, { id: "fake-1", handle: "fake-1", email: p.email }));
-      const res = await handleSignUp(d as never, req(), { ...p, email: p.email.toUpperCase() });
+      const { d, log } = deps(fakeAuth({}, { email: p.email }));
+      const res = await handleSignUp(d as never, req(), p);
       expect(res.status).toBe(200);
+      const principal = (await principalsByHandles(h.db, [p.handle])).get(p.handle);
       const [row] = await h.db.select().from(schema.invites).where(eq(schema.invites.id, inv.id));
-      expect(row?.usedBy).toBe("fake-1");
+      expect(row?.usedBy).toBe(principal?.id);
       expect(log.error).not.toHaveBeenCalled();
     });
 

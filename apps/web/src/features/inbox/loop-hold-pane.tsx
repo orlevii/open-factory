@@ -1,4 +1,4 @@
-import { ApiError } from "@open-factory/shared";
+import { ApiError, loopHoldSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useRef, useState } from "react";
@@ -11,6 +11,8 @@ import { sessionQueryOptions } from "@/lib/session";
 import { type InboxItem, useResumeHold } from "./api";
 
 type Hold = NonNullable<InboxItem["loopHold"]>;
+
+const conflictResumedBy = loopHoldSchema.shape.resumedBy;
 
 const messages = (n: number) => `${n} ${n === 1 ? "message" : "messages"}`;
 const HANDLE = /(@[\w-]+)/;
@@ -42,9 +44,15 @@ function resumedOf(
 ): Resumed | undefined {
   if (own) return { by: me, at: hold.resumedAt ?? own.at, sentOn: own.sentOn };
   if (hold.resumedAt && hold.resumedBy)
-    return { by: hold.resumedBy, at: hold.resumedAt, sentOn: hold.sentOn };
-  if (typeof conflict?.resumedBy === "string" && typeof conflict.resumedAt === "string")
-    return { by: conflict.resumedBy, at: conflict.resumedAt, sentOn: undefined };
+    return { by: `@${hold.resumedBy.handle}`, at: hold.resumedAt, sentOn: hold.sentOn };
+  if (typeof conflict?.resumedAt === "string") {
+    const by = conflictResumedBy.safeParse(conflict.resumedBy);
+    return {
+      by: by.success && by.data ? `@${by.data.handle}` : "",
+      at: conflict.resumedAt,
+      sentOn: undefined,
+    };
+  }
   return undefined;
 }
 
@@ -117,8 +125,8 @@ export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
           </p>
         )}
         {ended.map((x) => (
-          <p key={x.slug} className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            <span className="font-mono">@{x.slug}</span> was terminated; its held messages were
+          <p key={x.ref} className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            <span className="font-mono">@{x.handle}</span> was terminated; its held messages were
             rejected.
           </p>
         ))}
@@ -145,7 +153,7 @@ export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
                 }}
               >
                 {m.isPending && <Spinner />}
-                {m.isPending ? "Resuming…" : `Resume @${a.slug} and @${b.slug}`}
+                {m.isPending ? "Resuming…" : `Resume @${a.handle} and @${b.handle}`}
               </Button>
               {failed && (
                 <FormOutcome
@@ -157,9 +165,9 @@ export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
         </div>
         <div className="flex flex-wrap gap-x-2 gap-y-1">
           {[a, b].map((x) => (
-            <Button key={x.slug} asChild variant="ghost" size="sm" className="h-auto min-h-7 py-1">
-              <Link to="/agents/$slug/session" params={{ slug: x.slug }}>
-                Open @{x.slug}'s session
+            <Button key={x.ref} asChild variant="ghost" size="sm" className="h-auto min-h-7 py-1">
+              <Link to="/agents/$ref/session" params={{ ref: x.ref }}>
+                Open @{x.handle}'s session
               </Link>
             </Button>
           ))}

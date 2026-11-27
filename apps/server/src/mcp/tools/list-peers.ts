@@ -1,7 +1,8 @@
-import type { AgentRow } from "@open-factory/db";
 import { type AgentStatus, listPeersToolSchema } from "@open-factory/shared";
+import { agentMentionOf, renderMentions } from "@open-factory/shared/mentions";
 import { inline } from "../../messaging/inline.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
+import type { AgentRecord } from "../../principals/principal-store.ts";
 import {
   callerOf,
   type McpServer,
@@ -15,7 +16,7 @@ type Relation = "manager" | "peer" | "report" | "other";
 export function listPeersTool(d: {
   neighborhood: Neighborhood;
   /** The live status (a loaded runtime) or what the row says. */
-  statusOf(agent: AgentRow): AgentStatus;
+  statusOf(agent: AgentRecord): AgentStatus;
 }): ToolRegistration {
   return {
     register(server: McpServer) {
@@ -23,16 +24,16 @@ export function listPeersTool(d: {
         "list_peers",
         {
           description:
-            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle. Pass scope "all" to see every agent.',
+            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle and a mention to write them as. Pass scope "all" to see every agent.',
           inputSchema: listPeersToolSchema,
         },
         async (args: { scope?: "neighborhood" | "all" }, tctx: ToolContext) => {
           const me = callerOf(tctx);
           const n = await d.neighborhood.of(me);
-          const rows: [Relation, AgentRow][] = [
-            ...(n.manager ? [["manager", n.manager] as [Relation, AgentRow]] : []),
-            ...n.peers.map((a): [Relation, AgentRow] => ["peer", a]),
-            ...n.reports.map((a): [Relation, AgentRow] => ["report", a]),
+          const rows: [Relation, AgentRecord][] = [
+            ...(n.manager ? [["manager", n.manager] as [Relation, AgentRecord]] : []),
+            ...n.peers.map((a): [Relation, AgentRecord] => ["peer", a]),
+            ...n.reports.map((a): [Relation, AgentRecord] => ["report", a]),
           ];
           if (args.scope === "all") {
             const seen = new Set([me, ...rows.map(([, a]) => a.id)]);
@@ -41,18 +42,27 @@ export function listPeersTool(d: {
             }
           }
           const humans = await d.neighborhood.humans();
+          const principals = await d.neighborhood.principalsOf(rows.map(([, a]) => a.id));
+          const listed = rows.map(([relation, a]) => {
+            const p = principals.get(a.id);
+            if (!p) throw new Error(`No principal ${a.id}`);
+            return { relation, a, p };
+          });
+          const lookup = await d.neighborhood.mentionLookup(listed.map(({ a }) => a.description));
           return textResult({
             peers: [
-              ...rows.map(([relation, a]) => ({
-                handle: `@${a.slug}`,
+              ...listed.map(({ relation, a, p }) => ({
+                handle: `@${p.handle}`,
+                mention: agentMentionOf(p),
                 kind: "agent" as const,
                 displayName: inline(a.displayName),
-                description: inline(a.description),
+                description: inline(renderMentions(a.description, lookup, "agent")),
                 relation,
                 status: d.statusOf(a),
               })),
               ...humans.map((h) => ({
                 handle: `@${h.handle}`,
+                mention: agentMentionOf(h),
                 kind: "human" as const,
                 name: inline(h.name),
               })),

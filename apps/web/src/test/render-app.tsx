@@ -3,10 +3,10 @@ import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { render, waitFor } from "@testing-library/react";
 import { afterEach, expect } from "vitest";
 import { clearViewPositions } from "@/features/agents/view-memory";
-import type { Session } from "@/lib/auth-client";
 import { createQueryClient } from "@/lib/query-client";
-import { sessionQueryOptions } from "@/lib/session";
+import { type Session, sessionQueryOptions } from "@/lib/session";
 import { createAppRouter } from "@/router";
+import { refFor } from "@/test/refs";
 
 type AppRouter = ReturnType<typeof createAppRouter>;
 const rendered = new Set<AppRouter>();
@@ -24,13 +24,18 @@ afterEach(async () => {
   });
 });
 
-export const alice = {
-  user: { id: "u1", name: "Alice", handle: "alice", email: "alice@example.com" },
-  session: { id: "s1" },
-} as unknown as Session;
+export const alice: Session = {
+  user: {
+    id: "u1",
+    name: "Alice",
+    handle: "alice",
+    email: "alice@example.com",
+    ref: refFor("alice"),
+  },
+};
 
 /** Renders the real route tree at `path` with the session query pre-seeded. `undefined` leaves the
- *  query empty, so the guard really calls the (mocked) auth client. */
+ *  query empty, so the guard really asks `/api/me` (mock the API). */
 export function renderApp(path: string, session: Session | null | undefined) {
   // Where an agent's views were left is module state, which outlives a test's router.
   clearViewPositions();

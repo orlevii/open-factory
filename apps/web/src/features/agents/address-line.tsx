@@ -2,47 +2,78 @@ import { type FocusEvent, useEffect, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { FormField } from "@/components/form-field";
 import { IN_FORM } from "@/components/ui/button";
-import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 
 const EMPTY: ReadonlySet<string> = new Set();
-const SETTLE_MS = 300;
+const HELP =
+  "How agents and people mention this agent, like @team-lead. Lowercase letters, numbers and hyphens.";
+const EDIT_HELP = `${HELP} Everything already written shows the new handle. The old one is free for anyone.`;
 
-/** The value after it has stopped changing for `ms`, or at once on `flush` (blur). */
-function useDeferredSettle(value: string, ms: number): [string, () => void] {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return [settled, () => setSettled(value)];
+/** The avatar slot. A new agent has no face yet (it comes from the ref the server makes), so it shows a plain plate. */
+function Plate({
+  agentRef,
+  avatar,
+}: {
+  agentRef: string | undefined;
+  avatar: AddressAvatar | undefined;
+}) {
+  if (agentRef === undefined || !avatar)
+    return (
+      <span
+        aria-hidden="true"
+        className="inline-block size-5 shrink-0 rounded-full border border-border bg-card"
+      />
+    );
+  return (
+    <AgentAvatar
+      agentRef={agentRef}
+      template={avatar.template}
+      avatarVersion={avatar.avatarVersion}
+      color={avatar.color}
+      size={20}
+    />
+  );
 }
+
+/** What the edit line draws: the agent's own face, as the colour field shows it. */
+export type AddressAvatar = {
+  template: string;
+  avatarVersion: string | null;
+  color: number | null;
+};
 
 export function AddressLine({
   name,
-  slug,
-  slugTouched,
-  onSlug,
+  handle,
+  handleTouched,
+  onHandle,
   onBlur,
   error,
   forceOpen,
   onOpened,
+  agentRef,
+  avatar,
 }: {
   name: string;
-  slug: string;
-  slugTouched: boolean;
-  onSlug: (slug: string) => void;
-  /** Leaving the slug input, with its event (the form's validate-on-blur). */
+  handle: string;
+  handleTouched: boolean;
+  onHandle: (handle: string) => void;
+  /** Leaving the handle input, with its event (the form's validate-on-blur). */
   onBlur?: (e: FocusEvent<HTMLInputElement>) => void;
-  /** The slug's error; it opens the line, so the note under the input can show it. */
+  /** The handle's error; it opens the line, so the note under the input can show it. */
   error?: string;
   forceOpen?: boolean;
   onOpened?: () => void;
+  /** Edit mode: the agent being renamed. The handle is its own, nothing derives from the name, and the help says what a rename does. */
+  agentRef?: string;
+  /** Edit mode: the agent's template and colour, so the avatar here is the one the colour field shows. */
+  avatar?: AddressAvatar;
 }) {
+  const edit = agentRef !== undefined;
   // Until the taken-sets answer, the derivation shows without a suffix (§6.3).
-  const taken = useTakenNames(true);
-  const shown = slugTouched ? slug : deriveSlug(name, taken ?? EMPTY);
+  const taken = useTakenNames(!edit);
+  const shown = edit || handleTouched ? handle : deriveHandle(name, taken ?? EMPTY);
   const [open, setOpen] = useState(false);
-  const [avatarSlug, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -59,26 +90,23 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar slug={avatarSlug} color={null} size={20} />
+          <Plate agentRef={agentRef} avatar={avatar} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
-            name="slug"
-            label="Slug"
+            name="handle"
+            label="Handle"
             prefix="@"
             ref={inputRef}
             autoFocus
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
-            help="How others address this agent, like @team-lead. Lowercase letters, numbers and hyphens. Can't be changed later."
+            help={edit ? EDIT_HELP : HELP}
             error={error}
             value={shown}
-            onChange={(e) => onSlug(e.target.value)}
-            onBlur={(e) => {
-              settleAvatar();
-              onBlur?.(e);
-            }}
+            onChange={(e) => onHandle(e.target.value)}
+            onBlur={onBlur}
           />
         </div>
       </div>
@@ -86,17 +114,17 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar slug={avatarSlug} color={null} size={20} />
+      <Plate agentRef={agentRef} avatar={avatar} />
       <span className="min-w-0">
         {shown ? (
           <>
-            Address{" "}
+            Handle{" "}
             <b className="font-mono font-normal text-foreground [overflow-wrap:anywhere]">
               @{shown}
             </b>
           </>
         ) : (
-          "Address: choose one"
+          "Handle: choose one"
         )}
       </span>{" "}
       <span aria-hidden="true">·</span>{" "}

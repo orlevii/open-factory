@@ -9,6 +9,7 @@ import interrupt from "@/test/fixtures/stream/partial-interrupt-mid-text.frames.
 import subagent from "@/test/fixtures/stream/partial-subagent.frames.json";
 import textAndWrite from "@/test/fixtures/stream/partial-text-and-write.frames.json";
 import lateDelta from "@/test/fixtures/stream/partial-text-and-write-late-delta.frames.json";
+import { refFor } from "@/test/refs";
 import { detail } from "@/test/session-fixtures";
 import { buildRows, textRowKey } from "./rows";
 import {
@@ -37,7 +38,11 @@ const FIXTURES: Record<string, unknown> = {
   "partial-interrupt-mid-text": interrupt,
   "partial-subagent": subagent,
 };
-const read = (name: string) => FIXTURES[name] as StreamFixture;
+/** The server's recorded frames name the agent `dev`; the app addresses it by ref. */
+const read = (name: string): StreamFixture =>
+  JSON.parse(
+    JSON.stringify(FIXTURES[name]).replaceAll('"agent":"dev"', `"agent":"${refFor("dev")}"`),
+  );
 
 const events = (frames: readonly ServerMessage[]) =>
   frames.flatMap((f) => (f.type === "session_event" ? [f.event] : []));

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
+import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import type { CompletionItem } from "./composer";
@@ -23,7 +24,7 @@ export type CaretMenuHandle = {
   accept(enter?: boolean): boolean;
 };
 
-const COPY_PROPS = [
+export const COPY_PROPS = [
   "boxSizing",
   "borderTopWidth",
   "borderRightWidth",
@@ -61,7 +62,10 @@ const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
  * from it); both are clamped to the textarea's visible content box when the line has scrolled out of
  * view.
  */
-export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAnchor {
+export function caretAnchor(
+  box: HTMLTextAreaElement | HTMLInputElement,
+  index: number,
+): CaretAnchor {
   const doc = box.ownerDocument;
   const mirror = doc.createElement("div");
   try {
@@ -77,7 +81,8 @@ export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAncho
     s.visibility = "hidden";
     s.top = "0";
     s.left = "-9999px";
-    s.whiteSpace = "pre-wrap";
+    // A single-line input never wraps, so its copy doesn't either.
+    s.whiteSpace = box instanceof HTMLInputElement ? "pre" : "pre-wrap";
     s.overflowWrap = "break-word";
     s.overflow = "hidden";
     mirror.textContent = box.value.slice(0, index);
@@ -138,7 +143,7 @@ export function CaretMenu({
   note?: string | undefined;
   onPick(item: CompletionItem): void;
   onClose(): void;
-  input: RefObject<HTMLTextAreaElement | null>;
+  input: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   /** The listbox's name. */
   label: string;
   ref?: Ref<CaretMenuHandle>;
@@ -348,9 +353,10 @@ function CommandRow({ item }: { item: CompletionItem }) {
 function MentionRow({ item }: { item: CompletionItem }) {
   return (
     <>
+      {item.human ? <HumanAvatar name={item.human.name} size={16} /> : null}
       {item.avatar ? (
         <AgentAvatar
-          slug={item.avatar.slug}
+          agentRef={item.avatar.agentRef}
           template={item.avatar.template}
           avatarVersion={item.avatar.avatarVersion}
           color={item.avatar.color ?? null}

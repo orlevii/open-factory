@@ -1,6 +1,7 @@
 import type { LiveEvent, LiveEventBody } from "@open-factory/harness";
 import type { HarnessEvent, LiveFrame, ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { testRef } from "../test/principals.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -46,13 +47,13 @@ test("live text from the process is published and held for a snapshot", async ()
   expect(liveFrames()).toEqual([
     {
       type: "live",
-      agent: rt.agent.slug,
+      agent: testRef(rt.agent.id),
       texts: [{ messageId: "m1", index: 0, offset: 0, append: "Hello" }],
     },
   ]);
   expect(rt.liveSnapshot()).toEqual({
     type: "live",
-    agent: rt.agent.slug,
+    agent: testRef(rt.agent.id),
     reset: true,
     texts: [{ messageId: "m1", index: 0, offset: 0, append: "Hello" }],
     toolInput: null,
@@ -66,7 +67,7 @@ test("the persisted assistant_text retires its block before its session_event is
   driver.last.emitLive(textStart(2, "m1", 0), textDelta(3, "m1", 0, "Hello"));
   await tick();
   let seen: string[] | undefined;
-  const off = h.bus.subscribe(rt.agent.slug, (m: ServerMessage) => {
+  const off = h.bus.subscribe(rt.agent.id, (m: ServerMessage) => {
     if (m.type === "session_event" && m.event.event.type === "assistant_text") seen = liveTexts();
   });
   driver.last.emitAt(4, keyed("Hello", "m1", 0));
@@ -191,7 +192,7 @@ test("the turn_end reset is published right after the turn_end row, before any l
   driver.last.emitLive(textStart(2, "m1", 0), textDelta(3, "m1", 0, "orphan"));
   await tick();
   let resetRightAfter: boolean | undefined;
-  const off = h.bus.subscribe(rt.agent.slug, (m: ServerMessage) => {
+  const off = h.bus.subscribe(rt.agent.id, (m: ServerMessage) => {
     if (m.type !== "session_event" || m.event.event.type !== "turn_end") return;
     const before = liveFrames().length;
     queueMicrotask(() => {

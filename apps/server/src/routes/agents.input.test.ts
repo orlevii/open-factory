@@ -1,13 +1,17 @@
 import { MAX_BODY_BYTES } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf } from "../test/helpers.ts";
+import { testRef, UNKNOWN_REF } from "../test/principals.ts";
 
-// I1 §5.1: POST /api/agents/:slug/input, the one raw input route for the session.
+// I1 §5.1: POST /api/agents/:ref/input, the one raw input route for the session.
 describe("I1 §5.1: raw session input", () => {
   let s: Awaited<ReturnType<typeof makeTestApp>>;
   const drv = new FakeDriver();
   let or: { cookie: string };
+  /** The signed-in human's mention: a raw input names its sender that way. */
+  let orMention = "";
   const list = [
     { name: "context", description: "Context", argumentHint: "", builtin: true },
     { name: "review", description: "Review", argumentHint: "", builtin: true },
@@ -17,14 +21,22 @@ describe("I1 §5.1: raw session input", () => {
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
     await s.seedAgent();
-    or = { cookie: (await s.signUpUser({ handle: "orc" })).cookie };
+    const signedUp = await s.signUpUser({ handle: "orc" });
+    or = { cookie: signedUp.cookie };
+    orMention = mentionOf(testRef(signedUp.user.id));
     drv.commandList = list;
-    await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
+    await call(or, "POST", "/api/messages", {
+      to: [s.seededRef("dev")],
+      body: "work",
+      urgent: false,
+    });
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
     await settled();
     await vi.waitFor(
       async () =>
-        expect((await call(or, "GET", "/api/agents/dev/commands")).json().source).toBe("session"),
+        expect(
+          (await call(or, "GET", `/api/agents/${await s.refOf("dev")}/commands`)).json().source,
+        ).toBe("session"),
       { timeout: 5000 },
     );
   });
@@ -43,9 +55,12 @@ describe("I1 §5.1: raw session input", () => {
       headers: { ...(who ? { cookie: who.cookie } : {}), ...headers },
       ...(payload ? { payload } : {}),
     });
-  const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
-  const input = (text: string, who: { cookie: string } | undefined = or) =>
-    call(who, "POST", "/api/agents/dev/input", { text, clientMessageId: crypto.randomUUID() });
+  const settled = async () => (await runtimeOf(s.app, "dev"))?.settled();
+  const input = async (text: string, who: { cookie: string } | undefined = or) =>
+    call(who, "POST", `/api/agents/${await s.refOf("dev")}/input`, {
+      text,
+      clientMessageId: crypto.randomUUID(),
+    });
   const rawWrites = () => drv.last.writes.filter((w) => w.kind === "raw");
   /** The idle agent finishes the turn the last input started, so the next one is written at once. */
   const finishTurn = async () => {
@@ -57,7 +72,7 @@ describe("I1 §5.1: raw session input", () => {
   test("text is written unwrapped and answered 202 with the queue item", async () => {
     const res = await input("hello");
     expect(res.statusCode).toBe(202);
-    expect(res.json().item).toMatchObject({ kind: "raw", body: "hello", from: "@orc" });
+    expect(res.json().item).toMatchObject({ kind: "raw", body: "hello", from: orMention });
     expect(lastWrite()).toEqual({ kind: "raw", text: "hello" });
     await finishTurn();
   });
@@ -104,8 +119,8 @@ describe("I1 §5.1: raw session input", () => {
   test("the same clientMessageId posted twice writes once and returns the same item", async () => {
     const before = rawWrites().length;
     const body = { text: "once", clientMessageId: crypto.randomUUID() };
-    const a = await call(or, "POST", "/api/agents/dev/input", body);
-    const b = await call(or, "POST", "/api/agents/dev/input", body);
+    const a = await call(or, "POST", `/api/agents/${await s.refOf("dev")}/input`, body);
+    const b = await call(or, "POST", `/api/agents/${await s.refOf("dev")}/input`, body);
     expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
     expect(b.json().item.id).toBe(a.json().item.id);
     expect(rawWrites()).toHaveLength(before + 1);
@@ -115,14 +130,14 @@ describe("I1 §5.1: raw session input", () => {
   test("/compact carries its clientMessageId and a retry queues one compaction", async () => {
     const body = { text: "/compact", clientMessageId: crypto.randomUUID() };
     await input("busy"); // a turn is open, so the compact waits
-    const a = await call(or, "POST", "/api/agents/dev/input", body);
-    const b = await call(or, "POST", "/api/agents/dev/input", body);
+    const a = await call(or, "POST", `/api/agents/${await s.refOf("dev")}/input`, body);
+    const b = await call(or, "POST", `/api/agents/${await s.refOf("dev")}/input`, body);
     expect(a.json().item).toMatchObject({
       kind: "compact",
       clientMessageId: body.clientMessageId,
     });
     expect(b.json().item.id).toBe(a.json().item.id);
-    const rt = await s.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(s.app, "dev");
     expect(rt?.queueItems().filter((q) => q.kind === "compact")).toHaveLength(1);
     drv.last.emit(ev.turn(), ev.usage(), ev.end());
     await settled();
@@ -181,7 +196,7 @@ describe("I1 §5.1: raw session input", () => {
     expect((await input("  \n")).statusCode).toBe(400);
     expect(
       (
-        await call(or, "POST", "/api/agents/nope/input", {
+        await call(or, "POST", `/api/agents/${UNKNOWN_REF}/input`, {
           text: "x",
           clientMessageId: crypto.randomUUID(),
         })
@@ -189,7 +204,7 @@ describe("I1 §5.1: raw session input", () => {
     ).toBe(404);
     expect(
       (
-        await call(undefined, "POST", "/api/agents/dev/input", {
+        await call(undefined, "POST", `/api/agents/${await s.refOf("dev")}/input`, {
           text: "x",
           clientMessageId: crypto.randomUUID(),
         })
@@ -199,7 +214,7 @@ describe("I1 §5.1: raw session input", () => {
     const res = await call(
       undefined,
       "POST",
-      "/api/agents/dev/input",
+      `/api/agents/${await s.refOf("dev")}/input`,
       { text: "x", clientMessageId: crypto.randomUUID() },
       { authorization: `Bearer ${token}` },
     );
@@ -207,10 +222,14 @@ describe("I1 §5.1: raw session input", () => {
   });
 
   test("an errored agent answers 202 with the input queued", async () => {
-    await s.seedAgent({ slug: "err" });
-    const rt = await s.app.runtimes.bySlug("err");
+    await s.seedAgent({ handle: "err" });
+    const rt = await runtimeOf(s.app, "err");
     if (!rt) throw new Error("no runtime");
-    await call(or, "POST", "/api/messages", { to: ["err"], body: "hi", urgent: false });
+    await call(or, "POST", "/api/messages", {
+      to: [s.seededRef("err")],
+      body: "hi",
+      urgent: false,
+    });
     const procOf = () => drv.starts.filter((p) => p.spec.agentId === rt.agent.id).at(-1);
     procOf()?.emit(...ev.fullTurn(), ev.turn());
     procOf()?.exit(137);
@@ -218,7 +237,7 @@ describe("I1 §5.1: raw session input", () => {
     procOf()?.exit(1);
     await rt.settled();
     expect(rt.live().status).toBe("errored");
-    const res = await call(or, "POST", "/api/agents/err/input", {
+    const res = await call(or, "POST", `/api/agents/${await s.refOf("err")}/input`, {
       text: "held",
       clientMessageId: crypto.randomUUID(),
     });

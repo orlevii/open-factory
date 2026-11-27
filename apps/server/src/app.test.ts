@@ -5,7 +5,7 @@ import { expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
 import { AGENT_URL_ON_HUMAN_PORT_WARNING } from "./app.ts";
 import { callTool, mcpCall } from "./mcp/testing/mcp-client.ts";
-import { makeTestApp, signUp } from "./test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "./test/helpers.ts";
 
 test("buildApp canonicalizes FACTORY_HOME with realpath", async () => {
   const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), "of-link-")));
@@ -60,23 +60,23 @@ test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () 
   expect(quiet.join("")).not.toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
 });
 
-/** Starts `slug` with a human message and an idle first turn; returns its live token. */
+/** Starts `handle` with a human message and an idle first turn; returns its live token. */
 async function startIdle(
   t: Awaited<ReturnType<typeof makeTestApp>>,
   driver: FakeDriver,
-  slug: string,
+  handle: string,
 ) {
-  const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
+  const { cookie } = await signUp(t.app, { handle: `h-${handle}` });
   await t.app.inject({
     method: "POST",
     url: `/api/messages`,
     headers: { cookie },
-    payload: { to: [slug], body: "hi" },
+    payload: { to: [t.seededRef(handle)], body: "hi" },
   });
-  const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
-  if (!p) throw new Error(`${slug} not started`);
+  const p = driver.startsOf(handle).at(-1);
+  if (!p) throw new Error(`${handle} not started`);
   p.emit(...ev.fullTurn());
-  await (await t.app.runtimes.bySlug(slug))?.settled();
+  await (await runtimeOf(t.app, handle))?.settled();
   return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
 }
 
@@ -106,17 +106,17 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   const t = await makeTestApp({ harnessDriver: driver });
   try {
     await t.seedAgent({
-      slug: "lead",
+      handle: "lead",
       config: { template: { can_spawn: ["tech-lead", "developer"] } },
     });
-    await t.seedAgent({ slug: "solo" });
+    await t.seedAgent({ handle: "solo" });
     await t.seedAgent({
-      slug: "second",
+      handle: "second",
       config: { template: { can_spawn: ["developer"] } },
     });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
-    const names = async (slug: string) => {
-      const { token } = await startIdle(t, driver, slug);
+    const names = async (handle: string) => {
+      const { token } = await startIdle(t, driver, handle);
       const r = await mcpCall(url, token, "tools/list", {});
       return r.json.result.tools as {
         name: string;
@@ -142,20 +142,18 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
       "name: developer\ndisplay_name: Developer\nruntime: local\ncan_spawn:\n  - developer\n",
     );
     writeFileSync(path.join(tplDir, "AGENTS.md"), "# Developer\n");
-    const leadRow = await t.app.store.agentBySlug("lead");
+    const leadRow = await agentRowOf(t.app, "lead");
     const spawned = await t.app.spawner.spawn(
       leadRow?.id ?? "",
       { template: "developer", suffix: "e1", description: "Builds it", prompt: "Build it" },
       null,
     );
-    expect(spawned).toMatchObject({ ok: true, slug: "developer-e1" });
+    expect(spawned).toMatchObject({ ok: true, handle: "developer-e1" });
     // The brief wakes it: take that process's token once its first turn is over.
-    await vi.waitFor(() =>
-      expect(driver.starts.some((s) => s.spec.slug === "developer-e1")).toBe(true),
-    );
-    const p = driver.starts.filter((s) => s.spec.slug === "developer-e1").at(-1);
+    await vi.waitFor(() => expect(driver.startsOf("developer-e1").length > 0).toBe(true));
+    const p = driver.startsOf("developer-e1").at(-1);
     p?.emit(...ev.fullTurn());
-    await (await t.app.runtimes.bySlug("developer-e1"))?.settled();
+    await (await runtimeOf(t.app, "developer-e1"))?.settled();
     const r = await mcpCall(url, p?.spec.env.OPEN_FACTORY_AGENT_TOKEN as string, "tools/list", {});
     expect((r.json.result.tools as { name: string }[]).map((x) => x.name).sort()).toEqual(
       BASE_TOOLS,
@@ -173,7 +171,7 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     logStream: { write: (l) => void lines.push(l) },
   });
   try {
-    await t.seedAgent({ slug: "dev" });
+    await t.seedAgent({ handle: "dev" });
     const { token } = await startIdle(t, driver, "dev");
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
@@ -203,9 +201,9 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   try {
-    const lead = await t.seedAgent({ slug: "lead" });
-    const dev = await t.seedAgent({ slug: "dev" });
-    await t.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
+    const lead = await t.seedAgent({ handle: "lead" });
+    const dev = await t.seedAgent({ handle: "dev" });
+    await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
     const { proc } = await startIdle(t, driver, "lead");
     const row = await t.app.store.createOrgRow({
       kind: "member_update",
@@ -213,7 +211,7 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
       fromAgentId: dev.id,
       body: "progress",
     });
-    const rt = await t.app.runtimes.bySlug("lead");
+    const rt = await runtimeOf(t.app, "lead");
     await rt?.receive(row);
     await vi.waitFor(() => expect(proc.sent.flat().map((m) => m.body)).toContain("progress"));
   } finally {
@@ -228,28 +226,31 @@ test("a report's text reaches its manager naming the request it answers", async 
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   try {
-    const lead = await t.seedAgent({ slug: "lead" });
-    const dev = await t.seedAgent({ slug: "dev" });
-    await t.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
+    const lead = await t.seedAgent({ handle: "lead" });
+    const dev = await t.seedAgent({ handle: "dev" });
+    await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
     const { proc: leadProc } = await startIdle(t, driver, "lead");
     const { cookie } = await signUp(t.app, { handle: "asker" });
     const res = await t.app.inject({
       method: "POST",
       url: "/api/messages",
       headers: { cookie },
-      payload: { to: ["dev"], body: "update the README" },
+      payload: { to: [t.seededRef("dev")], body: "update the README" },
     });
     expect(res.statusCode).toBeLessThan(300);
     const [asked] = await t.sql<{ id: string }[]>`
-      select id from messages where to_agent_id = ${dev.id} and kind = 'message'`;
-    const devProc = driver.starts.filter((s) => s.spec.slug === "dev").at(-1);
+      select id from messages where to_id = ${dev.id} and kind = 'message'`;
+    const devProc = driver.startsOf("dev").at(-1);
     devProc?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
-    await (await t.app.runtimes.bySlug("dev"))?.settled();
+    await (await runtimeOf(t.app, "dev"))?.settled();
+    const [asker] = await t.sql<
+      { ref: string }[]
+    >`select ref from principals where handle = 'asker'`;
     await vi.waitFor(() =>
       expect(
         leadProc.sent.flat().find((m) => m.kind === "member_update" && m.body === "README updated")
           ?.re,
-      ).toEqual([{ id: asked?.id, from: "@asker" }]),
+      ).toEqual([{ id: asked?.id, from: `<@${asker?.ref}|asker>` }]),
     );
   } finally {
     await t.close();

@@ -1,5 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { envelope } from "@/test/session-fixtures";
 import { childrenOf } from "./display-passes";
 import {
@@ -17,7 +18,7 @@ const at = "2026-11-18T10:00:00.000Z";
 const rowsOf = (evs: SessionEvent[]): Row[] => buildRows(evs).rows;
 const e = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId,
   at,
   event,
@@ -267,23 +268,23 @@ test("spawn_agent and terminate_agent calls with the right shape pair with their
     e({
       type: "tool_result",
       toolUseId: "s1",
-      content: '{"slug":"tech-lead-ab12"}',
+      content: '{"handle":"tech-lead-ab12"}',
       isError: false,
     }),
     e({
       type: "tool_call",
       toolUseId: "t1",
       name: "mcp__factory__terminate_agent",
-      input: { slug: "x" },
+      input: { target: "x" },
     }),
     e({
       type: "tool_call",
       toolUseId: "t2",
       name: "mcp__factory__terminate_agent",
-      input: { slug: "y" },
+      input: { target: "y" },
     }),
     e(denial),
-    // Wrong shapes: a non-string prompt, a missing slug.
+    // Wrong shapes: a non-string prompt, a missing target.
     e({
       type: "tool_call",
       toolUseId: "s2",

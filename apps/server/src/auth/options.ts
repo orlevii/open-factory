@@ -1,6 +1,7 @@
-import { EMAIL_MAX, handleSchema, MSG, USER_NAME_MAX } from "@open-factory/shared";
+import { randomUUID } from "node:crypto";
+import { EMAIL_MAX, MSG, USER_NAME_MAX } from "@open-factory/shared";
 import { APIError, type BetterAuthOptions } from "better-auth";
-import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { createAuthMiddleware } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 
 export interface AuthOptionParams {
@@ -8,8 +9,8 @@ export interface AuthOptionParams {
   baseURL: string;
   trustedOrigins: string[];
   database: BetterAuthOptions["database"];
-  /** Claims the handle for a user (one namespace, spec §4.1); false means taken. */
-  claim?: (handle: string) => Promise<boolean>;
+  /** The id for the user being created inside the sign-up gate: its principal's id, so `users.id = principals.id`. */
+  newUserId?: () => string | undefined;
   /** True only inside the sign-up gate (S10 §9.3); without it no user can be created, not even the first. */
   mayCreateUser?: () => boolean;
   /** True when the user is disabled (S10 §9.4); no session can be created for them. */
@@ -43,6 +44,10 @@ export function inputLengthError(
   return null;
 }
 
+function ownsIdentity(body: unknown): boolean {
+  return Boolean(body && typeof body === "object" && ("name" in body || "handle" in body));
+}
+
 export function authOptions(p: AuthOptionParams) {
   return {
     secret: p.secret,
@@ -57,9 +62,14 @@ export function authOptions(p: AuthOptionParams) {
       autoSignIn: true,
       ...(p.passwordHasher ? { password: p.passwordHasher } : {}),
     },
+    advanced: {
+      database: {
+        // A user's id is its principal's (created in `handleSignUp`); every other row gets a random UUID.
+        generateId: ({ model }) => (model === "user" ? p.newUserId?.() : undefined) ?? randomUUID(),
+      },
+    },
     user: {
       additionalFields: {
-        handle: { type: "string", required: true, input: true, validator: { input: handleSchema } },
         // input: false: sign-up and update-user can't set it (V2); it comes back on getSession.
         disabledAt: { type: "date", required: false, input: false },
       },
@@ -96,27 +106,14 @@ export function authOptions(p: AuthOptionParams) {
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        // Before the handle check's early returns, so it runs with or without a handle (spec §13.2).
+        // The name and handle belong to principals and are written only by PATCH /api/me, which tells the browsers.
+        if (ctx.path === "/update-user" && ownsIdentity(ctx.body))
+          throw new APIError("BAD_REQUEST", {
+            code: "USE_PATCH_ME",
+            message: "Change your name or handle with PATCH /api/me.",
+          });
         const tooLong = inputLengthError(ctx.path, ctx.body);
         if (tooLong) throw new APIError("BAD_REQUEST", tooLong);
-        if ((ctx.path !== "/sign-up/email" && ctx.path !== "/update-user") || !p.claim) return;
-        const handle = (ctx.body as { handle?: unknown } | undefined)?.handle;
-        if (typeof handle !== "string") return;
-        // An invalid handle claims nothing: better-auth's own validator answers 400 later (reserved names land here too).
-        if (!handleSchema.safeParse(handle).success) return;
-        if (ctx.path === "/update-user") {
-          // Without a session the endpoint answers 401; nobody squats names without signing in.
-          const session = await getSessionFromCtx(ctx);
-          if (!session) return;
-          // Keeping one's own current handle is not a change.
-          if ((session.user as { handle?: string }).handle === handle) return;
-        }
-        if (!(await p.claim(handle))) {
-          throw new APIError("UNPROCESSABLE_ENTITY", {
-            code: "HANDLE_TAKEN",
-            message: MSG.handleTaken,
-          });
-        }
       }),
     },
   } satisfies BetterAuthOptions;

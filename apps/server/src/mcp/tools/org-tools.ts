@@ -1,4 +1,3 @@
-import type { AgentRow } from "@open-factory/db";
 import {
   type Actor,
   actorBy,
@@ -12,6 +11,7 @@ import {
   updateAgentToolSchema,
   writeTemplateFileToolSchema,
 } from "@open-factory/shared";
+import { agentMentionOf } from "@open-factory/shared/mentions";
 import { z } from "zod";
 import type { AgentService } from "../../agents/agent-service.ts";
 import type { ConfigService } from "../../agents/config-service.ts";
@@ -20,6 +20,8 @@ import type { EventBus } from "../../agents/event-bus.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
 import { ApiError } from "../../errors.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
+import type { AgentRecord } from "../../principals/principal-store.ts";
+import type { AgentFacing } from "../../principals/principal-text.ts";
 import type { ProjectService } from "../../projects/project-service.ts";
 import type { SecretService } from "../../secrets/secret-service.ts";
 import type { TemplateIndex } from "../../templates/template-index.ts";
@@ -33,7 +35,11 @@ import {
 import { toolErrorOf } from "./org-errors.ts";
 
 export type OrgToolDeps = {
-  loadAgent(id: string): Promise<AgentRow | undefined>;
+  loadAgent(id: string): Promise<AgentRecord | undefined>;
+  /** The caller's principal ref: the agent actor is named by its mention in stored text. */
+  principalRef(id: string): Promise<string | undefined>;
+  /** Mentions for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
   agents: AgentService;
   config: ConfigService;
   templates: TemplateIndex;
@@ -47,7 +53,11 @@ export type OrgToolDeps = {
 
 type AgentActor = Extract<Actor, { kind: "agent" }>;
 
-const bare = (slug: string) => slug.trim().replace(/^@/, "");
+/** `warnings` in a result only when there is one, deduplicated. */
+const warned = (...w: (string | undefined)[]) => {
+  const all = [...new Set(w.filter((x): x is string => !!x))];
+  return all.length ? { warnings: all } : {};
+};
 const matches = (query: string | undefined, ...texts: (string | undefined)[]) => {
   const q = query?.trim().toLowerCase();
   return !q || texts.some((t) => t?.toLowerCase().includes(q));
@@ -66,9 +76,16 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     const row = await d.loadAgent(callerOf(tctx));
     if (!row || row.archivedAt || row.terminatedAt || !row.manageOrg)
       throw new OrgRefusedError(
-        row ? `@${row.slug} can't manage the org any more.` : "You can't manage the org any more.",
+        row
+          ? `@${row.handle} can't manage the org any more.`
+          : "You can't manage the org any more.",
       );
-    return { kind: "agent", id: row.id, slug: row.slug };
+    const ref = await d.principalRef(row.id);
+    if (!ref)
+      throw new OrgRefusedError(
+        `@${row.handle} has no principal; ask a human to check the factory.`,
+      );
+    return { kind: "agent", id: row.id, ref, handle: row.handle };
   };
   const handler =
     <A>(fn: (args: A, actor: AgentActor) => Promise<unknown>) =>
@@ -165,16 +182,18 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "get_agent",
       "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
-      async ({ slug }) => {
-        const s = bare(slug);
-        const [a, cfg] = await Promise.all([d.agents.summary(s), d.config.getConfig(s)]);
+      async ({ target }) => {
+        const { ref, mention, warning } = await d.agents.agentOf(target);
+        const [a, cfg] = await Promise.all([d.agents.summary(ref), d.config.getConfig(ref)]);
+        const facing = await d.facing({ texts: [a.description] });
         return {
-          slug: a.slug,
+          handle: a.handle,
+          mention,
           display_name: a.displayName,
-          description: a.description,
+          description: facing.render(a.description),
           kind: a.kind,
           template: a.template,
-          reports_to: `@${a.reportsTo.handle}`,
+          reports_to: agentMentionOf(a.reportsTo),
           credential: a.credential,
           projects: a.projects,
           manage_org: a.manageOrg,
@@ -184,32 +203,39 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           overlay_hash: cfg.version,
           effective: cfg.merged,
           issues: cfg.issues,
+          ...warned(warning),
         };
       },
     ),
     tool(
       "create_agent",
-      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as @handle. It never gets manage_org.",
+      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as <@ref|handle>. It never gets manage_org.",
       createAgentToolSchema,
       async (a, actor) => {
-        const slug = bare(a.name);
+        const handle = a.handle.trim().replace(/^@/, "");
+        const manager = await d.agents.managerHandleOf(a.reports_to);
+        const mentionWarnings: string[] = [];
         await d.agents.create(
           {
             template: a.template.trim(),
-            slug,
+            handle,
             displayName: a.display_name,
             description: a.description,
-            reportsTo: bare(a.reports_to),
+            reportsTo: manager.handle,
             credential: a.credential.trim(),
             ...(a.projects ? { projects: a.projects } : {}),
             ...(a.config ? { config: a.config } : {}),
           },
           actor,
+          mentionWarnings,
         );
+        const mention = (await d.facing({ handles: [handle] })).mention(handle);
         return {
-          slug,
+          handle,
+          mention,
           status: "created",
-          note: `@${slug} is created and starts when it gets its first message.`,
+          note: `${mention} is created and starts when it gets its first message.`,
+          ...warned(manager.warning, ...mentionWarnings),
         };
       },
     ),
@@ -218,20 +244,23 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
-        const slug = bare(a.slug);
-        const before = await d.agents.summary(slug);
+        const { ref, handle, mention, warning } = await d.agents.agentOf(a.target);
+        const manager =
+          a.reports_to !== undefined ? await d.agents.managerHandleOf(a.reports_to) : undefined;
+        const before = await d.agents.summary(ref);
         const patch: PatchAgentBody = {
           ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
           ...(a.description !== undefined ? { description: a.description } : {}),
-          ...(a.reports_to !== undefined ? { reportsTo: bare(a.reports_to) } : {}),
+          ...(a.reports_to !== undefined ? { reportsTo: manager?.handle as string } : {}),
           ...(a.credential !== undefined ? { credential: a.credential.trim() } : {}),
           ...(a.projects !== undefined ? { projects: a.projects } : {}),
         };
         const plan =
           a.config !== undefined && a.base_hash !== undefined
-            ? await d.config.planOverlay(slug, a.config, a.base_hash, actor)
+            ? await d.config.planOverlay(ref, a.config, a.base_hash, actor)
             : undefined;
-        const r = await d.agents.updateWithOverlay(slug, patch, plan, actor);
+        const mentionWarnings: string[] = [];
+        const r = await d.agents.updateWithOverlay(ref, patch, plan, actor, mentionWarnings);
         const same = (x: string[], y: string[]) =>
           [...x].sort().join("\0") === [...y].sort().join("\0");
         const fields: string[] = [
@@ -248,12 +277,14 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           (r.config?.restartChecked ?? false) ||
           (identity && !before.archivedAt && before.status !== "hibernated");
         return {
-          slug,
+          handle,
+          mention,
           changed,
           restart,
           ...(r.config?.checked === "schema"
             ? { note: `Checked fully once ${before.template} is fixed.` }
             : {}),
+          ...warned(warning, manager?.warning, ...mentionWarnings),
         };
       },
     ),
@@ -261,18 +292,30 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "archive_agent",
       "Archive an agent (not yourself). Refused while it has reports; the refusal names them.",
       getAgentToolSchema,
-      async ({ slug }, actor) => {
-        const a = await d.agents.archive(bare(slug), actor);
-        return { slug: a.slug, archived: true };
+      async ({ target }, actor) => {
+        const { ref, mention, warning } = await d.agents.agentOf(target);
+        const a = await d.agents.archive(ref, actor);
+        return {
+          handle: a.handle,
+          mention,
+          archived: true,
+          ...warned(warning),
+        };
       },
     ),
     tool(
       "unarchive_agent",
       "Unarchive an agent. Refused when its manager is archived, or when it can manage the org.",
       getAgentToolSchema,
-      async ({ slug }, actor) => {
-        const a = await d.agents.unarchive(bare(slug), actor);
-        return { slug: a.slug, archived: false };
+      async ({ target }, actor) => {
+        const { ref, mention, warning } = await d.agents.agentOf(target);
+        const a = await d.agents.unarchive(ref, actor);
+        return {
+          handle: a.handle,
+          mention,
+          archived: false,
+          ...warned(warning),
+        };
       },
     ),
     tool(

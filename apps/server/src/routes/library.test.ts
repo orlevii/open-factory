@@ -77,7 +77,7 @@ const ROUTES: Array<["GET" | "POST" | "DELETE", string, object?]> = [
 test.each(ROUTES)(
   "%s %s: no session and an agent token both get 401",
   async (method, url, payload) => {
-    const lead = await h.seedAgent({ slug: "lead" });
+    const lead = await h.seedAgent({ handle: "lead" });
     const { token } = h.app.agentTokens.mint(lead.id);
     const anon = await h.app.inject({ method, url, ...(payload ? { payload } : {}) });
     expect(anon.statusCode).toBe(401);
@@ -92,7 +92,7 @@ test.each(ROUTES)(
 );
 
 test("the factory MCP server lists no Library tool to an agent", async () => {
-  const lead = await h.seedAgent({ slug: "lead" });
+  const lead = await h.seedAgent({ handle: "lead" });
   const { token } = h.app.agentTokens.mint(lead.id);
   const r = await mcpCall(`http://127.0.0.1:${h.app.agentListener.port}`, token, "tools/list", {});
   const names = (r.json.result.tools as { name: string }[]).map((t) => t.name);

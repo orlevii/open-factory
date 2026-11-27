@@ -34,14 +34,20 @@ const Mono = ({ children }: { children: ReactNode }) => (
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "Hibernated after 70 minutes idle" … (S5 UI design §3.3), by the hibernate path's reason. */
-function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
+function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): ReactNode {
   switch (e.reason) {
     case "warm_window":
       return e.idleMinutes === undefined
         ? "Hibernated"
         : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
     case "crons_stopped":
-      return e.by ? `Hibernated: ${e.by} stopped its crons` : "Hibernated: its crons were stopped";
+      return e.by ? (
+        <>
+          Hibernated: <Actor by={e.by} /> stopped its crons
+        </>
+      ) : (
+        "Hibernated: its crons were stopped"
+      );
     case "apply_changes":
       return "Hibernated to apply changes";
     case "shutdown":
@@ -61,12 +67,17 @@ function startedText(e: Extract<AnyEvent, { type: "process_started" }>): string 
   return e.resumed ? "Woke up" : "Started a new session";
 }
 
-function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): string {
+function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): ReactNode {
   const items = [
     ...e.tasks.map((t) => `${t.description ?? t.taskId} (background)`),
     ...e.crons.map((c) => `${c.humanSchedule?.toLowerCase() ?? c.cronId} (cron)`),
   ];
-  if (e.reason === "crons_stopped") return `Stopped by ${e.by ?? "a human"}: ${items.join(" · ")}`;
+  if (e.reason === "crons_stopped")
+    return (
+      <>
+        Stopped by {e.by ? <Actor by={e.by} /> : "a human"}: {items.join(" · ")}
+      </>
+    );
   const when = e.reason === "terminated" ? "it was terminated" : "the process stopped";
   return `Lost when ${when}: ${items.join(" · ")}`;
 }
@@ -94,7 +105,7 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
     case "session_reset":
       return (
         <>
-          New session started by <Mono>{e.by}</Mono>. Earlier history stays above; the agent no
+          New session started by <Actor by={e.by} />. Earlier history stays above; the agent no
           longer remembers it.
         </>
       );
@@ -107,7 +118,7 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
     case "terminated":
       return <>Terminated {terminatedPhrase(e.by)}</>;
     case "control": {
-      const by = <Mono>{e.by}</Mono>;
+      const by = <Actor by={e.by} />;
       if (e.cmd === "interrupt") return <>{by} interrupted</>;
       if (e.cmd === "restart") return <>Restarted by {by}</>;
       if (e.cmd === "compact")
@@ -218,9 +229,15 @@ const FIX_LINK =
  * The agent's template page. The name comes from the session's own cached agent (no extra request once it is
  * loaded); before that, or if it can't be read, the Templates list.
  */
-function TemplateLink({ slug, label }: { slug: string; label: (template: string) => string }) {
+function TemplateLink({
+  agentRef,
+  label,
+}: {
+  agentRef: string;
+  label: (template: string) => string;
+}) {
   const { data: template } = useQuery({
-    ...agentDetailQueryOptions(slug),
+    ...agentDetailQueryOptions(agentRef),
     staleTime: Number.POSITIVE_INFINITY,
     select: (d) => d.agent.template,
   });
@@ -238,11 +255,11 @@ function TemplateLink({ slug, label }: { slug: string; label: (template: string)
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
-  slug,
+  agentRef,
   spawned,
 }: {
   fix: NonNullable<Extract<AnyEvent, { type: "error" }>["fix"]>;
-  slug: string;
+  agentRef: string;
   spawned?: boolean;
 }) {
   // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
@@ -255,8 +272,8 @@ function FixLink({
       <button
         type="button"
         className={cls}
-        {...sheetIntent("edit-agent", { kind: "edit-agent", slug })}
-        onClick={() => openSheet({ kind: "edit-agent", slug })}
+        {...sheetIntent("edit-agent", { kind: "edit-agent", agentRef })}
+        onClick={() => openSheet({ kind: "edit-agent", agentRef })}
       >
         Edit the agent
       </button>
@@ -267,12 +284,13 @@ function FixLink({
   // The agent's own configuration (an overlay that fails its schema).
   if (fix === "config")
     return (
-      <Link to="/agents/$slug/config" params={{ slug }} className={cls}>
+      <Link to="/agents/$ref/config" params={{ ref: agentRef }} className={cls}>
         {CONFIG_PAGE_COPY.openConfiguration}
       </Link>
     );
   // A template with errors, or a deleted one, is fixed on its page.
-  if (fix === "template") return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
+  if (fix === "template")
+    return <TemplateLink agentRef={agentRef} label={(t) => `Open template ${t}`} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },
@@ -287,7 +305,7 @@ function FixLink({
 }
 
 export interface TimelineRowProps {
-  slug: string;
+  agentRef: string;
   /** The session's agent is a spawned one (no edit page). */
   spawned?: boolean;
   row: Row;
@@ -325,7 +343,7 @@ export function TimelineRow(props: TimelineRowProps) {
             at={row.at}
             failed={failedIds.has(row.message.id)}
             attachments={row.message.attachments}
-            slug={props.slug}
+            agentRef={props.agentRef}
             {...(row.message.kind === "scheduled" && row.message.scheduleKey
               ? {
                   scheduled: {
@@ -360,7 +378,6 @@ export function TimelineRow(props: TimelineRowProps) {
     case "outgoing":
       return (
         <OutgoingMessage
-          slug={props.slug}
           row={row}
           showCall={expanded.has(row.key)}
           onToggleCall={() => toggle(row.key)}
@@ -370,7 +387,7 @@ export function TimelineRow(props: TimelineRowProps) {
     case "spawn":
       return (
         <SpawnBlock
-          slug={props.slug}
+          agentRef={props.agentRef}
           row={row}
           showCall={expanded.has(row.key)}
           onToggleCall={() => toggle(row.key)}
@@ -388,7 +405,6 @@ export function TimelineRow(props: TimelineRowProps) {
             capped={row.capped === true}
             head={row.head}
             at={row.at}
-            slug={props.slug}
           />
         </div>
       );
@@ -423,7 +439,7 @@ export function TimelineRow(props: TimelineRowProps) {
             <NestedRow
               key={c.key}
               row={c}
-              slug={props.slug}
+              agentRef={props.agentRef}
               focusable={rowProps(c).tabIndex === 0}
               callShown={expanded.has(c.key)}
               onToggleCall={() => toggle(c.key)}
@@ -459,7 +475,7 @@ export function TimelineRow(props: TimelineRowProps) {
               <NestedRow
                 key={c.key}
                 row={c}
-                slug={props.slug}
+                agentRef={props.agentRef}
                 focusable={rowProps(c).tabIndex === 0}
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
@@ -491,7 +507,7 @@ export function TimelineRow(props: TimelineRowProps) {
               <NestedRow
                 key={c.key}
                 row={c}
-                slug={props.slug}
+                agentRef={props.agentRef}
                 focusable={rowProps(c).tabIndex === 0}
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
@@ -522,7 +538,7 @@ export function TimelineRow(props: TimelineRowProps) {
           </p>
           {row.event.fix && (
             <p>
-              <FixLink fix={row.event.fix} slug={props.slug} spawned={props.spawned} />
+              <FixLink fix={row.event.fix} agentRef={props.agentRef} spawned={props.spawned} />
             </p>
           )}
           {row.event.detail && (

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRow, type Db, schema, type UploadRow } from "@open-factory/db";
+import { type Db, schema, type UploadRow } from "@open-factory/db";
 import { and, count, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
+import { type AgentRecord, agentRecords, principalById } from "../principals/principal-store.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 import { excludeFactoryDir } from "./git-exclude.ts";
@@ -78,8 +79,14 @@ export class UploadService {
   private now(): Date {
     return this.d.now?.() ?? new Date();
   }
-  private workdir(slug: string) {
-    return agentWorkdir(this.d.factoryHome, slug);
+  /** The ref the agent's workdir and workspace lock are named by (spec §4.4). */
+  private async ref(agentId: string) {
+    const p = await principalById(this.d.db, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.ref;
+  }
+  private async workdir(agentId: string) {
+    return agentWorkdir(this.d.factoryHome, await this.ref(agentId));
   }
 
   /**
@@ -88,7 +95,7 @@ export class UploadService {
    * `UploadAgentEndedError`. On the first upload (and idempotently after), `.factory/` goes into `info/exclude`.
    */
   async create(
-    agent: AgentRow,
+    agent: AgentRecord,
     uploaderId: string,
     name: string,
     source: AsyncIterable<Buffer | Uint8Array>,
@@ -130,27 +137,24 @@ export class UploadService {
   }
 
   private async createLocked(
-    agent: AgentRow,
+    agent: AgentRecord,
     uploaderId: string,
     name: string,
     source: AsyncIterable<Buffer | Uint8Array>,
   ): Promise<UploadInfo | Refusal> {
     const id = randomUUID();
     const at = this.now();
-    const store = await UploadStore.open(this.workdir(agent.slug), this.storeHooks);
+    const store = await UploadStore.open(await this.workdir(agent.id), this.storeHooks);
     const written = await store.write(source, { storedName: storedUploadName(at, id, name), name });
     if ("status" in written) return written;
     let row: UploadRow;
     try {
-      row = await this.d.lock.run(agent.slug, async () => {
-        const [now] = await this.d.db
-          .select()
-          .from(schema.agents)
-          .where(eq(schema.agents.id, agent.id));
+      row = await this.d.lock.run(await this.ref(agent.id), async () => {
+        const [now] = await agentRecords(this.d.db).where(eq(schema.agents.id, agent.id));
         if (!now || now.archivedAt || now.terminatedAt || now.workspaceDeletedAt)
           throw now?.archivedAt && !now.terminatedAt
-            ? new UploadAgentEndedError("agent_archived", `@${agent.slug} is archived.`)
-            : new UploadAgentEndedError("agent_terminated", `@${agent.slug} was terminated.`);
+            ? new UploadAgentEndedError("agent_archived", `@${agent.handle} is archived.`)
+            : new UploadAgentEndedError("agent_terminated", `@${agent.handle} was terminated.`);
         const s = written.sniffed;
         const [r] = await this.d.db
           .insert(uploads)
@@ -177,13 +181,13 @@ export class UploadService {
       throw err;
     }
     await this.exclude(agent, store.root).catch((err: unknown) =>
-      this.d.log.warn({ err, agent: agent.slug }, "adding .factory/ to info/exclude failed"),
+      this.d.log.warn({ err, agent: agent.handle }, "adding .factory/ to info/exclude failed"),
     );
     return uploadInfo(row);
   }
 
   /** `workdir` is the store's real path (review I3), so it compares with the realpath'd roots. */
-  private async exclude(agent: AgentRow, workdir: string) {
+  private async exclude(agent: AgentRecord, workdir: string) {
     const grants = await this.d.db
       .select({ hostPath: projects.hostPath })
       .from(agentProjectGrants)
@@ -192,7 +196,7 @@ export class UploadService {
     const outcome = await excludeFactoryDir(workdir, [workdir, ...grants.map((g) => g.hostPath)]);
     if (outcome === "refused")
       this.d.log.warn(
-        { agent: agent.slug },
+        { agent: agent.handle },
         "the agent's git dir is unsafe; info/exclude was not written",
       );
   }
@@ -217,13 +221,13 @@ export class UploadService {
    * file is missing or isn't what was uploaded.
    */
   async read(
-    agent: AgentRow,
+    agent: AgentRecord,
     r: UploadRow,
   ): Promise<{ data: Buffer; mime: ImageMime | typeof TEXT_MIME } | "gone" | "changed"> {
     if (agent.workspaceDeletedAt) return "gone";
     let store: UploadStore;
     try {
-      store = await UploadStore.open(this.workdir(agent.slug));
+      store = await UploadStore.open(await this.workdir(agent.id));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return "gone";
       return "changed";
@@ -242,7 +246,7 @@ export class UploadService {
    * the file. Returns what stopped it otherwise.
    */
   async removeUnsent(
-    slug: string,
+    agentId: string,
     r: UploadRow,
     userId: string,
   ): Promise<"removed" | "not_uploader" | "already_sent"> {
@@ -252,17 +256,17 @@ export class UploadService {
       .where(and(eq(uploads.id, r.id), eq(uploads.uploaderId, userId), isNull(uploads.messageId)))
       .returning({ id: uploads.id });
     if (!gone.length) return "already_sent";
-    await this.removeFile(slug, r.storedPath);
+    await this.removeFile(agentId, r.storedPath);
     return "removed";
   }
 
-  private async removeFile(slug: string, rel: string) {
+  private async removeFile(agentId: string, rel: string) {
     try {
-      const store = await UploadStore.open(this.workdir(slug));
+      const store = await UploadStore.open(await this.workdir(agentId));
       await store.remove(rel);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // the workspace is gone
-      this.d.log.warn({ err, agent: slug, path: rel }, "deleting an upload's file failed");
+      this.d.log.warn({ err, agent: agentId, path: rel }, "deleting an upload's file failed");
     }
   }
 
@@ -270,7 +274,7 @@ export class UploadService {
   async sweepUnsent(now = this.now()): Promise<number> {
     const cutoff = new Date(now.getTime() - UNSENT_TTL_MS);
     const old = await this.d.db
-      .select({ id: uploads.id, storedPath: uploads.storedPath, slug: schema.agents.slug })
+      .select({ id: uploads.id, storedPath: uploads.storedPath, agentId: uploads.agentId })
       .from(uploads)
       .innerJoin(schema.agents, eq(schema.agents.id, uploads.agentId))
       .where(and(isNull(uploads.messageId), lt(uploads.createdAt, cutoff)));
@@ -281,17 +285,18 @@ export class UploadService {
         .where(and(eq(uploads.id, r.id), isNull(uploads.messageId)))
         .returning({ id: uploads.id });
       if (!gone.length) continue; // sent meanwhile
-      await this.removeFile(r.slug, r.storedPath);
+      await this.removeFile(r.agentId, r.storedPath);
       n++;
     }
     // Review M2: files no row references (a crash before the insert, a failed delete, a leftover temp name).
     const live = await this.d.db
-      .select({ id: schema.agents.id, slug: schema.agents.slug })
+      .select({ id: schema.agents.id, handle: schema.principals.handle })
       .from(schema.agents)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(isNull(schema.agents.workspaceDeletedAt));
     for (const a of live) {
       try {
-        const store = await UploadStore.open(this.workdir(a.slug));
+        const store = await UploadStore.open(await this.workdir(a.id));
         const rows = await this.d.db
           .select({ id: uploads.id })
           .from(uploads)
@@ -303,7 +308,7 @@ export class UploadService {
         });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        this.d.log.warn({ err, agent: a.slug }, "sweeping an agent's upload files failed");
+        this.d.log.warn({ err, agent: a.handle }, "sweeping an agent's upload files failed");
       }
     }
     return n;

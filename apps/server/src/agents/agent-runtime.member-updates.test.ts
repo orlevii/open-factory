@@ -1,7 +1,9 @@
 import type { Envelope } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { peerBody } from "../messaging/peer-body.ts";
 import type { CredentialPause } from "../supervisor/slots.ts";
+import { testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -15,7 +17,7 @@ const DEBOUNCE = 30_000;
 let slots: RecordingSlots;
 beforeAll(async () => {
   await h.setup();
-  await insertAgent(h.t.sql, { id: REPORT, slug: "devrep" });
+  await insertAgent(h.t.sql, { id: REPORT, handle: "devrep" });
 });
 afterAll(() => h.close());
 // The store's stamps are strictly increasing across tests, so each test's fake clock starts after the last one ended
@@ -183,7 +185,11 @@ test("the debounce runs from the oldest pending update; later ones go out in the
   await tick(1_500); // 30.5 s after "a", 10.5 s after "b"
   const last = h.driver.last.sent.at(-1) ?? [];
   expect(last).toHaveLength(1);
-  expect(last[0]).toMatchObject({ kind: "member_update", from: "@devrep", body: "a\n\nb" });
+  expect(last[0]).toMatchObject({
+    kind: "member_update",
+    from: `<@${testRef(REPORT)}|devrep>`,
+    body: "a\n\nb",
+  });
   expect(last[0]?.ids).toHaveLength(2);
 });
 
@@ -227,8 +233,8 @@ test("a factory fact renders with about and its fact code, in its report's group
   );
   await tick(DEBOUNCE + 500);
   expect(h.driver.last.sent.at(-1)?.map((m) => [m.from, m.about, m.fact])).toEqual([
-    ["@devrep", undefined, undefined],
-    ["@factory", "@devrep", "denied"],
+    [`<@${testRef(REPORT)}|devrep>`, undefined, undefined],
+    ["@factory", `<@${testRef(REPORT)}|devrep>`, "denied"],
   ]);
 });
 
@@ -311,7 +317,11 @@ test("a rate-limited manager keeps due updates queued and gets them at the reset
   await tick(DEBOUNCE + 1_000);
   expect(updatesWritten()).toEqual([]);
   expect(h.rt.queueItems()).toEqual([
-    expect.objectContaining({ kind: "message", from: "@devrep", body: "held by the pause" }),
+    expect.objectContaining({
+      kind: "message",
+      from: mentionOf(testRef(REPORT)),
+      body: "held by the pause",
+    }),
   ]);
   paused.paused = undefined;
   h.rt.resumeAfterReset();
@@ -349,8 +359,10 @@ test("a manager whose recovery needs Start a new session keeps the update queued
   await update("due while errored");
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
-  expect(h.rt.queueItems()).toEqual([expect.objectContaining({ from: "@devrep" })]);
-  await h.rt.resetSession({ byHandle: "or" });
+  expect(h.rt.queueItems()).toEqual([
+    expect.objectContaining({ from: mentionOf(testRef(REPORT)) }),
+  ]);
+  await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(1);
   expect(updatesWritten()).toEqual(["due while errored"]);
@@ -397,7 +409,11 @@ test("loading an errored manager with pending updates starts nothing; they ride 
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.queueItems()).toEqual([
-    expect.objectContaining({ kind: "message", from: "@devrep", body: "stuck report text" }),
+    expect.objectContaining({
+      kind: "message",
+      from: mentionOf(testRef(REPORT)),
+      body: "stuck report text",
+    }),
   ]);
   await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
@@ -410,7 +426,7 @@ test("loading an errored manager with pending updates starts nothing; they ride 
 test("a peer event is a queued notice that never wakes or is written alone; it rides along with the next batch", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
-  await peer("@devrep (Dev agent) joined as your peer.");
+  await peer(`${mentionOf(testRef(REPORT))} (Dev agent) joined as your peer.`);
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({ kind: "notice", from: "@factory" }),
   ]);
@@ -424,11 +440,12 @@ test("a peer event is a queued notice that never wakes or is written alone; it r
 test("a peer_left envelope carries its subject, with the move target read back from the body", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
+  const LEAD_MENTION = mentionOf(testRef("leadx"));
   const body = peerBody(
-    { slug: "devrep", displayName: "Dev agent" },
+    { ref: testRef(REPORT), displayName: "Dev agent" },
     "report",
-    { kind: "peer_left", left: { reason: "moved", to: "leadx" } },
-    "leadx",
+    { kind: "peer_left", left: { reason: "moved", to: LEAD_MENTION } },
+    testRef("leadx"),
   );
   await h.receive(
     await h.store.createOrgRow({
@@ -443,12 +460,12 @@ test("a peer_left envelope carries its subject, with the move target read back f
   const env = (await messageIns()).at(-1)?.messages.find((m) => m.kind === "peer_left");
   expect(env).toMatchObject({
     from: "@factory",
-    body,
+    body: `<@${testRef(REPORT)}|devrep> (Dev agent) left: now reports to <@${testRef("leadx")}|unknown>.`,
     subject: {
-      slug: "devrep",
+      handle: "devrep",
       displayName: "Dev agent",
       relation: "report",
-      left: { reason: "moved", to: "leadx" },
+      left: { reason: "moved", to: LEAD_MENTION },
     },
   });
 });

@@ -4,23 +4,29 @@ import {
   type ProjectSummary,
   type SecretSummary,
 } from "@open-factory/shared";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
-const agentRow = (slug: string) => agentSummary({ slug, displayName: slug });
+const agentRow = (handle: string) => agentSummary({ handle: handle, displayName: handle });
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+let pushFrame: (m: unknown) => void = () => {};
 vi.mock("@/lib/ws", () => ({
-  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+  connectWs: (o: { onMessage?: (m: unknown) => void }) => {
+    pushFrame = (m) => o.onMessage?.(m);
+    return { close() {}, status: () => "open", send: () => true };
+  },
 }));
 afterEach(() => {
   resetSheets();
@@ -73,6 +79,7 @@ function world(w: World = {}) {
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
+    "GET /api/principals": () => json({ principals: [principal(refFor("lead"), "lead")] }),
     ...w.extra,
   });
   return { api, state };
@@ -253,7 +260,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead/chat",
+    `/agents/${refFor("lead")}/chat`,
   );
 
   await userEvent.click(
@@ -350,8 +357,33 @@ test("a credential taken while the dialog was open shows a crimson row line link
   const handle = within(alert).getByRole("button", { name: "@lead" });
   expect(handle).toHaveAttribute("type", "button");
   await userEvent.click(handle);
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "lead" });
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("lead") });
 });
+
+test.each([
+  ["credentials", "Credentials", "work"],
+  ["secrets", "Secrets", "GH_TOKEN"],
+] as const)(
+  "after principal_updated, the %s section shows the agent's new handle",
+  async (page, title, name) => {
+    const { state } = world({
+      credentials: [cred({ name: "work", usedBy: ["lead"] })],
+      secrets: [secret({ name: "GH_TOKEN", usedBy: ["lead"] })],
+    });
+    renderApp(`/settings/${page}`, alice);
+    const region = await section(title);
+    await waitFor(() => expect(row(region, name)).toHaveTextContent("Used by @lead"));
+    state.credentials = [cred({ name: "work", usedBy: ["builder"] })];
+    state.secrets = [secret({ name: "GH_TOKEN", usedBy: ["builder"] })];
+    act(() =>
+      pushFrame({
+        type: "principal_updated",
+        principal: { ...principal(refFor("lead"), "builder"), kind: "agent" },
+      }),
+    );
+    await waitFor(() => expect(row(region, name)).toHaveTextContent("Used by @builder"));
+  },
+);
 
 test("secrets are write-only rows; Update saves a new value and says who restarts", async () => {
   const { api } = world({
@@ -591,11 +623,15 @@ test("projects: a live spawned grantee is named through its spawner in Remove's 
       "GET /api/agents?ended=exclude": () =>
         json({
           agents: [
-            { ...agentRow("lead"), kind: "persistent", reportsTo: { kind: "user", handle: "or" } },
+            {
+              ...agentRow("lead"),
+              kind: "persistent",
+              reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
+            },
             {
               ...agentRow("tech-lead-ab12"),
               kind: "ephemeral",
-              reportsTo: { kind: "agent", handle: "lead" },
+              reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
             },
           ],
           running: { count: 0 },

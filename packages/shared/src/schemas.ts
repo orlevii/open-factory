@@ -19,6 +19,7 @@ export const meSchema = z.object({
   email: z.string(),
   name: z.string(),
   handle: z.string(),
+  ref: z.string(),
 });
 export type Me = z.infer<typeof meSchema>;
 

@@ -1,6 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
@@ -10,9 +10,8 @@ import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 const h = new RuntimeHarness();
 beforeAll(async () => {
   await h.setup();
-  await claimTestHandle(h.t.db, "ann", "user");
-  await h.t
-    .sql`insert into users (id, name, email, handle) values ('u2', 'Ann', 'ann@x.io', 'ann')`;
+  await h.t.sql.unsafe(principalSql("u2", "human", "ann"));
+  await h.t.sql`insert into users (id, name, email) values ('u2', 'Ann', 'ann@x.io')`;
 });
 afterAll(() => h.close());
 beforeEach(() => {
@@ -30,7 +29,7 @@ async function start() {
   h.bus.subscribeUser("u1", (m) => u1.push(m));
   h.bus.subscribeUser("u2", (m) => u2.push(m));
 }
-const frame = () => ({ type: "chat_changed", agent: h.rt.agent.slug });
+const frame = () => ({ type: "chat_changed", agent: testRef(h.rt.agent.id) });
 const count = (got: ServerMessage[]) => got.filter((m) => m.type === "chat_changed").length;
 const sendU2 = (body: string) => sendAs(h.store, h.rt, { fromUserId: "u2", body, urgent: false });
 
@@ -84,7 +83,7 @@ test("cancel and restore tell the sender", async () => {
   await h.send("work");
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
-  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.interrupt({ by: "<@or>" });
   const b = await h.send("B");
   const before = count(u1);
   await h.rt.cancelQueued(b.id, "u1");

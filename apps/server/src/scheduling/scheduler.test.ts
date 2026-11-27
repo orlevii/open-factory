@@ -4,8 +4,8 @@ import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
 import { LoopGuard } from "../messaging/loop-guard.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { ScheduleStore } from "./schedule-store.ts";
 import { Scheduler } from "./scheduler.ts";
 
@@ -22,8 +22,8 @@ const T0 = new Date("2026-11-20T10:00:00Z"); // Friday 11:00 Berlin
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 afterEach(async () => {
@@ -42,8 +42,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   store = new ScheduleStore();
   sched = new Scheduler({
     db: t.db,
@@ -89,7 +89,7 @@ const sched1 = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
 const asDate = (v: unknown) => (v === null || v === undefined ? null : new Date(v as string));
 const rows = async () =>
   (
-    await t.sql`select kind, to_agent_id, firings, late, due_at, state, body, author_user_id from messages order by created_at`
+    await t.sql`select kind, to_id, firings, late, due_at, state, body, author_id from messages order by created_at`
   ).map((r) => ({ ...r, due_at: asDate(r.due_at) }));
 const schedRow = async (id = "s1") => {
   const r = (
@@ -131,13 +131,13 @@ test("fires at the time: one row, next run advanced, last fired set, handed over
   expect(await rows()).toEqual([
     {
       kind: "scheduled",
-      to_agent_id: "ceo",
+      to_id: "ceo",
       firings: 1,
       late: false,
       due_at: new Date("2026-11-23T08:00:00Z"),
       state: "pending",
       body: "Review",
-      author_user_id: "u1",
+      author_id: "u1",
     },
   ]);
   const s = await schedRow();
@@ -303,7 +303,7 @@ test("retargeted between the unlocked read and the lock: skipped now, fires to t
   await sched.tick();
   expect(await rows()).toHaveLength(0);
   await sched.tick();
-  expect(await rows()).toMatchObject([{ to_agent_id: "dev" }]);
+  expect(await rows()).toMatchObject([{ to_id: "dev" }]);
 });
 
 test("rearm before start and after stop does nothing; stop during a tick finishes its transaction and skips the hand-off", async () => {
@@ -404,11 +404,11 @@ describe("loop guard on agent-authored schedules", () => {
       ["ceo", "dev", 3],
     ] as const)
       for (let i = 0; i < n; i++)
-        await t.sql`insert into messages (id, kind, from_agent_id, to_agent_id, recipients, body, state, created_at)
-          values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[`@${to}`]}::text[], 'x', 'delivered', ${at})`;
+        await t.sql`insert into messages (id, kind, from_id, to_id, recipient_ids, body, state, created_at)
+          values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[to]}::text[], 'x', 'delivered', ${at})`;
   }
   const devSchedule = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
-    sched1({ createdByAgentId: "dev", ...over });
+    sched1({ createdById: "dev", ...over });
   const scheduled = () =>
     t.sql`select id, state, firings, loop_hold_id from messages where kind = 'scheduled' order by created_at`;
 
@@ -453,7 +453,7 @@ describe("loop guard on agent-authored schedules", () => {
       id: "early",
       toAgentId: "ceo",
       scheduleId: "s1",
-      authorAgentId: "dev",
+      authorId: "dev",
       createdAt: new Date(FIRE.getTime() - 3_600_000),
     });
     await t.sql`insert into loop_holds (id, agent_a, agent_b, opened_at) values ('h0', 'ceo', 'dev', ${FIRE.toISOString()})`;

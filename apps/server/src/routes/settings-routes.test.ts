@@ -5,8 +5,8 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -86,7 +86,7 @@ test("projects: create 201, list, patch, conflicts, delete 204 or 409", async ()
   expect(patched.json().project.hostPath).toContain(path.basename(dirB));
   expect((await call("PATCH", "/api/projects/ghost", { hostPath: dirB })).statusCode).toBe(404);
 
-  const agent = await t.seedAgent({ slug: "dev" });
+  const agent = await t.seedAgent({ handle: "dev" });
   const [p] = await t.db.select().from(schema.projects).where(eq(schema.projects.name, "app"));
   await t.db
     .insert(schema.agentProjectGrants)
@@ -107,11 +107,10 @@ test("projects: a project granted only to a terminated spawned agent can be remo
   expect((await call("POST", "/api/projects", { name: "term", hostPath: dir })).statusCode).toBe(
     201,
   );
-  const lead = await t.seedAgent({ slug: "lead-t" });
-  await claimTestHandle(t.db, "kid-term-ab12", "agent");
+  const lead = await t.seedAgent({ handle: "lead-t" });
+  await seedTestPrincipal(t.db, "agent", "kid-term-ab12", "kid-term");
   await t.db.insert(schema.agents).values({
     id: "kid-term",
-    slug: "kid-term-ab12",
     displayName: "kid",
     template: "t",
     config: lead.config,
@@ -120,7 +119,6 @@ test("projects: a project granted only to a terminated spawned agent can be remo
     reportsTo: lead.id,
     credentialId: null,
     terminatedAt: new Date(),
-    terminatedBy: "lead-t",
   });
   // Termination deletes the grant rows, so a terminated agent holds none.
   expect((await call("DELETE", "/api/projects/term")).statusCode).toBe(204);

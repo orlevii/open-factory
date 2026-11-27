@@ -204,6 +204,41 @@
       "when": 1795641192904,
       "tag": "0028_member_update_re",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795703631966,
+      "tag": "0029_whole_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795708056279,
+      "tag": "0030_fast_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795712228383,
+      "tag": "0031_noisy_obadiah_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795714019333,
+      "tag": "0032_stiff_pyro",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795727594348,
+      "tag": "0033_reflective_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }

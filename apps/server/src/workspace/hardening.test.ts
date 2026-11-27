@@ -28,7 +28,7 @@ let hostDir: string;
 let secretFile: string;
 let workdir: string;
 let ws: Workspace;
-let tpl: Parameters<Workspace["materialize"]>[2];
+let tpl: Parameters<Workspace["materialize"]>[1];
 let prep: Parameters<Workspace["prepare"]>[0];
 let _fake: FakeClaude;
 
@@ -63,7 +63,9 @@ beforeEach(async () => {
   });
   tpl = { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } };
   prep = {
-    slug: "lead",
+    ref: "p3dh8vcn",
+    handle: "lead",
+    self: { ref: "p3dh8vcn", handle: "lead" },
     displayName: "Lead",
     description: "d",
     template: "lead",
@@ -73,7 +75,7 @@ beforeEach(async () => {
       templateSkills: [],
       library: { skills: {} },
     },
-    manager: { kind: "user" as const, handle: "or", name: "Or" },
+    manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
@@ -87,8 +89,8 @@ beforeEach(async () => {
     descriptionWrittenBy: null,
     memberUpdateSeconds: 30,
   };
-  await ws.materialize("lead", "lead", tpl, { ...prep, config });
-  workdir = ws.workdir("lead");
+  await ws.materialize("p3dh8vcn", tpl, { ...prep, config });
+  workdir = ws.workdir("p3dh8vcn");
 });
 
 const prepareAgent = () => ws.prepare(prep);
@@ -148,7 +150,7 @@ test(".mcp.json and CLAUDE.md symlinks are replaced, never followed", async () =
 test("create's rollback never follows a link inside the workdir", async () => {
   writeFileSync(path.join(hostDir, "keep"), "x");
   await symlink(hostDir, `${workdir}/escape`);
-  await ws.discard("lead");
+  await ws.discard("p3dh8vcn");
   expect(existsSync(workdir)).toBe(false);
   expect(readdirSync(hostDir)).toEqual(["keep"]);
 });

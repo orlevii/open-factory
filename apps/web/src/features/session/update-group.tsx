@@ -2,11 +2,13 @@ import type { Envelope, RequestRef } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpFromLine, CircleAlert, CircleCheck, ShieldAlert, Users } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown, LINK_CLASS } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
-import { terminatedPhrase } from "./spawn-block";
+import { Actor, terminatedPhrase } from "./spawn-block";
+import { parseWho, whoHandle, whoName } from "./who";
 
 const PART_CLAMP_LINES = 8;
 const WRITTEN_GAP_MS = 60_000;
@@ -54,8 +56,10 @@ export function UpdateGroup({
   const late =
     written !== undefined &&
     new Date(row.at).getTime() - new Date(written).getTime() > WRITTEN_GAP_MS;
-  // `about` is the report's handle as the envelope writes it, `@slug`.
-  const about = row.about.replace(/^@/, "");
+  // `about` is the report as the envelope writes it, `<@ref|handle>`: its current handle names the link.
+  const aboutRef = parseWho(row.about)?.ref;
+  const current = usePrincipal(aboutRef ?? "");
+  const about = current.status === "found" ? current.principal.handle : whoHandle(row.about);
   return (
     <article
       {...rowProps}
@@ -69,7 +73,11 @@ export function UpdateGroup({
           <span>Update from</span>
         </span>
         <span>
-          <AgentLink slug={about} />
+          {aboutRef ? (
+            <AgentLink agentRef={aboutRef} />
+          ) : (
+            <span className="font-mono text-foreground">@{about}</span>
+          )}
         </span>
         <time
           dateTime={row.at}
@@ -90,7 +98,9 @@ export function UpdateGroup({
           >
             {item.type === "part" ? (
               <>
-                {withLine.has(item) && <ReplyLine report={about} re={item.re} />}
+                {withLine.has(item) && (
+                  <ReplyLine report={about} reportRef={aboutRef} re={item.re} />
+                )}
                 <ClampedMarkdown source={item.body} limit={PART_CLAMP_LINES} />
               </>
             ) : (
@@ -135,7 +145,15 @@ function replyLines(items: Item[]): Set<Part> {
  * Whose requests a report's text answers: each sender once, linked to their (first) request in the report's session.
  * No requests: the report did the work on its own (a cron, a task notification).
  */
-function ReplyLine({ report, re }: { report: string; re: RequestRef[] }) {
+function ReplyLine({
+  report,
+  reportRef,
+  re,
+}: {
+  report: string;
+  reportRef: string | undefined;
+  re: RequestRef[];
+}) {
   const senders = [...new Map(re.map((r) => [r.from, r.id])).entries()];
   return (
     <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
@@ -144,15 +162,19 @@ function ReplyLine({ report, re }: { report: string; re: RequestRef[] }) {
         : senders.map(([from, id], i) => (
             <span key={from}>
               {i === 0 ? "Replying to " : ", "}
-              <Link
-                to="/agents/$slug/session"
-                params={{ slug: report }}
-                search={{ message: id }}
-                aria-label={`Open ${from}'s request in @${report}'s session`}
-                className={`font-mono ${LINK_CLASS}`}
-              >
-                {from}
-              </Link>
+              {reportRef ? (
+                <Link
+                  to="/agents/$ref/session"
+                  params={{ ref: reportRef }}
+                  search={{ message: id }}
+                  aria-label={`Open ${whoName(from)}'s request in @${report}'s session`}
+                  className={`font-mono ${LINK_CLASS}`}
+                >
+                  {whoName(from)}
+                </Link>
+              ) : (
+                <span className="font-mono">{whoName(from)}</span>
+              )}
             </span>
           ))}
     </p>
@@ -221,7 +243,7 @@ export function PeerLine({
   const s = envelope.subject;
   const who = s ? (
     <>
-      <span className="font-mono text-foreground">@{s.slug}</span> · {s.displayName}
+      <span className="font-mono text-foreground">@{s.handle}</span> · {s.displayName}
     </>
   ) : null;
   let what: ReactNode = "Your neighborhood changed";
@@ -242,7 +264,7 @@ export function PeerLine({
     else
       what = (
         <>
-          {who} left: now reports to <span className="font-mono text-foreground">@{s.left.to}</span>
+          {who} left: now reports to <Actor by={s.left.to} />
         </>
       );
   }

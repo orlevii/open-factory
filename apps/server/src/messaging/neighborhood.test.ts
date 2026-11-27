@@ -1,19 +1,19 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { Neighborhood } from "./neighborhood.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
-  const a = (slug: string, reportsTo?: string, archived?: boolean, terminated?: boolean) =>
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1','Or','or@x.io')`;
+  const a = (handle: string, reportsTo?: string, archived?: boolean, terminated?: boolean) =>
     insertAgent(t.sql, {
-      id: slug,
-      slug,
-      displayName: slug,
+      id: handle,
+      handle,
+      displayName: handle,
       reportsTo,
       archived,
       terminatedAt: terminated ? new Date() : null,
@@ -31,14 +31,16 @@ afterAll(async () => t.close());
 test("manager, peers and reports; archived and terminated excluded; top-level agents are peers", async () => {
   const n = new Neighborhood(t.db);
   const dev = await n.of("dev");
-  expect(dev.manager?.slug).toBe("lead");
-  expect(dev.peers.map((a) => a.slug)).toEqual(["pm"]);
+  expect(dev.manager?.handle).toBe("lead");
+  expect(dev.peers.map((a) => a.handle)).toEqual(["pm"]);
   expect(dev.reports).toEqual([]);
   const lead = await n.of("lead");
-  expect(lead.reports.map((a) => a.slug)).toEqual(["dev", "pm"]);
+  expect(lead.reports.map((a) => a.handle)).toEqual(["dev", "pm"]);
   const ceo = await n.of("ceo");
   expect(ceo.manager).toBeNull();
-  expect(ceo.peers.map((a) => a.slug)).toEqual(["ops"]);
-  expect(await n.humans()).toEqual([{ handle: "or", name: "Or" }]);
-  expect((await n.all()).map((a) => a.slug)).toEqual(["ceo", "dev", "lead", "ops", "pm"]);
+  expect(ceo.peers.map((a) => a.handle)).toEqual(["ops"]);
+  expect(await n.humans()).toEqual([
+    { ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "or", name: "Or" },
+  ]);
+  expect((await n.all()).map((a) => a.handle)).toEqual(["ceo", "dev", "lead", "ops", "pm"]);
 });

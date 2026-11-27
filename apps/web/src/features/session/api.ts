@@ -1,6 +1,5 @@
 import {
   type AgentSummary,
-  ApiError,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -9,7 +8,6 @@ import {
   messageLookupSchema,
   queueItemResponseSchema,
   restartAgentResponseSchema,
-  sendMessagesResponseSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
@@ -51,33 +49,33 @@ export const runningQueryOptions = queryOptions({
 });
 export const agentsQueryOptions = agentsListQueryOptions("exclude");
 
-export const agentDetailQueryOptions = (slug: string) =>
+export const agentDetailQueryOptions = (ref: string) =>
   queryOptions({
-    queryKey: ["agent", slug],
+    queryKey: ["agent", ref],
     queryFn: () =>
-      apiFetch(`/api/agents/${encodeURIComponent(slug)}`, { schema: agentDetailSchema }),
+      apiFetch(`/api/agents/${encodeURIComponent(ref)}`, { schema: agentDetailSchema }),
     staleTime: 0,
   });
 
 /** The agent's row from any cached list (active or ended), so a page can render its name and status
  *  while the detail loads (spec §11). A plain cache read: it does not subscribe. */
-export function summaryFromAgentsList(qc: QueryClient, slug: string): AgentSummary | undefined {
+export function summaryFromAgentsList(qc: QueryClient, ref: string): AgentSummary | undefined {
   for (const [, list] of qc.getQueriesData<AgentSummary[]>({ queryKey: ["agents"] })) {
     // Guarded: a non-list value under the prefix must not throw during render or a socket frame.
-    const hit = Array.isArray(list) ? list.find((a) => a.slug === slug) : undefined;
+    const hit = Array.isArray(list) ? list.find((a) => a.ref === ref) : undefined;
     if (hit) return hit;
   }
   return undefined;
 }
 
 export function fetchEvents(
-  slug: string,
+  ref: string,
   q: { before?: number; around?: number; limit?: number } = {},
   signal?: AbortSignal,
 ) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
-  return apiFetch(`/api/agents/${encodeURIComponent(slug)}/events?${p}`, {
+  return apiFetch(`/api/agents/${encodeURIComponent(ref)}/events?${p}`, {
     schema: eventsPageSchema,
     signal,
   });
@@ -86,14 +84,14 @@ export function fetchEvents(
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
-/** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
+/** `POST /api/agents/:ref/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
  *  `clientMessageId` makes a retry idempotent. */
 export const postInput = (
-  slug: string,
+  ref: string,
   body: { text: string; clientMessageId: string },
   signal?: AbortSignal,
 ) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/input`, {
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/input`, {
     method: "POST",
     body,
     schema: queueItemResponseSchema,
@@ -101,59 +99,59 @@ export const postInput = (
   }).then((r) => r.item);
 
 /** U3 §6.4: withdraw a held message you sent; resolves to the cancelled item. */
-export const cancelQueued = (slug: string, messageId: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}`, {
+export const cancelQueued = (ref: string, messageId: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/queue/${encodeURIComponent(messageId)}`, {
     method: "DELETE",
     schema: queueItemResponseSchema,
   }).then((r) => r.item);
 
 /** U3 §6.4: Undo of a cancel (204); the restored item arrives in the next `queue` frame. */
-export const restoreQueued = (slug: string, messageId: string) =>
+export const restoreQueued = (ref: string, messageId: string) =>
   apiFetch(
-    `/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}/restore`,
+    `/api/agents/${encodeURIComponent(ref)}/queue/${encodeURIComponent(messageId)}/restore`,
     { method: "POST", body: {}, schema: z.unknown() },
   ).then(() => undefined);
 
-export const postCompact = (slug: string, focus?: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/compact`, {
+export const postCompact = (ref: string, focus?: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/compact`, {
     method: "POST",
     body: focus ? { focus } : {},
     schema: queueItemResponseSchema,
   }).then((r) => r.item);
 
-export const postInterrupt = (slug: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/interrupt`, {
+export const postInterrupt = (ref: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/interrupt`, {
     method: "POST",
     body: {},
     schema: z.object({}),
   }).then(() => undefined);
 
-export const postResetSession = (slug: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/reset-session`, {
+export const postResetSession = (ref: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/reset-session`, {
     method: "POST",
     body: {},
     schema: z.object({}),
   }).then(() => undefined);
 
 /** I7 §9.4: what the restart did (a 409 `lost_work` throws, its lists in the error's `body.data`). */
-export const postRestart = (slug: string, { force }: { force?: boolean } = {}) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/restart`, {
+export const postRestart = (ref: string, { force }: { force?: boolean } = {}) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/restart`, {
     method: "POST",
     body: force ? { force: true } : {},
     schema: restartAgentResponseSchema,
   }).then((r) => r.status);
 
 /** S7: terminate a spawned agent (idempotent: one already terminated comes back as it is). */
-export const postTerminate = (slug: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/terminate`, {
+export const postTerminate = (ref: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/terminate`, {
     method: "POST",
     body: {},
     schema: agentResponseSchema,
   }).then((r) => r.agent);
 
 /** S7: pin (PUT) or unpin (DELETE) a terminated agent's workspace. */
-export const setWorkspacePin = (slug: string, pinned: boolean) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/workspace-pin`, {
+export const setWorkspacePin = (ref: string, pinned: boolean) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/workspace-pin`, {
     method: pinned ? "PUT" : "DELETE",
     schema: agentResponseSchema,
   }).then((r) => r.agent);

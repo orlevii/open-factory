@@ -3,8 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -33,12 +35,12 @@ const renderNewSchedule = async () => {
 const agents = () =>
   json({
     agents: [
-      agentSummary({ slug: "ceo", displayName: "CEO" }),
+      agentSummary({ handle: "ceo", displayName: "CEO" }),
       agentSummary({
-        slug: "kid",
+        handle: "kid",
         displayName: "Kid",
         kind: "ephemeral",
-        reportsTo: { kind: "agent", handle: "ceo" },
+        reportsTo: { kind: "agent", ref: refFor("ceo"), handle: "ceo" },
       }),
     ],
     more: false,
@@ -48,10 +50,18 @@ const base = () => ({
   "GET /api/agents?": agents,
   "GET /api/schedules": () => json({ schedules: [], more: false }),
   "GET /api/schedules?": () => json({ schedules: [], more: false }),
+  "GET /api/principals": () =>
+    json({ principals: [principal(refFor("ceo"), "ceo"), principal(refFor("kid"), "kid")] }),
 });
 const item = {
   key: "S-8",
-  target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+  target: {
+    ref: refFor("ceo"),
+    handle: "ceo",
+    displayName: "CEO",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * 1-5",
   timezone: "Europe/Berlin",
   body: "Review",
@@ -59,17 +69,17 @@ const item = {
   lastFiredAt: null,
   paused: false,
   done: false,
-  createdBy: { kind: "user", handle: "or" },
-  bodyAuthor: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
+  bodyAuthor: { kind: "human", ref: refFor("or"), handle: "or" },
   pendingFiring: false,
   state: "active",
 };
 
 /** The agents arrive asynchronously: wait for the option before choosing it. */
-async function pick(slug: string) {
+async function pick(handle: string) {
   await pickOption(
     await within(await screen.findByRole("dialog")).findByLabelText("Target"),
-    new RegExp(`@${slug}$`),
+    new RegExp(`@${handle}$`),
   );
 }
 
@@ -236,12 +246,25 @@ test("creating sends the form's values and closes the sheet", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   const post = api.calls.find((c) => c.method === "POST");
   expect(post?.body).toMatchObject({
-    target: "ceo",
+    target: refFor("ceo"),
     cron: "0 9 * * 1-5",
     body: "Review the board",
   });
   expect(post?.body).toHaveProperty("timezone", expect.any(String));
   expect(screen.getByRole("heading", { name: "Schedules" })).toBeInTheDocument();
+});
+
+test("a schedule body's Preview renders the mention as a chip", async () => {
+  await openNew();
+  await pick("ceo");
+  const message = screen.getByLabelText("Message");
+  await userEvent.type(message, "Ask @ce");
+  await screen.findByRole("option", { name: /ceo/ });
+  await userEvent.keyboard("{Tab}");
+  expect(message).toHaveValue("Ask @ceo ");
+  const frame = message.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(await within(frame).findByRole("link", { name: "@ceo, ceo" })).toBeInTheDocument();
 });
 
 test("a server field error maps to its field", async () => {

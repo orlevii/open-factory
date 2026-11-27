@@ -72,7 +72,7 @@ const FIELDS = ["value"] as const;
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
-const handles = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+const handles = (names: string[]) => cappedList(names.map((s) => `@${s}`));
 
 /** Why Delete is disabled, shown inside the menu item; undefined when it can be deleted. At most three
  *  agents are named (the row's Usage line lists them all). */
@@ -91,13 +91,14 @@ function InUseMessage({ usedBy, archived }: { usedBy: string[]; archived: string
     <>
       {usedBy.length > 0 && (
         <>
-          Used by <AgentLinks slugs={usedBy} edit />. Change their credential first.
+          Used by <AgentLinks handles={usedBy} edit />. Change their credential first.
         </>
       )}
       {usedBy.length > 0 && archived.length > 0 && " "}
       {archived.length > 0 && (
         <>
-          Archived agents <AgentLinks slugs={archived} edit /> still reference it. Edit them first.
+          Archived agents <AgentLinks handles={archived} edit /> still reference it. Edit them
+          first.
         </>
       )}
     </>

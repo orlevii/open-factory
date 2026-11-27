@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { CompactingError, NoOpenTurnError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
@@ -20,8 +20,8 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -39,7 +39,7 @@ async function makeRuntime(
   agentId = `a${n}`;
   await insertAgent(t.sql, {
     id: agentId,
-    slug: `dev${n}`,
+    handle: `dev${n}`,
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.status ? { status: opts.status } : {}),
   });
@@ -49,7 +49,7 @@ async function makeRuntime(
   bus.subscribeAll((m) => frames.push(m));
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
-  bus.subscribe(agent.slug, (m) => frames.push(m));
+  bus.subscribe(agent.id, (m) => frames.push(m));
   rt = new AgentRuntime({
     tokens: noopTokens,
     forward: noForward,
@@ -62,7 +62,7 @@ async function makeRuntime(
       return {
         credentialId: liveCredentialId(a),
         agentId: a.id,
-        slug: a.slug,
+        ref: a.id,
         cwd: "/w",
         env: { TOKEN_SEEN: "yes" },
         claudeBin: "claude",
@@ -79,6 +79,7 @@ async function makeRuntime(
   await rt.init();
   return rt;
 }
+const OR_MENTION = `<@${testRef("u1")}|or>`;
 const send = (body: string, urgent = false) =>
   sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
@@ -90,7 +91,7 @@ const events = async () =>
   }));
 const types = async () => (await events()).map((e) => e.type);
 const msgRows = () =>
-  t.sql`select id, state, delivered_turn_id from messages where to_agent_id = ${agentId} order by created_at`;
+  t.sql`select id, state, delivered_turn_id from messages where to_id = ${agentId} order by created_at`;
 
 beforeEach(async () => {
   await makeRuntime();
@@ -130,7 +131,7 @@ test("compact is a barrier: written only with no open turn, and nothing passes i
   await send("long task");
   driver.last.emit(ev.turn());
   await rt.settled();
-  await rt.compact({ focus: "keep the API", byHandle: "or" });
+  await rt.compact({ focus: "keep the API", by: "<@or>" });
   await send("after compact");
   expect(driver.last.controls).toEqual([]); // turn open: compact waits
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["compact", "message"]);
@@ -155,7 +156,7 @@ test("compact is a barrier: written only with no open turn, and nothing passes i
     type: "control",
     cmd: "compact",
     arg: "keep the API",
-    by: "@or",
+    by: "<@or>",
   });
 });
 
@@ -208,7 +209,7 @@ const controlEvents = async () => (await events()).filter((e) => e.type === "con
 test("a plain interrupt holds later messages until the interrupted turn's result", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   await send("steer");
   expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
   expect(driver.last.writes.at(-1)).toEqual({ kind: "control", cmd: "interrupt" });
@@ -223,12 +224,12 @@ test("a plain interrupt holds later messages until the interrupted turn's result
 test("a second interrupt during the hold writes nothing", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
-  await rt.interrupt({ byHandle: "or" }); // resolves (202), no-op
+  await rt.interrupt({ by: "<@or>" });
+  await rt.interrupt({ by: "<@or>" }); // resolves (202), no-op
   await send("STOP", true); // an urgent send during the hold doesn't interrupt again either
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   expect((await controlEvents()).map((e) => e.event)).toEqual([
-    { type: "control", cmd: "interrupt", by: "@or" },
+    { type: "control", cmd: "interrupt", by: "<@or>" },
   ]);
 });
 
@@ -237,7 +238,7 @@ test.each([
     "a plain interrupt",
     "steer",
     async () => {
-      await rt.interrupt({ byHandle: "or" });
+      await rt.interrupt({ by: "<@or>" });
       await send("steer");
     },
   ],
@@ -266,7 +267,7 @@ test("a hold ended by the turn's result never appends interrupt_unconfirmed afte
   await makeRuntime({ realHold: true });
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   await send("steer");
   driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
   await rt.settled();
@@ -278,11 +279,11 @@ test("a hold ended by the turn's result never appends interrupt_unconfirmed afte
 
 test("interrupt during a compaction is 409 compacting and writes nothing", async () => {
   await startedIdle();
-  await rt.compact({ byHandle: "or" });
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(CompactingError);
+  await rt.compact({ by: "<@or>" });
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(CompactingError);
   driver.last.emit(ev.turn()); // the compact turn opens
   await rt.settled();
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toMatchObject({ code: "compacting" });
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toMatchObject({ code: "compacting" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
   expect(rt.live().status).not.toBe("errored");
 });
@@ -291,7 +292,7 @@ test("publishQueue runs when the hold begins and when it ends", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
   const before = queueFrames().length;
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   expect(queueFrames()).toHaveLength(before + 1);
   await send("steer");
   const held = queueFrames().at(-1);
@@ -309,7 +310,7 @@ test("publishQueue runs when the hold begins and when it ends", async () => {
 test("a hold released by the turn's result, with nothing queued, still publishes the queue", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   const before = queueFrames().length;
   driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
   await rt.settled();
@@ -318,7 +319,7 @@ test("a hold released by the turn's result, with nothing queued, still publishes
 
 test("urgent while a compact is in flight does not interrupt it; it waits behind the barrier", async () => {
   await startedIdle();
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
   driver.last.emit(ev.turn()); // the compact turn opens
   await rt.settled();
@@ -338,7 +339,7 @@ test("a hand-off of a row this runtime already wrote (boot wakes got it first) n
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "STOP",
     urgent: true,
   });
@@ -387,7 +388,7 @@ test("a rejected interrupt write (process going away) is not an internal error: 
   driver.last.failWrites = true; // the process is exiting; its `exited` has not been processed yet
   const item = await send("STOP", true); // resolves: no 500
   expect(item.body).toBe("STOP");
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError);
   expect(driver.last.controls).toEqual([]);
   expect(rt.live().status).not.toBe("errored");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
@@ -423,7 +424,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "old",
     urgent: false,
   });
@@ -431,13 +432,13 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await rt.postNotice("crash", "it crashed"); // no process: nothing is written
   expect(rt.queueItems().map((q) => [q.kind, q.from, q.body])).toEqual([
     ["notice", "@factory", "it crashed"],
-    ["message", "@or", "old"],
+    ["message", `<@${testRef("u1")}>`, "old"],
   ]);
   await send("new"); // starts the process
   expect(driver.last.sent[0]).toMatchObject([
     { from: "@factory", kind: "system", body: "it crashed" },
-    { from: "@or", kind: "message", body: "old" },
-    { from: "@or", kind: "message", body: "new" },
+    { from: OR_MENTION, kind: "message", body: "old" },
+    { from: OR_MENTION, kind: "message", body: "new" },
   ]);
 });
 
@@ -450,8 +451,8 @@ test("a notice is written ahead of older pending messages in one batch", async (
   await rt.postNotice("factory_restarted", "restarted");
   expect(driver.last.sent.at(-1)).toMatchObject([
     { from: "@factory", kind: "system", body: "restarted" },
-    { from: "@or", kind: "message", body: "a" },
-    { from: "@or", kind: "message", body: "b" },
+    { from: OR_MENTION, kind: "message", body: "a" },
+    { from: OR_MENTION, kind: "message", body: "b" },
   ]);
   const hist = (await events()).find(
     (e) => e.event.type === "message_in" && e.event.messages[0]?.kind === "system",
@@ -471,7 +472,7 @@ test("a second notice of the same type replaces a pending one; an in-flight one 
   expect(sentBodies).toEqual(["second", "x"]);
   await rt.postNotice("restart", "third"); // the earlier restart was written: a new row
   const rows =
-    await t.sql`select body, state from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+    await t.sql`select body, state from messages where notice = 'restart' and to_id = ${agentId} order by created_at`;
   expect(rows.map((r) => r.body)).toEqual(["second", "third"]);
 });
 
@@ -481,7 +482,7 @@ test("a notice written but not yet confirmed (no session_started) is never repla
   await rt.postNotice("restart", "second");
   expect(driver.last.sent.map((b) => b.map((m) => m.body))).toEqual([["a"], ["first"], ["second"]]);
   const rows =
-    await t.sql`select body from messages where notice = 'restart' and to_agent_id = ${agentId} order by created_at`;
+    await t.sql`select body from messages where notice = 'restart' and to_id = ${agentId} order by created_at`;
   expect(rows.map((r) => r.body)).toEqual(["first", "second"]);
 });
 
@@ -504,12 +505,12 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   driver.last.emit(ev.turn());
   await rt.settled();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" }); // a hold, so the item is seen queued first
+  await rt.interrupt({ by: "<@or>" }); // a hold, so the item is seen queued first
   const cid = randomUUID();
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
-    recipients: ["@test"],
+    recipientIds: [agentId],
     body: "with an id",
     urgent: false,
     clientMessageId: cid,
@@ -526,4 +527,28 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const text = renderEnvelopes(sent);
   expect(text).not.toContain(cid);
   expect(text).toBe(renderEnvelopes(sent.map(({ clientMessageId: _c, ...m }) => m)));
+});
+
+test("after a rename, a new delivery shows the new handle in from and in a body mention", async () => {
+  await t.sql.unsafe(principalSql("rn-human", "human", "rn-old"));
+  await t.sql`insert into users (id, name, email) values ('rn-human', 'Rn', 'rn@x.io')`;
+  await insertAgent(t.sql, { id: "rn-peer", handle: "rn-peer-old" });
+  const body = `ask <@${testRef("rn-peer")}> about it`;
+  const human = `<@${testRef("rn-human")}`;
+  const peer = `<@${testRef("rn-peer")}`;
+  await sendAs(store, rt, { fromUserId: "rn-human", body, urgent: false });
+  expect(driver.last.sent[0]?.[0]).toMatchObject({
+    from: `${human}|rn-old>`,
+    body: `ask ${peer}|rn-peer-old> about it`,
+  });
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  // The endpoint comes in a later task: a rename is a write to principals.handle (agents.handle stays as it was).
+  await t.sql`update principals set handle = 'rn-new' where id = 'rn-human'`;
+  await t.sql`update principals set handle = 'rn-peer-new' where id = 'rn-peer'`;
+  await sendAs(store, rt, { fromUserId: "rn-human", body, urgent: false });
+  expect(driver.last.sent[1]?.[0]).toMatchObject({
+    from: `${human}|rn-new>`,
+    body: `ask ${peer}|rn-peer-new> about it`,
+  });
 });

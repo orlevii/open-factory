@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -12,13 +12,13 @@ let svc: ScheduleService;
 let clock = new Date("2026-11-20T10:00:00Z");
 let changed = 0;
 const NOW = new Date("2026-11-20T10:00:00Z");
-const or: Actor = { userId: "u1" };
-const agent = (id: string): Actor => ({ agentId: id });
+const or: Actor = { kind: "human", id: "u1" };
+const agent = (id: string): Actor => ({ kind: "agent", id });
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 beforeEach(async () => {
@@ -28,8 +28,8 @@ beforeEach(async () => {
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
-  await insertAgent(t.sql, { id: "ceo", slug: "ceo" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev" });
+  await insertAgent(t.sql, { id: "ceo", handle: "ceo" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev" });
   svc = new ScheduleService({
     db: t.db,
     store: new EventStore(t.db),
@@ -53,24 +53,24 @@ test("a human creates a weekday cron: authored by them, next run computed from t
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     nextRunAt: "2026-11-23T08:00:00.000Z",
-    createdBy: { kind: "user", handle: "or" },
-    bodyAuthor: { kind: "user", handle: "or" },
+    createdBy: { kind: "human", ref: testRef("u1"), handle: "or" },
+    bodyAuthor: { kind: "human", ref: testRef("u1"), handle: "or" },
     state: "active",
-    target: { slug: "ceo" },
+    target: { handle: "ceo", ref: testRef("ceo") },
   });
-  const [row] = await t.sql`select created_by_user_id, body_author_user_id from schedules`;
-  expect(row).toEqual({ created_by_user_id: "u1", body_author_user_id: "u1" });
+  const [row] = await t.sql`select created_by_id, body_author_id from schedules`;
+  expect(row).toEqual({ created_by_id: "u1", body_author_id: "u1" });
   expect(changed).toBe(1);
 });
 
-test("an agent's target defaults to itself, and 'me' and '@slug' resolve", async () => {
+test("an agent's target defaults to itself, and 'me' and '@handle' resolve", async () => {
   for (const to of [undefined, "me", "@dev", "dev"]) {
     const { item } = await svc.create(agent("dev"), { ...(to ? { target: to } : {}), ...weekday });
-    expect(item.target.slug).toBe("dev");
-    expect(item.createdBy).toMatchObject({ kind: "agent", slug: "dev" });
+    expect(item.target.handle).toBe("dev");
+    expect(item.createdBy).toMatchObject({ kind: "agent", handle: "dev" });
   }
   const { item } = await svc.create(agent("dev"), { target: "@ceo", ...weekday });
-  expect(item.target.slug).toBe("ceo");
+  expect(item.target.handle).toBe("ceo");
 });
 
 test("a note for an agent: recurring to itself, and an errored target", async () => {
@@ -160,10 +160,10 @@ test("the 21st active schedule of an agent is refused; paused count, deleted and
 });
 
 test("targets: unknown, humans, a handle, reserved, archived and terminated", async () => {
-  await insertAgent(t.sql, { id: "old", slug: "old", archived: true });
+  await insertAgent(t.sql, { id: "old", handle: "old", archived: true });
   await insertAgent(t.sql, {
     id: "gone",
-    slug: "gone",
+    handle: "gone",
     terminatedAt: new Date(),
     reportsTo: "ceo",
   });
@@ -188,7 +188,7 @@ test("targets: unknown, humans, a handle, reserved, archived and terminated", as
 test("a caller terminated meanwhile is refused", async () => {
   await insertAgent(t.sql, {
     id: "gone",
-    slug: "gone",
+    handle: "gone",
     terminatedAt: new Date(),
     reportsTo: "ceo",
   });
@@ -199,9 +199,9 @@ test("a caller terminated meanwhile is refused", async () => {
 });
 
 test("a spawned agent can be a target", async () => {
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'dev'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
   const { item } = await svc.create(or, { target: "dev", ...weekday });
-  expect(item.target.slug).toBe("dev");
+  expect(item.target.handle).toBe("dev");
 });
 
 async function waitForLocks(n: number): Promise<void> {
@@ -240,8 +240,8 @@ test("two concurrent creates by one agent at 19 are serialised by its row lock: 
 });
 
 test("A schedules for B while B schedules for A: no deadlock escapes, both succeed", async () => {
-  await insertAgent(t.sql, { id: "kid", slug: "kid" });
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'kid'`;
+  await insertAgent(t.sql, { id: "kid", handle: "kid" });
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
   for (let i = 0; i < 15; i++) {
     const res = await Promise.all([
       svc.create(agent("ceo"), { target: "dev", ...weekday }),
@@ -253,7 +253,7 @@ test("A schedules for B while B schedules for A: no deadlock escapes, both succe
 });
 
 test("a spawned agent can't create schedules even when called directly (Q12)", async () => {
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'dev'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
   await expect(svc.create(agent("dev"), { target: "ceo", ...weekday })).rejects.toMatchObject({
     code: "forbidden",
     message: "Spawned agents can't schedule messages.",

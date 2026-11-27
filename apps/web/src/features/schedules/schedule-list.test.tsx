@@ -7,6 +7,7 @@ import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
 import { mockApi as baseMockApi, type Handler, json } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickComboOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -43,10 +44,16 @@ function mockApi(routes: Record<string, Handler>) {
 const withBare = (r: Record<string, Handler>) =>
   r["GET /api/schedules?"] ? { ...r, "GET /api/schedules": r["GET /api/schedules?"] } : r;
 
-const user = { kind: "user", handle: "or" };
+const user = { kind: "human", ref: refFor("or"), handle: "or" };
 const sched = (n: number, o: Record<string, unknown> = {}) => ({
   key: `S-${n}`,
-  target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+  target: {
+    ref: refFor("ceo"),
+    handle: "ceo",
+    displayName: "CEO",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * 1-5",
   timezone: "Europe/Berlin",
   body: `Message ${n}\nsecond line`,
@@ -65,7 +72,7 @@ const agents = (_body?: unknown, url?: string) =>
   json({
     agents: url?.includes("ended=only")
       ? []
-      : [agentSummary({ slug: "ceo" }), agentSummary({ slug: "dev", displayName: "Dev" })],
+      : [agentSummary({ handle: "ceo" }), agentSummary({ handle: "dev", displayName: "Dev" })],
     more: false,
     running: { count: 0 },
   });
@@ -77,12 +84,24 @@ test("a row is one button with a complete name; four lines carry the pattern, ne
       list([
         sched(3),
         sched(7, {
-          target: { slug: "dev", displayName: "Dev", archived: false, terminated: false },
+          target: {
+            ref: refFor("dev"),
+            handle: "dev",
+            displayName: "Dev",
+            archived: false,
+            terminated: false,
+          },
           cron: undefined,
           at: "2026-11-25T13:30:00.000Z",
           nextRunAt: "2026-11-25T13:30:00.000Z",
           state: "pending_errored",
-          createdBy: { kind: "agent", slug: "lead", archived: false, terminated: false },
+          createdBy: {
+            kind: "agent",
+            ref: "ref-lead",
+            handle: "lead",
+            archived: false,
+            terminated: false,
+          },
         }),
       ]),
   });
@@ -114,7 +133,13 @@ test("states: paused shows a dash, skipped says (skipped), done says Ran or Didn
         sched(1, { state: "paused", paused: true }),
         sched(2, {
           state: "skipped_archived",
-          target: { slug: "ceo", displayName: "CEO", archived: true, terminated: false },
+          target: {
+            ref: refFor("ceo"),
+            handle: "ceo",
+            displayName: "CEO",
+            archived: true,
+            terminated: false,
+          },
         }),
         sched(3, {
           state: "done",
@@ -215,11 +240,15 @@ test("filters live in the URL; empty states, and the cap line", async () => {
   const { router } = renderApp("/schedules", alice);
   expect(await screen.findByText("No schedules yet.")).toBeInTheDocument();
   await pickComboOption(await screen.findByLabelText("Target"), /@dev/);
-  await waitFor(() => expect(router.state.location.search).toMatchObject({ target: "dev" }));
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({ target: refFor("dev") }),
+  );
   expect(await screen.findByText("No schedules match these filters.")).toBeInTheDocument();
   await u.click(screen.getByLabelText("Show done"));
   await waitFor(() =>
-    expect(api.calls.some((c) => c.url === "/api/schedules?target=dev&done=true")).toBe(true),
+    expect(
+      api.calls.some((c) => c.url === `/api/schedules?target=${refFor("dev")}&done=true`),
+    ).toBe(true),
   );
   await u.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(router.state.location.search).toEqual({}));
@@ -302,12 +331,12 @@ test("the target filter lists Any agent first, live agents, then an Ended group"
         agents: url.includes("ended=only")
           ? [
               agentSummary({
-                slug: "old",
+                handle: "old",
                 displayName: "Old",
                 terminatedAt: "2026-11-01T00:00:00Z",
               }),
             ]
-          : [agentSummary({ slug: "dev" })],
+          : [agentSummary({ handle: "dev" })],
         more: false,
         running: { count: 0 },
       }),

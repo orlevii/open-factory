@@ -42,7 +42,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
         body: "…",
         parts: [{ id: "m4", body: "…", createdAt: "2026-11-24T10:00:00.000Z" }],
         subject: {
-          slug: "dev",
+          handle: "dev",
           displayName: "Dev",
           relation: "peer",
           left: { reason: "moved", to: "or" },

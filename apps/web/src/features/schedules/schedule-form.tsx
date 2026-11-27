@@ -24,6 +24,7 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { useSheetDraft } from "@/features/sheets/drafts";
 import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
@@ -56,7 +57,7 @@ type EditDraft = { values: FormValues; base: FormValues };
 /** The edit sheet's start values: the stored instant read in the schedule's zone for the date input. */
 function valuesOf(s: ScheduleItem): FormValues {
   return {
-    target: s.target.slug,
+    target: s.target.ref,
     mode: s.cron ? "repeats" : "once",
     cron: s.cron ?? "",
     local: s.at ? formatOffsetIso(new Date(s.at), s.timezone).slice(0, 16) : "",
@@ -92,6 +93,7 @@ export function ScheduleForm({
   /** Another action (Delete) is in flight: Save waits. */
   locked?: boolean;
 }) {
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const create = !initial;
   const blank = (): FormValues => ({
     target: presetTarget ?? "",
@@ -146,18 +148,18 @@ export function ScheduleForm({
   // An archived or terminated target isn't a live option: while it is the value, the trigger names it.
   const endedTarget =
     initial &&
-    v.target === initial.target.slug &&
+    v.target === initial.target.ref &&
     (initial.target.archived || initial.target.terminated)
       ? initial.target
       : undefined;
   const renderEndedTarget = useMemo(
     () =>
       endedTarget
-        ? () => `@${endedTarget.slug} (${endedTarget.terminated ? "terminated" : "archived"})`
+        ? () => `@${endedTarget.handle} (${endedTarget.terminated ? "terminated" : "archived"})`
         : undefined,
     [endedTarget],
   );
-  const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
+  const spawnedPicked = agents.find((a) => a.ref === v.target)?.kind === "ephemeral";
 
   // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline, so closing leaves no draft
   // and the next preset still applies. `draft.rebase` writes a ref, so it runs in an effect, not in the render that
@@ -218,10 +220,10 @@ export function ScheduleForm({
     v.target &&
     live.data &&
     endedList.data &&
-    !live.data.some((a) => a.slug === v.target && !a.archivedAt && !a.terminatedAt)
+    !live.data.some((a) => a.ref === v.target && !a.archivedAt && !a.terminatedAt)
   ) {
     const gone = v.target;
-    const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
+    const hasEnded = [...live.data, ...endedList.data].some((a) => a.ref === gone);
     if (!restored && gone === presetTarget) setRebaseStale(true);
     setV((x) => ({ ...x, target: "" }));
     const staleError = hasEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing;
@@ -310,8 +312,8 @@ export function ScheduleForm({
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
             renderValue={renderEndedTarget}
-            onValueChange={(slug) => {
-              set({ target: slug ?? "" });
+            onValueChange={(agentRef) => {
+              set({ target: agentRef ?? "" });
               f.change("target");
             }}
           />
@@ -387,6 +389,7 @@ export function ScheduleForm({
           <MarkdownEditor
             id={a.id}
             value={v.body}
+            mentionSource={at}
             proportional
             invalid={Boolean(f.errors.body)}
             view={bodyView}

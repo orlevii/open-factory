@@ -30,11 +30,12 @@ import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { byHandle } from "./by-handle.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
-const SLUGS = ["dev", "tester"] as const;
-type Slug = (typeof SLUGS)[number];
+const HANDLES = ["dev", "tester"] as const;
+type Handle = (typeof HANDLES)[number];
 const TOKEN_FILE = path.join(homedir(), ".open-factory-spike", "oauth-token");
 
 let token = "";
@@ -111,7 +112,7 @@ const openMcp = new Map<string, McpRequest>();
 /** Response codes of every request in the run (human server and agent listener). */
 const statusCodes = new Map<number, number>();
 /** Each agent process's system/init tool list, read from the driver's debug log of claude's stdout. */
-const inits: { slug: string; time: number; tools: string[] }[] = [];
+const inits: { handle: string; time: number; tools: string[] }[] = [];
 const serverWarnings: string[] = [];
 const logStream = new Writable({
   write(chunk, _enc, cb) {
@@ -134,7 +135,7 @@ const logStream = new Writable({
         if (o.msg === "claude stdout" && typeof o.line === "string" && o.agent) {
           const l = JSON.parse(o.line) as { type?: string; subtype?: string; tools?: unknown };
           if (l.type === "system" && l.subtype === "init" && Array.isArray(l.tools))
-            inits.push({ slug: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
+            inits.push({ handle: o.agent, time: o.time ?? Date.now(), tools: l.tools.map(String) });
         }
         if (o.msg === "incoming request" && o.req?.url?.startsWith("/mcp")) {
           const r: McpRequest = {
@@ -167,7 +168,7 @@ const logStream = new Writable({
 // ---------- app and cleanup ----------
 let app!: Awaited<ReturnType<typeof buildApp>>;
 let appBuilt = false;
-const ids = new Map<Slug, string>();
+const ids = new Map<Handle, string>();
 let tdb: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
 let closeDb: (() => Promise<void>) | undefined;
 let cleaned: Promise<void> | undefined;
@@ -231,14 +232,14 @@ const freePort = () =>
       srv.close(() => resolve(port));
     });
   });
-const idOf = (slug: Slug) => {
-  const id = ids.get(slug);
-  if (!id) throw new Error(`no agent ${slug}`);
+const idOf = (handle: Handle) => {
+  const id = ids.get(handle);
+  if (!id) throw new Error(`no agent ${handle}`);
   return id;
 };
-const since = (slug: Slug, seq = 0): Promise<SessionEvent[]> =>
-  app.store.after(idOf(slug), seq, 10_000);
-const lastSeq = async (slug: Slug) => (await since(slug)).at(-1)?.seq ?? 0;
+const since = (handle: Handle, seq = 0): Promise<SessionEvent[]> =>
+  app.store.after(idOf(handle), seq, 10_000);
+const lastSeq = async (handle: Handle) => (await since(handle)).at(-1)?.seq ?? 0;
 const toolTrace = (es: SessionEvent[]) =>
   es
     .flatMap(({ event: e }) =>
@@ -284,7 +285,7 @@ async function until<T>(
   throw new Error(`timed out after ${Math.round(ms / 1000)} s waiting for ${what}`);
 }
 
-let orUser = { userId: "", handle: "or" };
+let orUser = { userId: "", ref: "", handle: "or" };
 let samUser = { userId: "", handle: "sam" };
 let orCookie = "";
 /** Every human action goes through the real REST routes, signed in as @or (no service calls, no bypass). */
@@ -292,13 +293,13 @@ const api = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
   app.inject({ method, url, headers: { cookie: orCookie }, ...(payload ? { payload } : {}) });
 
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
-async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
+async function turnOf(handle: Handle, id: string, from: number, ms = 240_000) {
   return until(
-    `${slug}'s turn for message ${id}`,
+    `${handle}'s turn for message ${id}`,
     async () => {
-      const es = await since(slug, from);
+      const es = await since(handle, from);
       const err = es.find((e) => e.event.type === "error" && e.event.source !== "api");
-      if (err) throw new Error(`${slug}: ${brief(JSON.stringify(err.event))}`);
+      if (err) throw new Error(`${handle}: ${brief(JSON.stringify(err.event))}`);
       const i = es.findIndex(
         (e) =>
           e.event.type === "message_in" &&
@@ -313,14 +314,14 @@ async function turnOf(slug: Slug, id: string, from: number, ms = 240_000) {
   );
 }
 /** No open turn and nothing queued for 10 s in a row (the agents may still be talking to each other). */
-async function quiet(slugs: Slug[]) {
+async function quiet(handles: Handle[]) {
   let since0 = 0;
   await until(
-    `${slugs.join(", ")} to go quiet`,
+    `${handles.join(", ")} to go quiet`,
     async () => {
       const busy = [];
-      for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+      for (const s of handles) {
+        const rt = await byHandle(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -375,8 +376,9 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
     .join("; ");
   const me = (await app.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json() as {
     id: string;
+    ref: string;
   };
-  return { cookie, userId: me.id };
+  return { cookie, userId: me.id, ref: me.ref };
 }
 
 /** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
@@ -409,11 +411,11 @@ async function finalChecks() {
     posts.length > 0 && !mcpRequests.some((r) => r.status === 403) && !statusCodes.has(403),
     `/mcp requests by method and status: ${JSON.stringify(codes)}; all response codes in the run: ${JSON.stringify(Object.fromEntries(statusCodes))}`,
   );
-  for (const slug of SLUGS) {
-    const es = await since(slug);
+  for (const handle of HANDLES) {
+    const es = await since(handle);
     const unavailable = es.filter((e) => e.event.type === "mcp_unavailable");
     check(
-      `7. ${slug}: no mcp_unavailable`,
+      `7. ${handle}: no mcp_unavailable`,
       unavailable.length === 0,
       `mcp_unavailable: ${unavailable.length}`,
     );
@@ -465,7 +467,7 @@ try {
     const or = await signUp("or", "Or");
     return { or, sam: await signUp("sam", "Sam", or) };
   });
-  orUser = { userId: users.or.userId, handle: "or" };
+  orUser = { userId: users.or.userId, ref: users.or.ref, handle: "or" };
   orCookie = users.or.cookie;
   await step("1. factory settings: member update debounce 180 s", () =>
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
@@ -495,29 +497,33 @@ try {
     const errs = r?.issues.filter((i) => i.severity === "error") ?? [];
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
-  for (const slug of SLUGS) {
-    await step(`1. agent ${slug} created (top level)`, () =>
+  for (const handle of HANDLES) {
+    await step(`1. agent ${handle} created (top level)`, () =>
       app.agents.create(
         {
           template: "tasks",
-          slug,
-          displayName: slug[0]?.toUpperCase() + slug.slice(1),
-          description: `Smoke tasks agent ${slug}`,
+          handle,
+          displayName: handle[0]?.toUpperCase() + handle.slice(1),
+          description: `Smoke tasks agent ${handle}`,
           reportsTo: "or",
           credential: "smoke",
         },
-        { kind: "human", handle: "or" },
+        { kind: "human", ref: orUser.ref, handle: "or" },
       ),
     );
     ids.set(
-      slug,
-      String((await conn.sql`select id from agents where slug = ${slug}`)[0]?.id ?? ""),
+      handle,
+      String(
+        (
+          await conn.sql`select a.id from agents a join principals p on p.id = a.id where p.handle = ${handle}`
+        )[0]?.id ?? "",
+      ),
     );
   }
 
   // 2. AC 1: a human creates T-1 assigned to hibernated dev; dev wakes with the task_assigned envelope.
   const devFrom = await lastSeq("dev");
-  const devBefore = (await app.runtimes.bySlug("dev"))?.live().status;
+  const devBefore = (await byHandle(app, "dev"))?.live().status;
   const created = await step("2. @or creates T-1 assigned to dev (POST /api/tasks)", async () => {
     const r = await api("POST", "/api/tasks", {
       title: "Smoke one",
@@ -525,11 +531,11 @@ try {
       assignee: "dev",
     });
     if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-    return (r.json() as { task: { key: string; assignee: { slug: string } | null } }).task;
+    return (r.json() as { task: { key: string; assignee: { handle: string } | null } }).task;
   });
   check(
     "2. the task has key T-1 and dev as assignee",
-    created.key === "T-1" && created.assignee?.slug === "dev",
+    created.key === "T-1" && created.assignee?.handle === "dev",
     JSON.stringify({ key: created.key, assignee: created.assignee }),
   );
   const assignedId = String(
@@ -548,7 +554,7 @@ try {
       start.event.reason === "task_message",
     `dev before: ${devBefore}; ${brief(JSON.stringify(start?.event))}`,
   );
-  const tools = inits.find((i) => i.slug === "dev")?.tools ?? [];
+  const tools = inits.find((i) => i.handle === "dev")?.tools ?? [];
   check(
     "2. system/init lists the five task tools",
     TASK_TOOLS.every((t) => tools.includes(t)),
@@ -618,13 +624,20 @@ try {
         body: "@dev Yes. Mark the task done when you have read this.",
       });
       if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-      return r.json() as { comment: { id: string }; deliveredTo: string[] };
+      return r.json() as {
+        comment: { id: string };
+        deliveredTo: { ref: string; handle: string }[];
+      };
     },
   );
-  check("4. the comment reached dev", c.deliveredTo.includes("dev"), JSON.stringify(c.deliveredTo));
+  check(
+    "4. the comment reached dev",
+    c.deliveredTo.some((d) => d.handle === "dev"),
+    JSON.stringify(c.deliveredTo),
+  );
   const commentRow = String(
     (
-      await conn.sql`select id from messages where kind = 'task_comment' and from_user_id = ${orUser.userId}`
+      await conn.sql`select id from messages where kind = 'task_comment' and from_id = ${orUser.userId}`
     )[0]?.id ?? "",
   );
   const turn2 = await step("4. dev's turn for the comment ends", () =>

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import WebSocket from "ws";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Awaited<ReturnType<typeof signUp>>;
@@ -14,7 +15,7 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   or = await signUp(h.app, { handle: "or" });
   sam = await signUp(h.app, { handle: "sam" });
-  for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
+  for (const handle of ["lead", "dev", "qa"]) ids[handle] = (await h.seedAgent({ handle })).id;
 });
 afterEach(() => h.close());
 
@@ -55,16 +56,28 @@ test("POST creates (201) as the human; the detail has history and the creator", 
     key: "T-1",
     title: "Plan",
     status: "open",
-    assignee: { slug: "dev" },
-    createdBy: { kind: "user", handle: "or" },
+    assignee: { handle: "dev" },
     blockedBy: [],
   });
+  expect(t.createdBy).toMatchObject({ kind: "human", ref: expect.any(String), handle: "or" });
   expect(t.activity.map((a) => (a.type === "event" ? a.event : a.type))).toEqual([
     "created",
     "assignee",
   ]);
   const assignee = t.activity[1];
   expect(assignee).toMatchObject({ event: "assignee", from: null, to: "dev" });
+});
+
+test("a task created by a human lists its creator as that human", async () => {
+  await create({ title: "Plan" });
+  const ref = testRef(or.user.id);
+  const list = (await call("GET", "/api/tasks")).json() as TaskPage;
+  expect(list.tasks[0]).toMatchObject({
+    key: "T-1",
+    createdBy: { kind: "human", ref, handle: "or" },
+  });
+  const detail = await call("GET", "/api/tasks/T-1");
+  expect(detail.json()).toMatchObject({ createdBy: { kind: "human", ref, handle: "or" } });
 });
 
 test("validation: a javascript: link is a 400 on links; an unknown dependency on dependsOn; an ended assignee is 409", async () => {
@@ -76,7 +89,7 @@ test("validation: a javascript: link is a 400 on links; an unknown dependency on
   expect(bad.json().error.fields.links).toBe("Links must be http(s) URLs.");
   const dep = await call("POST", "/api/tasks", { title: "x", dependsOn: ["T-9"] });
   expect(dep.json().error.fields).toEqual({ dependsOn: "No task T-9." });
-  await h.sql`update agents set archived_at = now() where slug = 'qa'`;
+  await h.sql`update agents set archived_at = now() where id = (select id from principals where handle = 'qa')`;
   const ended = await call("POST", "/api/tasks", { title: "x", assignee: "qa" });
   expect(ended.statusCode).toBe(409);
   expect(ended.json().error).toMatchObject({
@@ -196,11 +209,16 @@ test("GET detail: activity oldest first with comments and history interleaved; b
   await create({ title: "base" });
   await create({ title: "next", dependsOn: ["T-1"], assignee: "dev" });
   await call("PATCH", "/api/tasks/T-1", { status: "in_progress" });
-  const c = await call("POST", "/api/tasks/T-1/comments", { body: "@dev look at this" });
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const c = await call("POST", "/api/tasks/T-1/comments", { body: `<@${dev?.ref}> look at this` });
   expect(c.statusCode).toBe(201);
   expect(c.json()).toMatchObject({
-    comment: { type: "comment", author: { kind: "user", handle: "or" }, body: "@dev look at this" },
-    deliveredTo: ["dev"],
+    comment: {
+      type: "comment",
+      author: { kind: "human", ref: expect.any(String), handle: "or" },
+      body: `<@${dev?.ref}> look at this`,
+    },
+    deliveredTo: [{ ref: dev?.ref, handle: "dev" }],
     mentionedHumans: [],
     notReached: [],
   });
@@ -220,17 +238,44 @@ test("GET detail: activity oldest first with comments and history interleaved; b
   expect(next.blockedBy).toEqual(["T-1"]);
 });
 
-test("a comment's response says who it reached", async () => {
-  await create({ title: "t", assignee: "dev" });
-  const r = await call("POST", "/api/tasks/T-1/comments", { body: "@sam @nobody" });
-  expect(r.json()).toMatchObject({
-    deliveredTo: ["dev"],
-    mentionedHumans: ["@sam"],
-    notReached: [{ name: "nobody", reason: "unknown" }],
+test("a comment's mention reaches the mentioned agent", async () => {
+  await create({ title: "t", assignee: "lead" });
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const [samP] = await h.sql`select ref from principals where handle = 'sam'`;
+  const r = await call("POST", "/api/tasks/T-1/comments", {
+    body: `look <@${dev?.ref}> and <@${samP?.ref}>`,
   });
+  expect(r.statusCode).toBe(201);
+  expect(r.json()).toMatchObject({
+    deliveredTo: expect.arrayContaining([expect.objectContaining({ handle: "dev" })]),
+    mentionedHumans: [{ ref: samP?.ref, handle: "sam" }],
+    notReached: [],
+  });
+  const rows = await h.sql`select to_id from messages where comment_id is not null order by to_id`;
+  expect(rows.map((x) => x.to_id)).toContain(ids.dev);
   expect(
     (await call("POST", "/api/tasks/T-1/comments", { body: "  " })).json().error.fields.body,
   ).toBe("Write a comment first.");
+});
+
+test("a comment with an unknown ref is 400 on body and writes no comment", async () => {
+  await create({ title: "t", assignee: "dev" });
+  const r = await call("POST", "/api/tasks/T-1/comments", { body: "look <@zzzzzzzz>" });
+  expect(r.statusCode).toBe(400);
+  expect(r.json().error).toMatchObject({
+    code: "unknown_mention",
+    fields: { body: "This mention doesn't match anyone" },
+  });
+  expect(await h.sql`select id from task_comments`).toEqual([]);
+});
+
+test("a task title with a mention is stored as <@ref>", async () => {
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const t = await create({ title: `Review for <@${dev?.ref}|dev>` });
+  expect(t.title).toBe(`Review for <@${dev?.ref}>`);
+  const bad = await call("POST", "/api/tasks", { title: "Review for <@zzzzzzzz>" });
+  expect(bad.statusCode).toBe(400);
+  expect(bad.json().error.fields.title).toBe("This mention doesn't match anyone");
 });
 
 test("GET /api/agents carries openTasks", async () => {
@@ -238,10 +283,10 @@ test("GET /api/agents carries openTasks", async () => {
   await create({ title: "b", assignee: "dev" });
   await call("PATCH", "/api/tasks/T-2", { status: "done" });
   const agents = (await call("GET", "/api/agents")).json().agents as {
-    slug: string;
+    handle: string;
     openTasks: number;
   }[];
-  expect(Object.fromEntries(agents.map((a) => [a.slug, a.openTasks]))).toEqual({
+  expect(Object.fromEntries(agents.map((a) => [a.handle, a.openTasks]))).toEqual({
     lead: 0,
     dev: 1,
     qa: 0,

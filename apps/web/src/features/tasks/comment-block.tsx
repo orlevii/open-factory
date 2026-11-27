@@ -1,4 +1,5 @@
 import type { TaskActivity } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { formatInboxTime } from "@/features/session/format";
@@ -7,7 +8,7 @@ import { RowMenu, type RowMenuItem } from "@/features/session/row-menu";
 
 type Comment = Extract<TaskActivity, { type: "comment" }>;
 
-export const authorName = (c: Comment["author"]) => (c.kind === "agent" ? c.slug : c.handle);
+export const authorName = (c: Comment["author"]) => c.handle;
 export const authorMention = (c: Comment["author"]) => `@${authorName(c)}`;
 
 /** A comment's menu: its deep link and its markdown source (U3 §7.5's row menu). */
@@ -55,7 +56,7 @@ export function CommentBlock({
           size="xs"
           aria-label={`Reply to ${who}`}
           className="ml-auto"
-          onClick={() => onReply(who)}
+          onClick={() => onReply(mentionOf(comment.author.ref))}
         >
           Reply
         </Button>

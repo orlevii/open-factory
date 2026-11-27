@@ -4,7 +4,7 @@ import { FilePlus2, RefreshCcw } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { restartAgentNow, useRestartPending } from "@/features/agents/lifecycle";
+import { type AgentKey, restartAgentNow, useRestartPending } from "@/features/agents/lifecycle";
 import { focusComposer } from "./composer";
 import { NewSessionDialog } from "./new-session-dialog";
 
@@ -23,7 +23,7 @@ export function RecoveryActions({ agent }: { agent: AgentSummary }) {
   const canReset = errored && (kind === "resume" || kind === "resume_unrecoverable");
   return (
     <>
-      {canRestart && <RestartButton slug={agent.slug} />}
+      {canRestart && <RestartButton agent={agent} />}
       {canReset && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -41,7 +41,7 @@ export function RecoveryActions({ agent }: { agent: AgentSummary }) {
         </Tooltip>
       )}
       <NewSessionDialog
-        slug={agent.slug}
+        agent={agent}
         lastError={dialog.lastError}
         open={dialog.open}
         onOpenChange={(open) => setDialog((d) => ({ ...d, open }))}
@@ -56,9 +56,9 @@ export function RecoveryActions({ agent }: { agent: AgentSummary }) {
  * the response and the next status frame are both in, or on the next `error` event, so a Restart that
  * fails comes back as "Restart"; the failure is a toast.
  */
-function RestartButton({ slug }: { slug: string }) {
+function RestartButton({ agent }: { agent: AgentKey }) {
   const qc = useQueryClient();
-  const pending = useRestartPending(slug);
+  const pending = useRestartPending(agent.ref);
   const label = pending ? "Restarting…" : "Restart";
   return (
     <Tooltip>
@@ -68,7 +68,7 @@ function RestartButton({ slug }: { slug: string }) {
           aria-disabled={pending || undefined}
           onClick={() => {
             if (!pending)
-              void restartAgentNow(slug, qc).then((ok) => {
+              void restartAgentNow(agent, qc).then((ok) => {
                 if (ok) focusComposer();
               });
           }}

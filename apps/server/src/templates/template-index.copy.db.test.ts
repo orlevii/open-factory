@@ -11,17 +11,18 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
-import { seedTestUser } from "../test/handles.ts";
+import { agentRecords } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let idx: TemplateIndex;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 const dirOf = (n: string) => path.join(home, "templates", n);
@@ -49,9 +50,9 @@ function source(name: string, files: Record<string, string> = {}) {
       writeFileSync(fileOf(name, f), c);
     }
 }
-const agentOn = async (slug: string, template: string) => {
+const agentOn = async (handle: string, template: string) => {
   await t.app.agents.create(
-    { template, slug, displayName: slug, description: "", reportsTo: "or", credential: "work" },
+    { template, handle, displayName: handle, description: "", reportsTo: "or", credential: "work" },
     human,
   );
 };
@@ -62,7 +63,7 @@ beforeAll(async () => {
   });
   home = t.factoryHome;
   idx = t.app.templates;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,
@@ -73,8 +74,8 @@ beforeAll(async () => {
   source("hrtpl");
   await idx.scan();
   await agentOn("hr-bot", "hrtpl");
-  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "hr-bot"));
-  hr = { kind: "agent", id: row?.id ?? "", slug: "hr-bot" };
+  const [row] = await agentRecords(t.db).where(eq(schema.principals.handle, "hr-bot"));
+  hr = { kind: "agent", id: row?.id ?? "", ref: testRef(row?.id ?? ""), handle: "hr-bot" };
 });
 afterAll(() => t.close());
 
@@ -199,7 +200,7 @@ test("an agent can't copy a local source or a docker source with a local agent",
   await t.db
     .update(schema.agents)
     .set({ runtime: "local" })
-    .where(eq(schema.agents.slug, "loc-agent"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"loc-agent"})`));
   for (const from of ["localsrc", "haslocal"]) {
     await expect(idx.copyFrom(from, b(`c-${from}`), hr)).rejects.toThrow(
       new OrgRefusedError(LOCAL_RUNTIME_REFUSAL),

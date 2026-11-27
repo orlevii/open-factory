@@ -5,12 +5,13 @@ import { type ReactNode, StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { WsStatus } from "@/lib/ws";
 import { WsContext, type WsHub } from "@/lib/ws-context";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 import { useSession } from "./use-session";
 
 const ev = (seq: number): SessionEvent => ({
   seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId: null,
   at: "2026-11-18T00:00:00.000Z",
   event: { type: "turn_started" },
@@ -22,12 +23,12 @@ const detail: AgentDetail = {
 };
 
 vi.mock("./api", () => ({
-  agentDetailQueryOptions: (slug: string) => ({
-    queryKey: ["agent", slug],
+  agentDetailQueryOptions: (handle: string) => ({
+    queryKey: ["agent", handle],
     queryFn: async () => detail,
   }),
   // The latest page is 2..4; the page before it is 1.
-  fetchEvents: async (_slug: string, q: { before?: number } = {}) => ({
+  fetchEvents: async (_handle: string, q: { before?: number } = {}) => ({
     events: q.before ? [ev(1)] : [ev(2), ev(3), ev(4)],
     hasMore: { before: !q.before, after: false },
   }),
@@ -36,7 +37,7 @@ vi.mock("./api", () => ({
   },
 }));
 
-const frame = (seq: number, agent = "dev"): ServerMessage => ({
+const frame = (seq: number, agent = refFor("dev")): ServerMessage => ({
   type: "session_event",
   agent,
   event: ev(seq),
@@ -68,11 +69,11 @@ async function setup(status: WsStatus = "open", o: { strict?: boolean } = {}) {
   };
   let renders = 0;
   const hook = renderHook(
-    ({ slug }: { slug: string }) => {
+    ({ ref }: { ref: string }) => {
       renders++;
-      return useSession(slug);
+      return useSession(ref);
     },
-    { wrapper, initialProps: { slug: "dev" } },
+    { wrapper, initialProps: { ref: refFor("dev") } },
   );
   await waitFor(() => expect(hook.result.current.state.ordered).toHaveLength(3));
   // Fake the frame clock only once the (promise-driven) load has settled.
@@ -87,7 +88,7 @@ async function setup(status: WsStatus = "open", o: { strict?: boolean } = {}) {
     /** The socket drops (closed) or comes back (open, a new openCount). */
     setSocket: (next: WsStatus) => {
       hub = { ...hub, status: next, openCount: hub.openCount + (next === "open" ? 1 : 0) };
-      hook.rerender({ slug: "dev" });
+      hook.rerender({ ref: refFor("dev") });
     },
   };
 }
@@ -151,7 +152,7 @@ test("a local queued dispatch flushes pending frames first, keeping their order"
     fromKind: "human" as const,
     createdAt: "2026-11-18T00:00:00.000Z",
   });
-  push({ type: "queue", agent: "dev", items: [item("q2")] });
+  push({ type: "queue", agent: refFor("dev"), items: [item("q2")] });
   act(() => hook.result.current.onQueued(item("q1")));
   // The frame came first, so the local item lands after it instead of being replaced by it.
   expect(hook.result.current.state.queue.map((q) => q.id)).toEqual(["q2", "q1"]);
@@ -179,13 +180,13 @@ test("a frame that changes no row keeps the rows and sets' identity (spec §9.3)
   expect(hook.result.current.interruptedEnds).toBe(interruptedEnds);
 });
 
-test("a slug change cancels the pending frame and drops the old slug's frames", async () => {
+test("a handle change cancels the pending frame and drops the old handle's frames", async () => {
   const { hook, push } = await setup();
   const cancel = vi.spyOn(globalThis, "cancelAnimationFrame");
   const request = vi.spyOn(globalThis, "requestAnimationFrame");
   push(frame(5));
   expect(request).toHaveBeenCalledTimes(1);
-  hook.rerender({ slug: "other" });
+  hook.rerender({ ref: refFor("other") });
   expect(cancel).toHaveBeenCalledTimes(1);
   push(frame(6)); // still "dev": the listener now ignores it
   expect(request).toHaveBeenCalledTimes(1);
@@ -237,7 +238,7 @@ test("a visibility change commits pending frames at once", async () => {
 // U3 §11.4: live frames share the frame flush.
 const livePatch = (offset: number, append: string): ServerMessage => ({
   type: "live",
-  agent: "dev",
+  agent: refFor("dev"),
   texts: [{ messageId: "m1", index: 1, offset, append }],
 });
 const snapshots = (sent: ClientMessage[]) => sent.filter((m) => m.type === "live_snapshot");
@@ -248,7 +249,7 @@ test("mixed session_event and live frames commit once per frame", async () => {
   push(livePatch(0, "Hel"));
   push(frame(5));
   push(livePatch(3, "lo"));
-  push({ type: "live", agent: "dev", thinking: { tokens: 4 } });
+  push({ type: "live", agent: refFor("dev"), thinking: { tokens: 4 } });
   expect(renders()).toBe(before);
   act(() => {
     vi.advanceTimersToNextFrame();
@@ -271,7 +272,7 @@ test("an offset gap sends exactly one live_snapshot, under StrictMode", async ()
   act(() => {
     vi.advanceTimersToNextFrame();
   });
-  expect(snapshots(sent)).toEqual([{ type: "live_snapshot", agent: "dev" }]);
+  expect(snapshots(sent)).toEqual([{ type: "live_snapshot", agent: refFor("dev") }]);
   // Another gap before the snapshot arrives doesn't ask again.
   push(livePatch(12, "more"));
   act(() => {
@@ -280,7 +281,7 @@ test("an offset gap sends exactly one live_snapshot, under StrictMode", async ()
   expect(snapshots(sent)).toHaveLength(1);
   push({
     type: "live",
-    agent: "dev",
+    agent: refFor("dev"),
     reset: true,
     texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello gapmore" }],
   });
@@ -305,7 +306,7 @@ test("live state survives a socket drop; the resubscribe's reset replaces it in 
   expect(sent.filter((m) => m.type === "subscribe")).toHaveLength(2);
   push({
     type: "live",
-    agent: "dev",
+    agent: refFor("dev"),
     reset: true,
     texts: [{ messageId: "m1", index: 1, offset: 0, append: "Hello world" }],
   });
@@ -320,7 +321,7 @@ test("a reset marks the view caught up: replayed rows before it don't fade", asy
   const { hook, push } = await setup();
   push(frame(5));
   push(frame(6));
-  push({ type: "live", agent: "dev", reset: true });
+  push({ type: "live", agent: refFor("dev"), reset: true });
   act(() => {
     vi.advanceTimersToNextFrame();
   });
@@ -330,7 +331,7 @@ test("a reset marks the view caught up: replayed rows before it don't fade", asy
 test("agent_commands_changed is skipped: no flush, no render", async () => {
   const { push, renders } = await setup();
   const before = renders();
-  push({ type: "agent_commands_changed", agent: "dev" });
+  push({ type: "agent_commands_changed", agent: refFor("dev") });
   act(() => {
     vi.advanceTimersToNextFrame();
   });

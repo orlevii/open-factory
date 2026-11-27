@@ -18,12 +18,12 @@ import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
+import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
 let home: string;
@@ -349,13 +349,14 @@ test("a write through the API reports its author; scanOne never awaits listeners
   const res = await Promise.race([
     slow.writeFile("cd7", "template.yaml", yamlWith("cd7", "skills: [tdd]\n"), hash ?? null, {
       kind: "human",
+      ref: "h4r5r6r7",
       handle: "ana",
     }),
     new Promise((r) => setTimeout(() => r("timeout"), 5000)),
   ]);
   expect(res).not.toBe("timeout");
   await vi.waitFor(() => expect(started).toBe(true));
-  expect(slowSeen.at(-1)?.by).toBe("@ana");
+  expect(slowSeen.at(-1)?.by).toBe("<@h4r5r6r7>");
   release();
 });
 
@@ -392,11 +393,11 @@ test("a failing listener is logged and does not stop the next one", async () => 
 });
 
 async function seedUser(
-  slug: string,
+  handle: string,
   o: { archived?: boolean; terminated?: boolean; template: string },
 ) {
-  await claimTestHandle(t.db, slug, "agent");
-  const credentialId = `cred-${slug}`;
+  await seedTestPrincipal(t.db, "agent", handle, `id-${handle}`);
+  const credentialId = `cred-${handle}`;
   await t.db.insert(schema.credentials).values({
     id: credentialId,
     name: credentialId,
@@ -404,9 +405,9 @@ async function seedUser(
     valueEnc: Buffer.from("x"),
   });
   if (o.terminated) {
-    const mgrSlug = `mgr-${slug}`;
-    await claimTestHandle(t.db, mgrSlug, "agent");
-    const mgrCred = `cred-${mgrSlug}`;
+    const mgrHandle = `mgr-${handle}`;
+    await seedTestPrincipal(t.db, "agent", mgrHandle, `id-${mgrHandle}`);
+    const mgrCred = `cred-${mgrHandle}`;
     await t.db.insert(schema.credentials).values({
       id: mgrCred,
       name: mgrCred,
@@ -416,36 +417,32 @@ async function seedUser(
     const [mgr] = await t.db
       .insert(schema.agents)
       .values({
-        id: `id-${mgrSlug}`,
-        slug: mgrSlug,
-        displayName: mgrSlug,
+        id: `id-${mgrHandle}`,
+        displayName: mgrHandle,
         template: "mgr-template",
         runtime: "local",
         credentialId: mgrCred,
-        reportsToUser: await testManagerUserId(t.db),
+        reportsTo: await testManagerUserId(t.db),
       })
       .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
-      id: `id-${slug}`,
-      slug,
-      displayName: slug,
+      id: `id-${handle}`,
+      displayName: handle,
       template: o.template,
       runtime: "local",
       kind: "ephemeral",
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
       terminatedAt: new Date(),
-      terminatedBy: "@factory",
     });
     return;
   }
   await t.db.insert(schema.agents).values({
-    id: `id-${slug}`,
-    slug,
-    displayName: slug,
+    id: `id-${handle}`,
+    displayName: handle,
     template: o.template,
     runtime: "local",
     credentialId,
-    reportsToUser: await testManagerUserId(t.db),
+    reportsTo: await testManagerUserId(t.db),
     ...(o.archived ? { archivedAt: new Date() } : {}),
   });
 }

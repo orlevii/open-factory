@@ -1,4 +1,5 @@
 import { schema } from "@open-factory/db";
+import { mentionOf } from "@open-factory/shared/mentions";
 import { sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -90,23 +91,25 @@ export class LoopGuard {
         ${now.toISOString()}::timestamptz - make_interval(secs => ${windowSecs}),
         (select max(resumed_at) from loop_holds where agent_a = ${a} and agent_b = ${b}),
         (select max(created_at) from messages
-           where kind = 'message' and from_user_id is not null and to_agent_id in (${a}, ${b})),
+           where kind = 'message' and to_id in (${a}, ${b})
+             and from_id in (select id from principals where kind = 'human')),
         (select max(at) from session_events
            where type = 'operator_input' and agent_id in (${a}, ${b}) and payload->>'byKind' = 'human'),
         (select max(e.at) from task_events e join tasks t on t.id = e.task_id
-           where e.type = 'status' and e.actor_user_id is not null and t.assignee_agent_id in (${a}, ${b}))
+           where e.type = 'status' and t.assignee_agent_id in (${a}, ${b})
+             and exists (select 1 from principals p where p.id = e.actor_id and p.kind = 'human'))
       ) as since`);
     const since = new Date(w?.since as Date | string).toISOString();
 
     // One arm per direction and sender column, each served by an existing index: agent-sent rows by
-    // `messages_from_agent_idx`; scheduled rows carry their author instead of a sender (`from_agent_id` is null).
+    // `messages_from_idx`; scheduled rows carry their author instead of a sender (`from_id` is null).
     const arm = (x: string, y: string) => sql`
-      select from_agent_id as s, created_at from messages
-        where from_agent_id = ${x} and to_agent_id = ${y} and created_at > ${since}::timestamptz
+      select from_id as s, created_at from messages
+        where from_id = ${x} and to_id = ${y} and created_at > ${since}::timestamptz
           and kind in ('message','task_comment','scheduled') and state <> 'cancelled'
       union all
-      select author_agent_id as s, created_at from messages
-        where kind = 'scheduled' and from_agent_id is null and author_agent_id = ${x} and to_agent_id = ${y}
+      select author_id as s, created_at from messages
+        where kind = 'scheduled' and from_id is null and author_id = ${x} and to_id = ${y}
           and created_at > ${since}::timestamptz and state <> 'cancelled'`;
     const counted = await tx.execute<{ s: string; n: number; first: Date | string }>(sql`
       select s, count(*)::int as n, min(created_at) as first
@@ -139,14 +142,14 @@ export class LoopGuard {
     to: string,
     counts: { ab: number; ba: number; minutes: number },
   ): Promise<PendingRow[]> {
-    const pair = await tx.execute<{ id: string; slug: string; reports_to: string | null }>(
-      sql`select id, slug, reports_to from agents where id in (${from}, ${to})`,
+    const pair = await tx.execute<{ id: string; ref: string; reports_to: string | null }>(
+      sql`select a.id, p.ref, a.reports_to from agents a join principals p on p.id = a.id where a.id in (${from}, ${to})`,
     );
     const a = pair.find((r) => r.id === from);
     const b = pair.find((r) => r.id === to);
     if (!a || !b) throw new Error("loop guard: a pair member does not exist");
     const total = counts.ab + counts.ba;
-    const exchanged = `@${a.slug} and @${b.slug} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
+    const exchanged = `${mentionOf(a.ref)} and ${mentionOf(b.ref)} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
 
     await this.d.store.createHumanMessage(
       {
@@ -202,8 +205,8 @@ export class LoopGuard {
     for (const r of opened) {
       if (!r.held || !r.opened) continue;
       for (const row of r.managerRows) {
-        if (!row.toAgentId) continue;
-        this.d.runtimes.adoptNotice(row.toAgentId, row.id).catch((err: unknown) => {
+        if (!row.toId) continue;
+        this.d.runtimes.adoptNotice(row.toId, row.id).catch((err: unknown) => {
           this.d.log.error({ err, id: row.id }, "loop guard: handing over a manager notice failed");
         });
       }

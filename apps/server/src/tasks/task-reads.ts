@@ -1,17 +1,30 @@
 import { type Db, schema } from "@open-factory/db";
 import { parseTaskKey, type TaskStatus, taskKey } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/mentions";
 import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { resolveArg } from "../principals/principal-args.ts";
+import {
+  type PrincipalKind,
+  principalById,
+  principalsByIds,
+} from "../principals/principal-store.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import { escapeLike } from "./like.ts";
 import type { Actor } from "./permission.ts";
 import type { TaskStore } from "./task-store.ts";
 
-const { tasks, agents, users, taskComments, taskEvents } = schema;
+const { tasks, agents, principals, taskComments, taskEvents } = schema;
 
-export type AgentRef = { slug: string; displayName: string; ended?: "archived" | "terminated" };
-export type PrincipalRef = { kind: "agent"; slug: string } | { kind: "user"; handle: string };
+export type AgentRef = {
+  ref: string;
+  handle: string;
+  displayName: string;
+  ended?: "archived" | "terminated";
+};
+/** A principal as the task API names it: its kind, ref and current handle. */
+export type PrincipalRef = { kind: PrincipalKind; ref: string; handle: string };
 export type TaskSummary = {
   key: string;
   title: string;
@@ -24,10 +37,10 @@ export type TaskSummary = {
 export type ListFilter = {
   /** Default `["open", "in_progress"]`; "all" for every status. */
   status?: TaskStatus[] | "all";
-  /** An agent slug, or "me" (an agent caller). */
+  /** An agent handle, or "me" (an agent caller). */
   assignee?: string;
   unassigned?: boolean;
-  /** An agent slug, a human `@handle`, or "me" (the caller). */
+  /** A mention, ref, or `@handle` of an agent or a person; or "me" (the caller). */
   createdBy?: string;
   /** `T-41` style keys: just those tasks. */
   keys?: string[];
@@ -56,11 +69,13 @@ export class TaskReads {
   async list(
     actor: Actor,
     f: ListFilter,
+    warnings: string[] = [],
   ): Promise<{ items: TaskSummary[]; nextCursor: string | null }> {
     const db = this.d.db;
     const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
     const aa = alias(agents, "aa");
-    const ca = alias(agents, "ca");
+    const ap = alias(principals, "ap");
+    const cp = alias(principals, "cp");
     const where: (SQL | undefined)[] = [];
     if (f.keys) {
       const ns = f.keys.map((k) => parseTaskKey(k)).filter((n): n is number => n !== null);
@@ -73,15 +88,9 @@ export class TaskReads {
     if (f.q) where.push(sql`${tasks.title} ilike ${`%${escapeLike(f.q)}%`} escape '\\'`);
     if (f.unassigned) where.push(isNull(tasks.assigneeAgentId));
     else if (f.assignee)
-      where.push(eq(tasks.assigneeAgentId, await this.agentId(actor, f.assignee)));
-    if (f.createdBy) {
-      const who = await this.creator(actor, f.createdBy);
-      where.push(
-        "agentId" in who
-          ? eq(tasks.createdByAgentId, who.agentId)
-          : eq(tasks.createdByUserId, who.userId),
-      );
-    }
+      where.push(eq(tasks.assigneeAgentId, await this.agentId(actor, f.assignee, warnings)));
+    if (f.createdBy)
+      where.push(eq(tasks.createdById, await this.creator(actor, f.createdBy, warnings)));
     if (f.before) {
       const c = parseCursor(f.before);
       where.push(
@@ -91,17 +100,19 @@ export class TaskReads {
     const rows = await db
       .select({
         t: tasks,
-        aSlug: aa.slug,
+        aRef: ap.ref,
+        aHandle: ap.handle,
         aName: aa.displayName,
         aArchived: aa.archivedAt,
         aTerminated: aa.terminatedAt,
-        cSlug: ca.slug,
-        cHandle: users.handle,
+        cKind: cp.kind,
+        cRef: cp.ref,
+        cHandle: cp.handle,
       })
       .from(tasks)
       .leftJoin(aa, eq(aa.id, tasks.assigneeAgentId))
-      .leftJoin(ca, eq(ca.id, tasks.createdByAgentId))
-      .leftJoin(users, eq(users.id, tasks.createdByUserId))
+      .leftJoin(ap, eq(ap.id, tasks.assigneeAgentId))
+      .innerJoin(cp, eq(cp.id, tasks.createdById))
       .where(and(...where))
       .orderBy(desc(tasks.updatedAt), asc(tasks.id))
       .limit(limit + 1);
@@ -112,23 +123,27 @@ export class TaskReads {
     );
     const items = page.map((r) => {
       const status = r.t.status as TaskStatus;
-      const e = r.aSlug
+      const e = r.aRef
         ? ended({ archivedAt: r.aArchived, terminatedAt: r.aTerminated })
         : undefined;
       return {
         key: taskKey(r.t.number),
         title: r.t.title,
         status,
-        assignee: r.aSlug
-          ? { slug: r.aSlug, displayName: r.aName as string, ...(e ? { ended: e } : {}) }
-          : null,
+        assignee:
+          r.aRef && r.aHandle
+            ? {
+                ref: r.aRef,
+                handle: r.aHandle,
+                displayName: r.aName as string,
+                ...(e ? { ended: e } : {}),
+              }
+            : null,
         blockedBy: blockedBy(
           status,
           (deps.get(r.t.id) ?? []).map((x) => ({ key: taskKey(x.number), status: x.status })),
         ),
-        createdBy: (r.cSlug
-          ? { kind: "agent", slug: r.cSlug }
-          : { kind: "user", handle: r.cHandle as string }) as PrincipalRef,
+        createdBy: { kind: r.cKind, ref: r.cRef, handle: r.cHandle } satisfies PrincipalRef,
         updatedAt: r.t.updatedAt,
       } satisfies TaskSummary;
     });
@@ -156,22 +171,17 @@ export class TaskReads {
     const [a] = t.assigneeAgentId
       ? await db.select().from(aa).where(eq(aa.id, t.assigneeAgentId))
       : [];
-    const assignee: AgentRef | null = a
-      ? {
-          slug: a.slug,
-          displayName: a.displayName,
-          ...(ended(a) ? { ended: ended(a) as "archived" | "terminated" } : {}),
-        }
-      : null;
-    const [creatorAgent] = t.createdByAgentId
-      ? await db.select({ slug: agents.slug }).from(agents).where(eq(agents.id, t.createdByAgentId))
-      : [];
-    const [creatorUser] = t.createdByUserId
-      ? await db.select({ handle: users.handle }).from(users).where(eq(users.id, t.createdByUserId))
-      : [];
-    const createdBy: PrincipalRef = creatorAgent
-      ? { kind: "agent", slug: creatorAgent.slug }
-      : { kind: "user", handle: creatorUser?.handle as string };
+    const assigneeP = a ? await principalById(db, a.id) : undefined;
+    const assignee: AgentRef | null =
+      a && assigneeP
+        ? {
+            ref: assigneeP.ref,
+            handle: assigneeP.handle,
+            displayName: a.displayName,
+            ...(ended(a) ? { ended: ended(a) as "archived" | "terminated" } : {}),
+          }
+        : null;
+    const createdBy = await this.principalRef(t.createdById);
 
     const deps = await this.d.tasks.dependencies(db, t.id);
     const dependents = await this.d.tasks.dependents(db, t.id);
@@ -183,24 +193,18 @@ export class TaskReads {
         (stat.get(id) ?? []).map((x) => x.status),
       );
     const status = t.status as TaskStatus;
-    const dependentAssignees = dependents.length
-      ? await db
-          .select({ id: agents.id, slug: agents.slug })
-          .from(agents)
-          .where(
-            inArray(
-              agents.id,
-              dependents.flatMap((x) => (x.assigneeAgentId ? [x.assigneeAgentId] : [])),
-            ),
-          )
-      : [];
+    const dependentAssignees = await principalsByIds(
+      db,
+      dependents.flatMap((x) => (x.assigneeAgentId ? [x.assigneeAgentId] : [])),
+    );
     const links = (await this.d.tasks.links(db, t.id)).map((l) => ({
       kind: l.kind,
       ...(l.target ? { target: l.target } : {}),
-      ...(l.agentSlug
+      ...(l.agentRef && l.agentHandle
         ? {
             agent: {
-              slug: l.agentSlug,
+              ref: l.agentRef,
+              handle: l.agentHandle,
               displayName: l.agentDisplayName as string,
               ...(ended({ archivedAt: l.agentArchivedAt, terminatedAt: l.agentTerminatedAt })
                 ? {
@@ -217,20 +221,20 @@ export class TaskReads {
     }));
 
     // Comments.
-    const ca = alias(agents, "ca");
+    const ap = alias(principals, "ap");
     const cols = {
       id: taskComments.id,
       body: taskComments.body,
       createdAt: taskComments.createdAt,
-      agentSlug: ca.slug,
-      handle: users.handle,
+      kind: ap.kind,
+      ref: ap.ref,
+      handle: ap.handle,
     };
     const commentRows = async (extra?: SQL, newestFirstLimit?: number) => {
       const q = db
         .select(cols)
         .from(taskComments)
-        .leftJoin(ca, eq(ca.id, taskComments.authorAgentId))
-        .leftJoin(users, eq(users.id, taskComments.authorUserId))
+        .innerJoin(ap, eq(ap.id, taskComments.authorId))
         .where(and(eq(taskComments.taskId, t.id), extra))
         .orderBy(
           ...(newestFirstLimit
@@ -274,9 +278,7 @@ export class TaskReads {
     }
     const comments = rows.map((c) => ({
       id: c.id,
-      author: (c.agentSlug
-        ? { kind: "agent", slug: c.agentSlug }
-        : { kind: "user", handle: c.handle as string }) as PrincipalRef,
+      author: { kind: c.kind, ref: c.ref, handle: c.handle } satisfies PrincipalRef,
       body: c.body,
       createdAt: c.createdAt,
     }));
@@ -307,7 +309,7 @@ export class TaskReads {
         title: x.title,
         status: x.status,
         blocked: blockedOf(x.id, x.status),
-        assignee: dependentAssignees.find((g) => g.id === x.assigneeAgentId)?.slug ?? null,
+        assignee: (x.assigneeAgentId && dependentAssignees.get(x.assigneeAgentId)?.handle) || null,
       })),
       links,
       comments,
@@ -316,10 +318,10 @@ export class TaskReads {
     };
   }
 
-  /** The history, oldest first; assignee values are current slugs, `body` has none (spec §6.5). */
+  /** The history, oldest first; assignee values are current handles, `body` has none (spec §6.5). */
   private async events(taskId: string) {
     const db = this.d.db;
-    const ea = alias(agents, "ea");
+    const ap = alias(principals, "ap");
     const rows = await db
       .select({
         id: taskEvents.id,
@@ -327,12 +329,12 @@ export class TaskReads {
         from: taskEvents.fromValue,
         to: taskEvents.toValue,
         at: taskEvents.at,
-        agentSlug: ea.slug,
-        handle: users.handle,
+        kind: ap.kind,
+        ref: ap.ref,
+        handle: ap.handle,
       })
       .from(taskEvents)
-      .leftJoin(ea, eq(ea.id, taskEvents.actorAgentId))
-      .leftJoin(users, eq(users.id, taskEvents.actorUserId))
+      .innerJoin(ap, eq(ap.id, taskEvents.actorId))
       .where(eq(taskEvents.taskId, taskId))
       .orderBy(asc(taskEvents.at), asc(taskEvents.id));
     const ids = new Set<string>();
@@ -347,32 +349,25 @@ export class TaskReads {
         for (const side of [r.from, r.to])
           for (const l of (side as { agentId?: string }[] | null) ?? [])
             if (l.agentId) ids.add(l.agentId);
-    const slugs = new Map<string, string>();
-    if (ids.size)
-      for (const a of await db
-        .select({ id: agents.id, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, [...ids])))
-        slugs.set(a.id, a.slug);
-    const slug = (v: unknown) => (typeof v === "string" ? (slugs.get(v) ?? v) : null);
+    const handles = await principalsByIds(db, [...ids]);
+    const handleOf = (id: string) => handles.get(id)?.handle ?? id;
+    const assignee = (v: unknown) => (typeof v === "string" ? handleOf(v) : null);
     const linkView = (side: unknown) =>
       (
         (side as { kind: string; target?: string; agentId?: string; title?: string }[] | null) ?? []
       ).map((l) => ({
         kind: l.kind,
         ...(l.target ? { target: l.target } : {}),
-        ...(l.agentId ? { agent: slugs.get(l.agentId) ?? l.agentId } : {}),
+        ...(l.agentId ? { agent: handleOf(l.agentId) } : {}),
         ...(l.title ? { title: l.title } : {}),
       }));
     return rows.map((r) => ({
       id: r.id,
       event: r.type,
-      actor: (r.agentSlug
-        ? { kind: "agent", slug: r.agentSlug }
-        : { kind: "user", handle: r.handle as string }) as PrincipalRef,
+      actor: { kind: r.kind, ref: r.ref, handle: r.handle } satisfies PrincipalRef,
       at: r.at,
       ...(r.type === "assignee"
-        ? { from: slug(r.from), to: slug(r.to) }
+        ? { from: assignee(r.from), to: assignee(r.to) }
         : r.type === "links"
           ? { from: linkView(r.from), to: linkView(r.to) }
           : r.type === "body"
@@ -381,35 +376,44 @@ export class TaskReads {
     }));
   }
 
-  private async agentId(actor: Actor, raw: string): Promise<string> {
-    const name = raw.trim().replace(/^@/, "");
-    if (name === "me") {
-      if (actor.kind === "agent") return actor.agentId;
+  /** A principal by id, as the task API names it. */
+  private async principalRef(id: string): Promise<PrincipalRef> {
+    const p = await principalById(this.d.db, id);
+    return { kind: p?.kind ?? "human", ref: p?.ref ?? id, handle: p?.handle ?? id };
+  }
+
+  private async agentId(actor: Actor, raw: string, warnings: string[]): Promise<string> {
+    if (raw.trim().replace(/^@/, "") === "me") {
+      if (actor.kind === "agent") return actor.id;
       throw new TaskError("reserved", "'me' is reserved; name an agent.", 400, "assignee");
     }
-    const [a] = await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.slug, name));
-    if (!a) throw new TaskError("not_found", `No agent @${name}.`, 400, "assignee");
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref")
+      throw new TaskError("not_found", unknownRefError(r.ref), 400, "assignee");
+    const [a] =
+      r.kind === "principal"
+        ? await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.id, r.p.id))
+        : [];
+    if (r.kind !== "principal" || !a)
+      throw new TaskError(
+        "not_found",
+        `No agent @${r.kind === "principal" ? r.p.handle : "name" in r ? r.name : raw.trim().replace(/^@/, "")}.`,
+        400,
+        "assignee",
+      );
+    if (r.warning) warnings.push(r.warning);
     return a.id;
   }
 
-  private async creator(
-    actor: Actor,
-    raw: string,
-  ): Promise<{ agentId: string } | { userId: string }> {
+  private async creator(actor: Actor, raw: string, warnings: string[]): Promise<string> {
     const name = raw.trim().replace(/^@/, "");
-    if (name === "me")
-      return actor.kind === "agent" ? { agentId: actor.agentId } : { userId: actor.userId };
-    const [a] = await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.slug, name));
-    const [u] = await this.d.db.select({ id: users.id }).from(users).where(eq(users.handle, name));
-    if (a && u)
-      throw new TaskError(
-        "ambiguous",
-        `'${name}' matches both an agent and a user.`,
-        400,
-        "creator",
-      );
-    if (a) return { agentId: a.id };
-    if (u) return { userId: u.id };
-    throw new TaskError("not_found", `No agent or user named '${name}'.`, 400, "creator");
+    if (name === "me") return actor.id;
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref")
+      throw new TaskError("not_found", unknownRefError(r.ref), 400, "creator");
+    if (r.kind !== "principal")
+      throw new TaskError("not_found", `No agent or user named '${name}'.`, 400, "creator");
+    if (r.warning) warnings.push(r.warning);
+    return r.p.id;
   }
 }

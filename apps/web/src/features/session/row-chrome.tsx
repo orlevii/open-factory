@@ -63,7 +63,7 @@ export function RowGutter() {
  *  list is built per row object, and only when the menu first opens. */
 export function RowChrome({
   row,
-  slug,
+  agentRef,
   focusable,
   callShown,
   onToggleCall,
@@ -72,7 +72,7 @@ export function RowChrome({
   menuRef,
 }: {
   row: Row;
-  slug: string;
+  agentRef: string;
   /** The row is the timeline's tab stop. */
   focusable: boolean;
   callShown: boolean;
@@ -85,9 +85,10 @@ export function RowChrome({
   menuRef?: Ref<RowMenuHandle>;
 }) {
   // Your handle comes with the session's one speaker index: a thousand rows don't each watch it.
-  const { selfHandle } = useSpeakers();
-  const items = useCallback(() => rowMenuItems(row, slug, selfHandle), [row, slug, selfHandle]);
-  const title = useCallback(() => rowMenuTitle(row, slug), [row, slug]);
+  const { selfRef, sessionAgent } = useSpeakers();
+  const handle = sessionAgent?.handle ?? "…";
+  const items = useCallback(() => rowMenuItems(row, agentRef, selfRef), [row, agentRef, selfRef]);
+  const title = useCallback(() => rowMenuTitle(row, handle), [row, handle]);
   const time = gutterTime(row);
   return (
     <>

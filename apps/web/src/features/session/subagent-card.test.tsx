@@ -1,6 +1,7 @@
 import type { AnyEvent, SessionEvent, SubagentProgress } from "@open-factory/shared";
 import { act, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { runDisplayPasses } from "./display-passes";
 import { buildRows, type Row } from "./rows";
 import { Timeline } from "./timeline";
@@ -9,7 +10,7 @@ let seq = 0;
 const at = (n: number) => new Date(Date.UTC(2026, 10, 21, 10, 0, n)).toISOString();
 const e = (event: AnyEvent): SessionEvent => {
   seq++;
-  return { seq, agentSlug: "dev", turnId: "t1", at: at(seq), event };
+  return { seq, agentRef: refFor("dev"), turnId: "t1", at: at(seq), event };
 };
 const call = (id: string, description = "Draft the request", subagentType?: string) =>
   e({
@@ -37,7 +38,7 @@ const rowsOf = (events: SessionEvent[]): Row[] => runDisplayPasses(buildRows(eve
 
 function show(rows: Row[], subagents: readonly SubagentProgress[] = []) {
   const props = {
-    slug: "dev",
+    agentRef: refFor("dev"),
     failedIds: new Set<string>(),
     interruptedEnds: new Set<number>(),
     hasMoreBefore: false,
@@ -261,7 +262,7 @@ test("a deep link into an overflowed card's transcript opens the overflow row an
   ];
   render(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={rowsOf(events)}
       highlightSeq={7}
       failedIds={new Set()}

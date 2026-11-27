@@ -1,20 +1,12 @@
 import type { SkillGroupsResponse } from "@open-factory/shared";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  createMemoryHistory,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { type ReactNode, useState } from "react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { useState } from "react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { libraryQueryOptions } from "@/lib/library";
 import { doc } from "@/test/config-harness";
-import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { ConfigForm } from "./config-form";
 

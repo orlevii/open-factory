@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
@@ -7,9 +7,8 @@ import { RecordingSlots } from "./testing/slots.ts";
 const h = new RuntimeHarness();
 beforeAll(async () => {
   await h.setup();
-  await claimTestHandleSql(h.t.sql, "sam", "user");
-  await h.t
-    .sql`insert into users (id, name, email, handle) values ('u2', 'Sam', 'sam@x.io', 'sam')`;
+  await h.t.sql.unsafe(principalSql("u2", "human", "sam"));
+  await h.t.sql`insert into users (id, name, email) values ('u2', 'Sam', 'sam@x.io')`;
 });
 afterAll(() => h.close());
 // The store's stamps are strictly increasing across tests, so each test's fake clock starts after the last one ended.
@@ -41,7 +40,7 @@ async function stopped() {
   await h.send("work");
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
-  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.interrupt({ by: "<@or>" });
 }
 const bodies = () => h.rt.queueItems().map((q) => q.body);
 const stateOf = async (id: string) =>
@@ -64,7 +63,7 @@ test("the sender cancels a held message; another user can't", async () => {
     id: b.id,
     kind: "message",
     body: "B",
-    from: "@or",
+    from: `<@${testRef("u1")}>`,
     fromKind: "human",
   });
   expect(bodies()).toEqual(["A"]);
@@ -79,7 +78,7 @@ test("the sender cancels a held message; another user can't", async () => {
 test("a written message can't be cancelled (already_delivered); cancelling a cancelled one again is a no-op", async () => {
   await stopped();
   const [work] = (await h.t
-    .sql`select id from messages where body = 'work' and to_agent_id = ${h.agentId}`) as unknown as {
+    .sql`select id from messages where body = 'work' and to_id = ${h.agentId}`) as unknown as {
     id: string;
   }[];
   if (!work) throw new Error("no row");
@@ -105,9 +104,9 @@ test("only kind='message' rows are cancellable: a human's task comment is not_se
   await stopped();
   const taskId = `t-${h.agentId}`;
   const commentId = `c-${h.agentId}`;
-  await h.t.sql`insert into tasks (id, title, created_by_user_id) values (${taskId}, 'T', 'u1')`;
+  await h.t.sql`insert into tasks (id, title, created_by_id) values (${taskId}, 'T', 'u1')`;
   await h.t
-    .sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, 'u1', 'look')`;
+    .sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, 'u1', 'look')`;
   const row = await h.store.createTaskMessage(h.t.db, {
     kind: "task_comment",
     taskId,

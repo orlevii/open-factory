@@ -11,7 +11,16 @@ import {
 
 export type SpawnArgs = { template: string; suffix?: string; description: string; prompt: string };
 export type SpawnResult =
-  | { ok: true; slug: string; agentId: string; status: AgentStatus; note?: string }
+  | {
+      ok: true;
+      handle: string;
+      /** The new agent as `<@ref|handle>`. */
+      mention: string;
+      agentId: string;
+      status: AgentStatus;
+      note?: string;
+      warnings?: string[];
+    }
   | { ok: false; message: string };
 export interface SpawnPort {
   spawn(callerId: string, args: SpawnArgs, toolUseId: string | null): Promise<SpawnResult>;
@@ -28,17 +37,19 @@ export function spawnAgentTool(d: {
         "spawn_agent",
         {
           description:
-            "Spawn a fresh agent from one of your templates for one phase of work. Returns at once: the agent reports to you, its text reaches you as updates, and you can message it. Its first message is your prompt, so make the brief complete and name, by slug, the collaborators it will work with.",
+            "Spawn a fresh agent from one of your templates for one phase of work. Returns at once: the agent reports to you, its text reaches you as updates, and you can message it. Its first message is your prompt, so make the brief complete and name, by mention, the collaborators it will work with.",
           inputSchema: spawnAgentToolSchema(d.templates),
         },
         async (args: SpawnArgs, tctx: ToolContext) => {
           const r = await d.spawn.spawn(callerOf(tctx), args, toolUseIdOf(tctx));
           if (!r.ok) return toolError(r.message);
           return textResult({
-            slug: r.slug,
+            handle: r.handle,
+            mention: r.mention,
             agent_id: r.agentId,
             status: r.status,
             ...(r.note ? { note: r.note } : {}),
+            ...(r.warnings?.length ? { warnings: r.warnings } : {}),
           });
         },
       );

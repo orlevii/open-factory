@@ -7,7 +7,7 @@ import { localTransport } from "./local.ts";
 
 const spec: AgentRuntimeSpec = {
   agentId: "a1",
-  slug: "dev",
+  ref: "dev",
   cwd: mkdtempSync(path.join(tmpdir(), "agent-")),
   env: { PATH: process.env.PATH ?? "" },
   claudeBin: "/bin/sh",

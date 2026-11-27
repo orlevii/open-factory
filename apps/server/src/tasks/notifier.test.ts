@@ -4,8 +4,8 @@ import { type PlanInput, type PlannedRow, plan } from "./notifier.ts";
 import type { Actor } from "./permission.ts";
 
 const labels: Record<string, string> = { dev: "@dev", qa: "@qa", lead: "@lead" };
-const agent = (id: string): Actor => ({ kind: "agent", agentId: id, slug: id });
-const or: Actor = { kind: "user", userId: "or", handle: "or" };
+const agent = (id: string): Actor => ({ kind: "agent", id, ref: `ref-${id}`, handle: id });
+const or: Actor = { kind: "human", id: "or", ref: "ref-or", handle: "or" };
 type Snap = { status: TaskStatus; assigneeId: string | null; title: string; body: string };
 const snap = (o: Partial<Snap> = {}): Snap => ({
   status: "open",
@@ -17,14 +17,14 @@ const snap = (o: Partial<Snap> = {}): Snap => ({
 
 function input(o: Partial<PlanInput> & { actor: Actor }): PlanInput {
   return {
-    actorLabel: o.actor.kind === "agent" ? `@${o.actor.slug}` : `@${o.actor.handle}`,
+    actorLabel: `@${o.actor.handle}`,
     live: new Set(["dev", "qa", "lead"]),
     task: {
       id: "t1",
       key: "T-1",
       title: "Plan",
       body: "brief",
-      creator: { agentId: "lead" },
+      creator: { kind: "agent", id: "lead" },
       creatorLabel: "@lead",
       bodyAuthorLabel: "@lead",
       deps: [],
@@ -39,7 +39,7 @@ function input(o: Partial<PlanInput> & { actor: Actor }): PlanInput {
   };
 }
 const shape = (rows: PlannedRow[]) =>
-  rows.map((r) => [r.kind, "agentId" in r.to ? r.to.agentId : `u:${r.to.userId}`, r.notice]);
+  rows.map((r) => [r.kind, r.to.kind === "agent" ? r.to.id : `u:${r.to.id}`, r.notice]);
 
 test("1 create with an assignee", () => {
   const rows = plan(input({ actor: or, before: null }));
@@ -71,7 +71,11 @@ test("6 done by the human creator tells the assignee", () => {
     input({
       actor: or,
       after: snap({ status: "done" }),
-      task: { ...input({ actor: or }).task, creator: { userId: "or" }, creatorLabel: "@or" },
+      task: {
+        ...input({ actor: or }).task,
+        creator: { kind: "human", id: "or" },
+        creatorLabel: "@or",
+      },
     }),
   );
   expect(shape(rows)).toEqual([["task_update", "dev", "done"]]);
@@ -82,7 +86,11 @@ test("7 done with a human creator: an inbox task_event", () => {
     input({
       actor: agent("dev"),
       after: snap({ status: "done" }),
-      task: { ...input({ actor: or }).task, creator: { userId: "u2" }, creatorLabel: "@sam" },
+      task: {
+        ...input({ actor: or }).task,
+        creator: { kind: "human", id: "u2" },
+        creatorLabel: "@sam",
+      },
     }),
   );
   expect(shape(rows)).toEqual([["task_update", "u:u2", "done"]]);
@@ -162,7 +170,7 @@ test("14 an ended assignee gets nothing", () => {
         actor: or,
         live: new Set(["qa"]),
         after: snap({ status: "done" }),
-        task: { ...input({ actor: or }).task, creator: { userId: "or" } },
+        task: { ...input({ actor: or }).task, creator: { kind: "human", id: "or" } },
       }),
     ),
   ).toEqual([]);

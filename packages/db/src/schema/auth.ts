@@ -1,35 +1,22 @@
-import {
-  type AnyPgColumn,
-  boolean,
-  index,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-} from "drizzle-orm/pg-core";
-import { handles } from "./handles.ts";
+import { type AnyPgColumn, boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { principals } from "./principals.ts";
 
-export const users = pgTable(
-  "users",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    email: text("email").notNull().unique(),
-    emailVerified: boolean("email_verified").notNull().default(false),
-    image: text("image"),
-    handle: text("handle")
-      .notNull()
-      .references(() => handles.handle),
-    disabledAt: timestamp("disabled_at", { withTimezone: true }),
-    disabledBy: text("disabled_by").references((): AnyPgColumn => users.id),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at")
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (t) => [uniqueIndex("users_handle_unique").on(t.handle)],
-);
+export const users = pgTable("users", {
+  id: text("id")
+    .primaryKey()
+    .references(() => principals.id),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  image: text("image"),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  disabledBy: text("disabled_by").references((): AnyPgColumn => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
 
 export const sessions = pgTable(
   "sessions",

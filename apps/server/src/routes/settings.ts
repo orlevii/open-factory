@@ -61,9 +61,9 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
   const s = app.factorySettings.get();
   const [editor] = s.updatedBy
     ? await db
-        .select({ handle: schema.users.handle })
-        .from(schema.users)
-        .where(eq(schema.users.id, s.updatedBy))
+        .select({ handle: schema.principals.handle })
+        .from(schema.principals)
+        .where(eq(schema.principals.id, s.updatedBy))
     : [];
   return {
     warmWindowMinutes: s.warmWindowMinutes,

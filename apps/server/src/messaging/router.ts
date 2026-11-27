@@ -1,16 +1,25 @@
-import { type AgentRow, type Db, schema } from "@open-factory/db";
+import { type Db, schema } from "@open-factory/db";
 import {
   type AgentStatus,
   MAX_BODY_BYTES,
   type QueueItem,
   type RefusalCode,
 } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { agentMentionOf, unknownRefError } from "@open-factory/shared/mentions";
+import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
+import {
+  type AgentRecord,
+  agentRecords,
+  principalById,
+  principalsByIds,
+} from "../principals/principal-store.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import {
   attachmentOf,
   bodyWithAttachments,
@@ -23,7 +32,6 @@ import type { Forward } from "./forwarder.ts";
 import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "./loop-guard.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { type PeerLeft, peerBody } from "./peer-body.ts";
-import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
 
 export type Sender =
   | { agentId: string; toolUseId?: string | null }
@@ -47,7 +55,8 @@ export type RecipientResult =
 
 /**
  * What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. `by` (I7 §8.2) is the
- * `@slug` of an agent actor, set only when one caused the change; a terminator's `by` is its own field.
+ * `<@ref>` mention of an agent actor, set only when one caused the change; a terminator's `by` is its own field, a mention or
+ * `@factory`. `moved.to` is the new manager's mention.
  */
 export type PeerChange =
   | { kind: "joined"; by?: string }
@@ -76,8 +85,10 @@ type Target = {
   to: string;
   key: string;
   refused?: RecipientResult;
-  agent?: AgentRow;
+  agent?: AgentRecord;
   user?: { userId: string; handle: string };
+  /** The plain-mention warning, when the recipient was named without a mention. */
+  warning?: string;
 };
 
 /**
@@ -124,7 +135,7 @@ export class Router {
   /**
    * One message to a list of handles (spec §4.4), from an agent (`send_message`) or a human (the REST route, which
    * addresses agents only). Each target is resolved and de-duplicated by principal and succeeds or is refused alone;
-   * every accepted row is written in one transaction with the same `recipients` (the accepted list, in order). After
+   * every accepted row is written in one transaction with the same `recipient_ids` (the accepted list, in order). After
    * the commit an agent row is handed over (awaited for a human sender, whose start failure then is that recipient's
    * `start_failed`; enqueued for an agent sender), and a human recipient's inbox is told. Results follow the input.
    */
@@ -134,6 +145,19 @@ export class Router {
     body: string,
     urgent: boolean,
     opts: { clientMessageId?: string; attachments?: string[] } = {},
+  ): Promise<{ results: RecipientResult[]; warnings: string[] }> {
+    const warnings: string[] = [];
+    const { results } = await this.sendTo(from, to, body, urgent, opts, warnings);
+    return { results, warnings: [...new Set(warnings)] };
+  }
+
+  private async sendTo(
+    from: Sender,
+    to: string[],
+    body: string,
+    urgent: boolean,
+    opts: { clientMessageId?: string; attachments?: string[] },
+    warnings: string[],
   ): Promise<{ results: RecipientResult[] }> {
     const { clientMessageId } = opts;
     // U3 §13.2: a repeat of an earlier send answers with the original, for every row, whatever happened since (the
@@ -152,7 +176,17 @@ export class Router {
           ),
         };
     }
+    // Spec §4.3: every mention in the body is stored as `<@ref>`. An unknown ref throws before anything is written.
+    const mentioned = await resolveField(
+      this.d.db,
+      body,
+      "userId" in from ? "human" : "agent",
+      "body",
+      warnings,
+    );
+    body = mentioned.text;
     const targets = await this.resolveTargets(from, to);
+    for (const t of targets) if (t.warning) warnings.push(t.warning);
     const accepted = targets.filter((t) => !t.refused);
     const ids = opts.attachments ?? [];
     if (ids.length && (accepted.length !== 1 || !accepted[0]?.agent))
@@ -186,7 +220,9 @@ export class Router {
         ),
       };
 
-    const recipients = accepted.map((t) => t.to);
+    const recipientIds = accepted.flatMap((t) =>
+      t.agent ? [t.agent.id] : t.user ? [t.user.userId] : [],
+    );
     type Written = {
       target: Target;
       row?: PendingRow;
@@ -211,7 +247,7 @@ export class Router {
                 kind: "message",
                 fromAgentId: (from as { agentId: string }).agentId,
                 to: { userId: target.user.userId },
-                recipients,
+                recipientIds,
                 body: fullBody,
                 urgent,
                 fromToolUseId: (from as { toolUseId?: string | null }).toolUseId ?? null,
@@ -221,14 +257,14 @@ export class Router {
             out.push({ target, humanRowId: row.id, created: true });
             continue;
           }
-          const agent = target.agent as AgentRow;
+          const agent = target.agent as AgentRecord;
           if ("userId" in from) {
             const made = clientMessageId
               ? await this.d.store.createClientMessage(
                   {
                     fromUserId: from.userId,
                     toAgentId: agent.id,
-                    recipients,
+                    recipientIds,
                     body: fullBody,
                     urgent,
                     clientMessageId,
@@ -241,7 +277,7 @@ export class Router {
                     {
                       from: { userId: from.userId },
                       toAgentId: agent.id,
-                      recipients,
+                      recipientIds,
                       body: fullBody,
                       urgent,
                       attachments,
@@ -263,7 +299,7 @@ export class Router {
               {
                 from: { agentId: from.agentId },
                 toAgentId: agent.id,
-                recipients,
+                recipientIds,
                 body: fullBody,
                 urgent,
                 fromToolUseId: from.toolUseId ?? null,
@@ -300,16 +336,13 @@ export class Router {
         if (w.created && w.target.agent)
           this.d.bus.publishToUser(from.userId, {
             type: "chat_changed",
-            agent: w.target.agent.slug,
+            agent: await this.d.store.refOfAgent(w.target.agent.id),
           });
     } else {
-      const me = await this.d.store.agentById(from.agentId);
+      const meRef = await this.d.store.refOfAgent(from.agentId);
       for (const w of written)
-        if (me && w.target.user)
-          this.d.bus.publishToUser(w.target.user.userId, {
-            type: "chat_changed",
-            agent: me.slug,
-          });
+        if (w.target.user)
+          this.d.bus.publishToUser(w.target.user.userId, { type: "chat_changed", agent: meRef });
     }
 
     const outcome = new Map<Target, RecipientResult>();
@@ -340,7 +373,7 @@ export class Router {
       // Only the request whose insert wrote the row hands it to the runtime; a concurrent repeat answers from the row.
       await Promise.all(
         agentRows.map(async (w) => {
-          const agent = w.target.agent as AgentRow;
+          const agent = w.target.agent as AgentRecord;
           const row = w.row as PendingRow;
           try {
             outcome.set(
@@ -349,9 +382,12 @@ export class Router {
             );
           } catch (e) {
             // Every row is committed: one recipient's failure (or the shutdown) is that recipient's result, not the call's.
-            this.d.log.error({ err: e, agent: agent.slug, message: row.id }, "handing over failed");
+            this.d.log.error(
+              { err: e, agent: agent.handle, message: row.id },
+              "handing over failed",
+            );
             outcome.set(w.target, {
-              to: `@${agent.slug}`,
+              to: await this.d.store.agentMention(agent.id),
               kind: "agent",
               status: "start_failed",
               id: row.id,
@@ -364,12 +400,24 @@ export class Router {
     return { results: targets.map((t) => t.refused ?? (outcome.get(t) as RecipientResult)) };
   }
 
-  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`) is dropped. */
+  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`, its mention) is dropped. */
   private async resolveTargets(from: Sender, to: string[]): Promise<Target[]> {
+    const resolved = await resolveArgs(this.d.db, to);
+    const ids = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
+    const [agentRows, userRows] = ids.length
+      ? await Promise.all([
+          agentRecords(this.d.db).where(inArray(schema.agents.id, ids)),
+          this.d.db
+            .select({ id: schema.users.id, disabledAt: schema.users.disabledAt })
+            .from(schema.users)
+            .where(inArray(schema.users.id, ids)),
+        ])
+      : [[], []];
+    const agentById = new Map(agentRows.map((a) => [a.id, a]));
+    const userById = new Map(userRows.map((u) => [u.id, u]));
     const targets: Target[] = [];
     const seen = new Set<string>();
-    for (const raw of to) {
-      const r = await resolveName(this.d.db, raw);
+    for (const r of resolved) {
       let t: Target;
       switch (r.kind) {
         case "channel":
@@ -394,6 +442,15 @@ export class Router {
           };
           break;
         }
+        case "unknown_ref": {
+          const label = `<@${r.ref}>`;
+          t = {
+            to: label,
+            key: label,
+            refused: refusal(label, "not_found", unknownRefError(r.ref)),
+          };
+          break;
+        }
         case "none": {
           const label = `@${r.name}`;
           t = {
@@ -407,37 +464,49 @@ export class Router {
           };
           break;
         }
-        case "user": {
-          const label = `@${r.handle}`;
-          t = { to: label, key: `user:${r.userId}`, user: r };
-          if ("userId" in from)
-            t.refused = refusal(
-              label,
-              "human",
-              `${label} is a person; you can message agents only.`,
-            );
-          else if (r.disabled)
-            t.refused = refusal(label, "disabled", `${label}'s account is disabled.`);
-          break;
-        }
-        case "agent": {
-          const a = r.agent;
-          const label = `@${a.slug}`;
-          t = { to: label, key: `agent:${a.id}`, agent: a };
-          if ("agentId" in from && a.id === from.agentId)
-            t.refused = refusal(label, "self", "You can't message yourself.");
-          else if (a.archivedAt)
-            t.refused = refusal(
-              label,
-              "archived",
-              `${label} is archived and can't receive messages.`,
-            );
-          else if (a.terminatedAt)
-            t.refused = refusal(
-              label,
-              "terminated",
-              `${label} was terminated and can't receive messages.`,
-            );
+        case "principal": {
+          const a = agentById.get(r.p.id);
+          const u = userById.get(r.p.id);
+          const label = agentMentionOf(r.p);
+          const at = `@${r.p.handle}`; // the sentences stay `@handle`
+          if (a) {
+            t = { to: label, key: `agent:${a.id}`, agent: a };
+            if ("agentId" in from && a.id === from.agentId)
+              t.refused = refusal(label, "self", "You can't message yourself.");
+            else if (a.archivedAt)
+              t.refused = refusal(
+                label,
+                "archived",
+                `${at} is archived and can't receive messages.`,
+              );
+            else if (a.terminatedAt)
+              t.refused = refusal(
+                label,
+                "terminated",
+                `${at} was terminated and can't receive messages.`,
+              );
+          } else if (u) {
+            t = { to: label, key: `user:${u.id}`, user: { userId: u.id, handle: r.p.handle } };
+            if ("userId" in from)
+              t.refused = refusal(
+                label,
+                "human",
+                `${at} is a person; you can message agents only.`,
+              );
+            else if (u.disabledAt)
+              t.refused = refusal(label, "disabled", `${at}'s account is disabled.`);
+          } else {
+            t = {
+              to: label,
+              key: label,
+              refused: refusal(
+                label,
+                "not_found",
+                `No agent or user named '${r.p.handle}'. Call list_peers to see who you can message.`,
+              ),
+            };
+          }
+          if (r.warning) t.warning = r.warning;
           break;
         }
       }
@@ -449,8 +518,12 @@ export class Router {
   }
 
   /** One committed agent row's hand-off and its result. The row is durable, so nothing here fails the other recipients. */
-  private async handOver(from: Sender, agent: AgentRow, row: PendingRow): Promise<RecipientResult> {
-    const to = `@${agent.slug}`;
+  private async handOver(
+    from: Sender,
+    agent: AgentRecord,
+    row: PendingRow,
+  ): Promise<RecipientResult> {
+    const to = await this.d.store.agentMention(agent.id);
     if ("userId" in from) {
       if (this.closed) throw new Error(SHUTTING_DOWN);
       const status = await this.statusOf(agent.id);
@@ -485,7 +558,7 @@ export class Router {
     // the row stays pending (runtimes.deliver logs, never throws).
     const status = await this.statusOf(agent.id).catch((err: unknown) => {
       this.d.log.error(
-        { err, agent: agent.slug, message: row.id },
+        { err, agent: agent.handle, message: row.id },
         "loading the recipient failed; the message stays pending",
       );
       return this.d.runtimes.statusOf(agent);
@@ -505,11 +578,11 @@ export class Router {
   /** U3 §13.2: one earlier row's original result; nothing is queued or delivered again. */
   private async repeated(row: PendingRow): Promise<RecipientResult> {
     await this.booted;
-    const agent = row.toAgentId ? await this.d.store.agentById(row.toAgentId) : undefined;
+    const agent = row.toId ? await this.d.store.agentById(row.toId) : undefined;
     if (!agent) throw new Error(`message ${row.id} has no agent recipient`);
     const rt = await this.d.runtimes.load(agent.id);
     return {
-      to: `@${agent.slug}`,
+      to: await this.d.store.agentMention(agent.id),
       kind: "agent",
       status: "queued",
       recipient_status: this.d.runtimes.statusOf(agent),
@@ -555,11 +628,12 @@ export class Router {
     f: Forward,
     tx: Tx,
   ): Promise<{ update?: PendingRow; userIds?: string[] } | undefined> {
-    if (agent.reportsTo) {
+    const manager = await principalById(tx, agent.reportsTo);
+    if (manager?.kind === "agent") {
       const update = await this.d.store.createOrgRow(
         {
           kind: "member_update",
-          toAgentId: agent.reportsTo,
+          toAgentId: manager.id,
           ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
           ...(f.re ? { re: f.re } : {}),
           body: f.body,
@@ -568,8 +642,8 @@ export class Router {
       );
       return { update };
     }
-    if (!agent.reportsToUser) return undefined;
-    const to = { userId: agent.reportsToUser };
+    if (!manager) return undefined;
+    const to = { userId: manager.id };
     const { userIds } =
       f.fact === "errored"
         ? await this.d.store.createHumanMessage(
@@ -642,6 +716,8 @@ export class Router {
   ): Promise<PendingRow[]> {
     const subject = await this.d.store.agentById(subjectId, tx);
     if (!subject) return [];
+    const subjectRef = (await principalById(tx, subjectId))?.ref;
+    if (!subjectRef) throw new Error(`No principal for agent ${subjectId}`);
     const rows: PendingRow[] = [];
     if (change.kind === "left" || change.kind === "moved") {
       const left: PeerLeft =
@@ -653,7 +729,7 @@ export class Router {
       rows.push(
         ...(await this.notify(
           tx,
-          subject,
+          { id: subjectId, ref: subjectRef, displayName: subject.displayName },
           "peer_left",
           before.peerIds,
           o.excludeManager ? null : before.managerId,
@@ -667,7 +743,7 @@ export class Router {
       rows.push(
         ...(await this.notify(
           tx,
-          subject,
+          { id: subjectId, ref: subjectRef, displayName: subject.displayName },
           "peer_joined",
           now.peers.map((p) => p.id),
           o.excludeManager ? null : (now.manager?.id ?? null),
@@ -684,7 +760,7 @@ export class Router {
    * agent sender), once boot is done; the hand-off wakes it `spawned` and is enqueued, never awaited. Shutting down
    * (or before a boot that failed): the row stays pending for the next boot. Never throws: the child exists.
    */
-  async handOffBrief(row: PendingRow, child: AgentRow): Promise<AgentStatus> {
+  async handOffBrief(row: PendingRow, child: AgentRecord): Promise<AgentStatus> {
     try {
       await this.booted;
     } catch {
@@ -693,7 +769,7 @@ export class Router {
     if (this.closed) return this.d.runtimes.statusOf(child);
     const status = await this.statusOf(child.id).catch((err: unknown) => {
       this.d.log.error(
-        { err, agent: child.slug, message: row.id },
+        { err, agent: child.handle, message: row.id },
         "loading the spawned agent failed; its brief stays pending",
       );
       return this.d.runtimes.statusOf(child);
@@ -736,7 +812,7 @@ export class Router {
 
   private async notify(
     tx: Tx,
-    subject: { id: string; slug: string; displayName: string },
+    subject: { id: string; ref: string; displayName: string },
     kind: "peer_joined" | "peer_left",
     peerIds: string[],
     managerId: string | null,
@@ -748,10 +824,16 @@ export class Router {
       relation: "peer",
     }));
     if (managerId) targets.push({ id: managerId, relation: "report" });
+    const refs = await principalsByIds(
+      tx,
+      targets.map((t) => t.id),
+    );
     const rows: PendingRow[] = [];
     for (const t of targets) {
       const to = await this.d.store.agentById(t.id, tx);
       if (!to || to.archivedAt || to.terminatedAt || to.id === subject.id) continue;
+      const recipientRef = refs.get(to.id)?.ref;
+      if (!recipientRef) throw new Error(`No principal for agent ${to.id}`);
       rows.push(
         await this.d.store.createOrgRow(
           {
@@ -765,7 +847,7 @@ export class Router {
               left
                 ? { kind, left, ...(by ? { by } : {}) }
                 : { kind: "peer_joined", ...(by ? { by } : {}) },
-              to.slug,
+              recipientRef,
             ),
           },
           tx,
@@ -824,8 +906,8 @@ export class Router {
   }
 }
 
-/** How a result names a raw recipient: a channel as typed, anything else as `@handle` (one leading `@` dropped). */
+/** How a result names a raw recipient: a channel or a mention as typed, anything else as `@handle` (one leading `@` dropped). */
 function recipientLabel(raw: string): string {
   const t = raw.trim();
-  return t.startsWith("#") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;
+  return t.startsWith("#") || t.startsWith("<@") ? t : `@${t.startsWith("@") ? t.slice(1) : t}`;
 }

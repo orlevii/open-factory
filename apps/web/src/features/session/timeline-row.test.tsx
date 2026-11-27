@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { longPress } from "@/test/long-press";
+import { refFor } from "@/test/refs";
 import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { ConfigChangedLine } from "./config-changed-line";
 import { groupWork, mergeFailures } from "./display-passes";
@@ -37,7 +38,7 @@ function lines(events: AnyEvent[], spawned = false) {
       {rows.map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             spawned={spawned}
             row={row}
             expanded={new Set()}
@@ -216,7 +217,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
           about: "tech-lead-ab12",
           body: "IGNORED",
           subject: {
-            slug: "tech-lead-ab12",
+            handle: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             relation: "peer",
             left: { reason: "terminated", by: "@or" },
@@ -231,7 +232,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
           about: "dev-cd34",
           body: "IGNORED",
           subject: {
-            slug: "dev-cd34",
+            handle: "dev-cd34",
             displayName: "Dev · cd34",
             relation: "peer",
             left: { reason: "terminated", by: "@factory" },
@@ -257,7 +258,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
 const footerLine = (over: Partial<Extract<import("./rows").Row, { kind: "turn_footer" }>> = {}) => {
   const { container } = render(
     <TimelineRow
-      slug="dev"
+      agentRef={refFor("dev")}
       spawned={false}
       row={{ kind: "turn_footer", seq: 1, key: "1", durationMs: 4000, costUsd: 0, ...over }}
       expanded={new Set()}
@@ -303,7 +304,7 @@ test("a merged failure says how many times and when the last one was", () => {
       {[...today, ...earlier].map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -327,7 +328,8 @@ test("a merged failure says how many times and when the last one was", () => {
 // ---- Speaker lines and spacing (U3 §7.1, §7.2) ----
 const speakers = buildSpeakerIndex({
   sessionAgent: {
-    slug: "dev",
+    ref: refFor("dev"),
+    handle: "dev",
     displayName: "Developer",
     template: "dev",
     kind: "persistent",
@@ -370,7 +372,7 @@ test("agent text shows the session agent's speaker line only on head rows, its b
       {rows.map((row) => (
         <div key={row.key} data-test-row={row.key}>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -405,7 +407,7 @@ function toolLine(name: string, input: unknown, content?: string, open = false) 
   return render(
     <div>
       <TimelineRow
-        slug="dev"
+        agentRef={refFor("dev")}
         row={row}
         expanded={new Set(open ? [row.key] : [])}
         toggle={() => {}}
@@ -462,7 +464,7 @@ const rd = (seq: number) => call(seq, "Read", { file_path: `f${seq}.ts` });
 
 function timeline(rows: Row[], extra: Partial<Parameters<typeof Timeline>[0]> = {}) {
   const props = {
-    slug: "dev",
+    agentRef: refFor("dev"),
     failedIds: new Set<string>(),
     interruptedEnds: new Set<number>(),
     hasMoreBefore: false,
@@ -570,7 +572,7 @@ function renderRows(events: AnyEvent[]) {
       {rows.map((row) => (
         <div key={row.key} data-test-row={row.kind}>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -681,7 +683,7 @@ function pressTimeline(extra: Row[] = []) {
   render(
     <SpeakerContext value={speakers}>
       <Timeline
-        slug="dev"
+        agentRef={refFor("dev")}
         rows={[...rows, ...extra]}
         failedIds={new Set()}
         interruptedEnds={new Set()}
@@ -795,7 +797,7 @@ test("chrome outside a timeline row (no menu there) is not a long-press region",
       {rows.map((row) => (
         <TimelineRow
           key={row.key}
-          slug="dev"
+          agentRef={refFor("dev")}
           row={row}
           expanded={new Set()}
           toggle={() => {}}

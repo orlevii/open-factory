@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { fileHash, type TemplateChange } from "../templates/template-index.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -93,18 +93,18 @@ test("GET returns the doc without the derived key, hashes, local skills and coun
 
 test("GET counts live and archived agents; only an invalid template has agents that can't start", async () => {
   await reset();
-  await h.seedAgent({ slug: "ana" });
-  await h.seedAgent({ slug: "bob" });
-  await h.seedAgent({ slug: "cy" });
+  await h.seedAgent({ handle: "ana" });
+  await h.seedAgent({ handle: "bob" });
+  await h.seedAgent({ handle: "cy" });
   await h.db.update(schema.agents).set({ template: "dev" });
   await h.db
     .update(schema.agents)
     .set({ archivedAt: new Date() })
-    .where(eq(schema.agents.slug, "cy"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"cy"})`));
   await h.db
     .update(schema.agents)
     .set({ config: { bogus: SECRET } as never })
-    .where(eq(schema.agents.slug, "bob"));
+    .where(eq(schema.agents.id, sql`(select id from principals where handle = ${"bob"})`));
   const ok = await get();
   expect(ok.agents).toEqual({ live: 2, archived: 1, cantStart: 0 });
   writeFileSync(file("settings.json"), "{");
@@ -311,7 +311,7 @@ test("one save fires the template change once, with the caller's handle, and the
   await vi.waitFor(() => expect(changes.length).toBe(1));
   await settle();
   expect(changes.length).toBe(1);
-  expect(changes[0]).toMatchObject({ name: "dev", by: "@or" });
+  expect(changes[0]).toMatchObject({ name: "dev", by: expect.stringMatching(/^<@[0-9a-z]{8}>$/) });
 });
 
 test("a save that changes nothing writes nothing", async () => {

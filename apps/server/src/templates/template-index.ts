@@ -16,7 +16,7 @@ import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
   type Actor,
-  actorBy,
+  actorMention,
   agentPolicyIssues,
   CONFIG_FILES,
   type ConfigDoc,
@@ -389,8 +389,9 @@ export class TemplateIndex {
       }),
     );
     const agents = await this.db
-      .select({ slug: schema.agents.slug })
+      .select({ handle: schema.principals.handle })
       .from(schema.agents)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(and(eq(schema.agents.template, name), isNull(schema.agents.archivedAt)));
     return {
       name,
@@ -398,7 +399,7 @@ export class TemplateIndex {
       ...(row.config ? { config: row.config } : {}),
       files,
       issues: row.issues,
-      agents: agents.map((a) => a.slug).sort(),
+      agents: agents.map((a) => a.handle).sort(),
       avatar: await avatarStat(row.path, this.dir),
     };
   }
@@ -431,19 +432,20 @@ export class TemplateIndex {
       ),
     ) as Record<TemplateFile, { content: string; hash: string } | { error: string } | null>;
     const users = await this.db
-      .select({ slug: schema.agents.slug, archivedAt: schema.agents.archivedAt })
+      .select({ handle: schema.principals.handle, archivedAt: schema.agents.archivedAt })
       .from(schema.agents)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
       .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)));
-    const slugs = (archived: boolean) =>
+    const handles = (archived: boolean) =>
       users
         .filter((u) => (u.archivedAt !== null) === archived)
-        .map((u) => u.slug)
+        .map((u) => u.handle)
         .sort();
     return {
       runtime: row.config?.runtime ?? null,
       files,
       issues: row.issues,
-      agents: { live: slugs(false), archived: slugs(true) },
+      agents: { live: handles(false), archived: handles(true) },
     };
   }
 
@@ -479,7 +481,7 @@ export class TemplateIndex {
       const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
       await writeFile(tmp, content);
       await rename(tmp, target);
-      const full = await this.indexLocked(name, ctx, actorBy(actor), actor);
+      const full = await this.indexLocked(name, ctx, actorMention(actor), actor);
       return { hash: fileHash(Buffer.from(content)), issues: full.row.issues };
     });
   }
@@ -703,9 +705,12 @@ export class TemplateIndex {
         await Promise.all(temps.map(([tmp]) => rm(tmp, { force: true })));
       }
       // Even after a failed write the index must match the disk, and the author is this caller.
-      const row = await this.indexLocked(name, await this.context(), actorBy(actor), actor).catch(
-        () => undefined,
-      );
+      const row = await this.indexLocked(
+        name,
+        await this.context(),
+        actorMention(actor),
+        actor,
+      ).catch(() => undefined);
       if (failure) throw failure;
       const after = { ...hashes };
       for (const [file, content] of Object.entries(next))
@@ -754,7 +759,7 @@ export class TemplateIndex {
         await rm(dir, { recursive: true, force: true });
         throw e;
       }
-      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      const full = await this.indexLocked(b.name, await this.context(), actorMention(actor), actor);
       return { issues: full.row.issues };
     });
   }
@@ -806,7 +811,7 @@ export class TemplateIndex {
         await rm(dir, { recursive: true, force: true });
         throw e;
       }
-      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      const full = await this.indexLocked(b.name, await this.context(), actorMention(actor), actor);
       return { issues: full.row.issues };
     });
   }
@@ -890,8 +895,9 @@ export class TemplateIndex {
         throw notFound(name);
       }
       const users = await this.db
-        .select({ slug: schema.agents.slug, archived: isNotNull(schema.agents.archivedAt) })
+        .select({ handle: schema.principals.handle, archived: isNotNull(schema.agents.archivedAt) })
         .from(schema.agents)
+        .innerJoin(schema.principals, eq(schema.principals.id, schema.agents.id))
         .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)))
         .orderBy(sql`${schema.agents.archivedAt} IS NOT NULL`, asc(schema.agents.createdAt));
       const first = users[0];
@@ -902,7 +908,7 @@ export class TemplateIndex {
         throw new ApiError(
           409,
           "template_in_use",
-          `@${first.slug}${more}${arch} ${users.length === 1 ? "uses" : "use"} this template. Archive and recreate them first.`,
+          `@${first.handle}${more}${arch} ${users.length === 1 ? "uses" : "use"} this template. Archive and recreate them first.`,
         );
       }
       if (st.isSymbolicLink()) await unlink(dir);

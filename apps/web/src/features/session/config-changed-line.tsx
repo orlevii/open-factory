@@ -1,5 +1,6 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
+import { InlineMentions } from "@/components/mention/inline-mentions";
 import { ShowAll } from "./message-block";
 
 /** More lines than this get a Show all: the clamp itself is CSS, so nothing is measured in JS. */
@@ -27,7 +28,8 @@ export function ConfigChangedLine({
       <p className="flex items-center gap-1.5 [&_svg]:size-3.5 [&_svg]:shrink-0">
         <SlidersHorizontal aria-hidden="true" />
         <span className="min-w-0 [overflow-wrap:anywhere]">
-          Configuration changed by {by} · {n} {n === 1 ? "change" : "changes"}
+          Configuration changed by <InlineMentions text={by} /> · {n}{" "}
+          {n === 1 ? "change" : "changes"}
         </span>
       </p>
       {n > 0 && (

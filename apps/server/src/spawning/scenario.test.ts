@@ -8,8 +8,8 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
-import { seedTestUser } from "../test/handles.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { agentRefOf, agentRowOf, makeTestApp, runtimeOf } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>> | undefined;
 afterEach(async () => {
@@ -17,6 +17,8 @@ afterEach(async () => {
   t = undefined;
 });
 
+/** An envelope sender is a mention; the scenario reads its handle. */
+const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 const writeTemplate = (home: string, name: string, extra = "") => {
   const d = path.join(home, "templates", name);
   mkdirSync(d, { recursive: true });
@@ -41,7 +43,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   const h = t;
-  await seedTestUser(h.db);
+  await seedTestUser(h.db, "or");
   const url = `http://127.0.0.1:${h.app.agentListener.port}`;
 
   // The project is a real git repo with one commit.
@@ -68,53 +70,52 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   await h.app.agents.create(
     {
       template: "lead",
-      slug: "lead",
+      handle: "lead",
       displayName: "Lead",
       description: "",
       reportsTo: "or",
       credential: "scn-cred",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
 
-  const procOf = (slug: string) => {
-    const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
-    if (!p) throw new Error(`${slug} not started`);
+  const procOf = (handle: string) => {
+    const p = driver.startsOf(handle).at(-1);
+    if (!p) throw new Error(`${handle} not started`);
     return p;
   };
-  const tokenOf = (slug: string) => procOf(slug).spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
-  const settle = async (slug: string) =>
-    void (await (await h.app.runtimes.bySlug(slug))?.settled());
-  const call = async (slug: string, name: string, args: object) => {
-    const r = await callTool(url, tokenOf(slug), name, args);
+  const tokenOf = (handle: string) => procOf(handle).spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
+  const settle = async (handle: string) => void (await (await runtimeOf(h.app, handle))?.settled());
+  const call = async (handle: string, name: string, args: object) => {
+    const r = await callTool(url, tokenOf(handle), name, args);
     return { isError: r.isError ?? false, out: JSON.parse(r.content[0]?.text ?? "null") };
   };
   /** The agent's part: opens its turn, says `text`; `endTurn` closes it. */
   const open = (p: FakeProcess, sessionId: string) => p.emit(ev.session(sessionId), ev.turn());
-  const close = async (slug: string, p: FakeProcess, text?: string) => {
+  const close = async (handle: string, p: FakeProcess, text?: string) => {
     if (text) p.emit(ev.text(text));
     p.emit(ev.usage(), ev.end());
-    await settle(slug);
+    await settle(handle);
   };
   /** A batch the factory wrote starts a turn when the process says so, and the turn ends. */
-  const turn = async (slug: string, p: FakeProcess, text?: string) => {
+  const turn = async (handle: string, p: FakeProcess, text?: string) => {
     p.emit(ev.turn());
-    await close(slug, p, text);
+    await close(handle, p, text);
   };
-  const batches = async (slug: string) => {
-    const row = await h.app.store.agentBySlug(slug);
+  const batches = async (handle: string) => {
+    const row = await agentRowOf(h.app, handle);
     return (await h.app.store.after(row?.id ?? "", 0, 1000)).flatMap((e) =>
       e.event.type === "message_in" ? [e.event.messages] : [],
     );
   };
-  const rows = async (slug: string, kind: string) => {
-    const row = await h.app.store.agentBySlug(slug);
+  const rows = async (handle: string, kind: string) => {
+    const row = await agentRowOf(h.app, handle);
     return h.db
       .select()
       .from(schema.messages)
-      .where(eq(schema.messages.toAgentId, row?.id ?? ""))
+      .where(eq(schema.messages.toId, row?.id ?? ""))
       .then((r) => r.filter((m) => m.kind === kind));
   };
 
@@ -124,7 +125,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     method: "POST",
     url: "/api/messages",
     headers: { cookie },
-    payload: { to: ["lead"], body: "start" },
+    payload: { to: [await agentRefOf(h.app, "lead")], body: "start" },
   });
   expect(sent.statusCode).toBeLessThan(300);
   const leadProc = procOf("lead");
@@ -142,12 +143,12 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     description: "Reviews the plan",
     prompt: "Review @tech-lead-t1's plan.",
   });
-  expect(tl).toMatchObject({ isError: false, out: { slug: "tech-lead-t1" } });
-  expect(rv).toMatchObject({ isError: false, out: { slug: "proxy-reviewer-r1" } });
+  expect(tl).toMatchObject({ isError: false, out: { handle: "tech-lead-t1" } });
+  expect(rv).toMatchObject({ isError: false, out: { handle: "proxy-reviewer-r1" } });
   // The first child hears (held) of the second joining; the second finds the first already there.
-  const joined = async (slug: string, about: string) => {
-    const subject = await h.app.store.agentBySlug(about);
-    return (await rows(slug, "peer_joined")).filter((m) => m.subjectAgentId === subject?.id);
+  const joined = async (handle: string, about: string) => {
+    const subject = await agentRowOf(h.app, about);
+    return (await rows(handle, "peer_joined")).filter((m) => m.subjectAgentId === subject?.id);
   };
   expect(await joined("tech-lead-t1", "proxy-reviewer-r1")).toHaveLength(1);
   expect(await joined("proxy-reviewer-r1", "tech-lead-t1")).toHaveLength(0);
@@ -158,7 +159,9 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   await settle("proxy-reviewer-r1");
   const tlProc = procOf("tech-lead-t1");
   const rvProc = procOf("proxy-reviewer-r1");
-  expect(tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "@lead")).toBe(true);
+  expect(tlProc.sent.flat().some((m) => m.kind === "message" && handleOf(m.from) === "@lead")).toBe(
+    true,
+  );
   open(tlProc, "sess-tl");
   open(rvProc, "sess-rv");
   const ask = await call("tech-lead-t1", "send_message", {
@@ -167,9 +170,9 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   });
   expect(ask.isError).toBe(false);
   await close("proxy-reviewer-r1", rvProc); // the message waits for the turn boundary, then wakes it
-  expect(rvProc.sent.flat().some((m) => m.kind === "message" && m.from === "@tech-lead-t1")).toBe(
-    true,
-  );
+  expect(
+    rvProc.sent.flat().some((m) => m.kind === "message" && handleOf(m.from) === "@tech-lead-t1"),
+  ).toBe(true);
   open(rvProc, "sess-rv");
   const reply = await call("proxy-reviewer-r1", "send_message", {
     to: ["tech-lead-t1"],
@@ -181,7 +184,9 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   writeFileSync(path.join(repo, "plan.md"), "# Plan\n");
   await close("tech-lead-t1", tlProc, "Plan written to plan.md");
   expect(
-    tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "@proxy-reviewer-r1"),
+    tlProc.sent
+      .flat()
+      .some((m) => m.kind === "message" && handleOf(m.from) === "@proxy-reviewer-r1"),
   ).toBe(true);
 
   // 3. The lead's next batches carry member updates from both children. The reviewer's came first and opened a turn;
@@ -192,22 +197,22 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   const updates = (await batches("lead"))
     .flat()
     .filter((m) => m.kind === "member_update")
-    .map((m) => m.from);
+    .map((m) => handleOf(m.from));
   expect(updates).toContain("@tech-lead-t1");
   expect(updates).toContain("@proxy-reviewer-r1");
 
   // 4. The lead terminates both and spawns the developer.
   leadProc.emit(ev.turn());
-  for (const slug of ["tech-lead-t1", "proxy-reviewer-r1"]) {
-    expect(await call("lead", "terminate_agent", { slug })).toEqual({
+  for (const handle of ["tech-lead-t1", "proxy-reviewer-r1"]) {
+    expect(await call("lead", "terminate_agent", { target: handle })).toMatchObject({
       isError: false,
-      out: { slug, status: "terminated" },
+      out: { handle, status: "terminated" },
     });
-    const row = await h.app.store.agentBySlug(slug);
+    const row = await agentRowOf(h.app, handle);
     expect(row?.terminatedAt).toBeInstanceOf(Date);
     expect(row?.runtime).toBe("local"); // no container to remove
-    await settle(slug);
-    expect(procOf(slug).stopped).toBe(true);
+    await settle(handle);
+    expect(procOf(handle).stopped).toBe(true);
   }
   const dev = await call("lead", "spawn_agent", {
     template: "developer",
@@ -215,14 +220,16 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     description: "Implements the plan",
     prompt: "Implement plan.md",
   });
-  expect(dev).toMatchObject({ isError: false, out: { slug: "developer-d1" } });
+  expect(dev).toMatchObject({ isError: false, out: { handle: "developer-d1" } });
   await close("lead", leadProc);
 
   // 5. The developer works on its own worktree of the repo (the test stands in for its Bash tool).
   await settle("developer-d1");
   const devProc = procOf("developer-d1");
   expect(
-    devProc.sent.flat().some((m) => m.from === "@lead" && m.body.includes("Implement plan.md")),
+    devProc.sent
+      .flat()
+      .some((m) => handleOf(m.from) === "@lead" && m.body.includes("Implement plan.md")),
   ).toBe(true);
   open(devProc, "sess-dev");
   const wt = path.join(repo, ".worktrees", "developer-d1-impl");
@@ -242,7 +249,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     (await batches("lead"))
       .flat()
       .filter((m) => m.kind === "member_update")
-      .map((m) => m.from),
+      .map((m) => handleOf(m.from)),
   );
   expect([...heard].sort()).toEqual(["@developer-d1", "@proxy-reviewer-r1", "@tech-lead-t1"]);
   expect(await rows("lead", "peer_left")).toEqual([]);

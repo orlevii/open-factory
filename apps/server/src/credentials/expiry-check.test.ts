@@ -2,8 +2,8 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { ExpiryCheck } from "./expiry-check.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -27,8 +27,8 @@ beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
   for (const [i, id] of users.entries()) {
-    await claimTestHandleSql(t.sql, `h${i}`, "user");
-    await t.sql`insert into users (id,name,email,handle) values (${id},${id},${`${id}@x.io`},${`h${i}`})`;
+    await t.sql.unsafe(principalSql(id, "human", `h${i}`));
+    await t.sql`insert into users (id, name, email) values (${id},${id},${`${id}@x.io`})`;
   }
 });
 afterAll(() => t.close());
@@ -67,7 +67,7 @@ test("notifies once per user within 14 days, never for null expires_at", async (
     expect(got[0]).toMatchObject({
       kind: "credential",
       preview: "work expires on 2027-11-12.",
-      from: { kind: "factory", name: "factory" },
+      from: { kind: "factory" },
       link: { kind: "credential", name: "work" },
       credential: { name: "work", current: true, expiresAt: "2027-11-12T00:00:00.000Z" },
     });

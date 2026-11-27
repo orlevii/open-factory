@@ -1,9 +1,9 @@
-import type { AgentRow } from "@open-factory/db";
 import { type RuntimeLog, stopFailedMessage } from "../agents/agent-runtime.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import { notices } from "../agents/notices.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Forward, factFor } from "../messaging/forwarder.ts";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { Supervisor } from "./supervisor.ts";
@@ -24,12 +24,13 @@ export interface ReconcileDeps {
     | "rejectPendingToTerminated"
     | "clearStaleWriteMarks"
     | "terminatedWithoutEvent"
+    | "principalMention"
   >;
   journal: Pick<ProcessJournal, "reap">;
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
   containers?: Pick<ContainerManager, "listOurs" | "stopListed" | "removeListed">;
   supervisor: Pick<Supervisor, "pause">;
-  runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
+  runtimes: Pick<AgentRuntimes, "load">;
   /**
    * S6 §9.1: the Router's `forward`. Rows are persisted here; their hand-off to a manager waits for `bootDone()`, which
    * runs once this function has returned.
@@ -41,7 +42,7 @@ export interface ReconcileDeps {
 /** The error of an agent whose attempt the server's stop cut short (spec §5.7 step 4), unless it already had one. */
 export const ATTEMPT_CUT_SHORT = "The factory restarted during a recovery attempt.";
 
-const hasProcess = (j: AgentRow["runtimeJournal"]) =>
+const hasProcess = (j: AgentRecord["runtimeJournal"]) =>
   Boolean(j?.claude) || Boolean(j?.descendants?.length);
 
 /**
@@ -70,7 +71,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
         } catch (err) {
           reapFailed.add(a.id);
           d.log.error(
-            { err, agent: a.slug },
+            { err, agent: a.handle },
             "reaping the previous run's processes failed; the agent isn't woken",
           );
         }
@@ -89,7 +90,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   // S7 §8 crash safety: a termination committed just before the server died has no `terminated` event yet. No runtime
   // exists at boot, so this direct append is the agent's only writer; the sweep's `ensureTerminatedEvent` then finds it.
   for (const a of await d.store.terminatedWithoutEvent()) {
-    await d.store.append(a.id, null, { type: "terminated", by: a.terminatedBy ?? "@factory" });
+    await d.store.append(a.id, null, { type: "terminated", by: a.by });
     // Its stop never ran, so a container may be left. Docker couldn't be listed: `stop_failed` keeps it a stuck
     // candidate and its workspace undeleted until a sweep has listed the containers and removed any (§10.3).
     if (!listed && d.containers && a.runtime === "docker") await markStopFailed(d, a);
@@ -124,7 +125,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const a of rows)
     if (cutShort.has(a.id)) {
       d.log.info(
-        { agent: a.slug },
+        { agent: a.handle },
         "an attempt was cut short by the restart; the agent is errored",
       );
       // Errored with no attempt pending (S6 §9.1), once per episode: a human retry cut short was inside an episode
@@ -161,10 +162,10 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const w of await d.store.bootWakes()) {
     if (reapFailed.has(w.id)) continue;
     try {
-      const rt = await d.runtimes.bySlug(w.slug);
+      const rt = await d.runtimes.load(w.id);
       await rt?.bootWake(w.resume ? "boot_resume" : "boot");
     } catch (err) {
-      d.log.error({ err, agent: w.slug }, "boot wake failed");
+      d.log.error({ err, agent: w.handle }, "boot wake failed");
     }
   }
   // I9 §4.8: pending member updates never wake an agent here; its runtime is loaded so `init()` re-arms the debounce
@@ -182,16 +183,20 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
 /** A forwarding failure is logged: boot goes on, as for a failed wake (the fact is lost, the agent's state is not). */
 async function forward(
   d: ReconcileDeps,
-  a: AgentRow,
+  a: AgentRecord,
   fact: "work_lost" | "errored",
   detail: Parameters<typeof factFor>[2],
 ): Promise<void> {
   if (a.archivedAt || a.terminatedAt) return;
   try {
-    await d.forward({ agentId: a.id, fact, body: factFor(fact, a.slug, detail) });
+    await d.forward({
+      agentId: a.id,
+      fact,
+      body: factFor(fact, await d.store.principalMention(a.id), detail),
+    });
   } catch (err) {
     // The fact is then not reported (for a cut-short attempt: its errored episode stays unreported); boot goes on.
-    d.log.error({ err, agent: a.slug, fact }, "forwarding a fact to the manager failed");
+    d.log.error({ err, agent: a.handle, fact }, "forwarding a fact to the manager failed");
   }
 }
 
@@ -199,10 +204,10 @@ async function forward(
  * S7 §8 step 5: a terminated agent whose leftovers boot couldn't clear; the sweep retries (§10.3). A failure to record
  * it is logged.
  */
-async function markStopFailed(d: ReconcileDeps, a: { id: string; slug: string }): Promise<void> {
+async function markStopFailed(d: ReconcileDeps, a: { id: string; handle: string }): Promise<void> {
   await d.store
     .setErrored(a.id, stopFailedMessage(undefined), "stop_failed")
-    .catch((err: unknown) => d.log.error({ err, agent: a.slug }, "recording stop_failed failed"));
+    .catch((err: unknown) => d.log.error({ err, agent: a.handle }, "recording stop_failed failed"));
 }
 
 /**
@@ -214,7 +219,7 @@ async function markStopFailed(d: ReconcileDeps, a: { id: string; slug: string })
  */
 async function stopLeftoverContainers(
   d: ReconcileDeps,
-  rows: AgentRow[],
+  rows: AgentRecord[],
 ): Promise<{ stopped: Set<string>; listed: boolean }> {
   const stopped = new Set<string>();
   if (!d.containers) return { stopped, listed: true };
@@ -236,7 +241,7 @@ async function stopLeftoverContainers(
       "containers of another factory or a deleted agent were left alone",
     );
   // A terminated agent's containers, grouped by agent: one `stop_failed` per agent whose removal failed.
-  const leftovers = new Map<AgentRow, string[]>();
+  const leftovers = new Map<AgentRecord, string[]>();
   for (const c of listed) {
     const a = ours.get(c.agentId);
     if (a?.terminatedAt) leftovers.set(a, [...(leftovers.get(a) ?? []), c.id]);
@@ -249,7 +254,7 @@ async function stopLeftoverContainers(
             () => false,
             (err: unknown) => {
               d.log.error(
-                { err, agent: a.slug, container: id },
+                { err, agent: a.handle, container: id },
                 "removing a terminated agent's leftover container failed; the sweep retries",
               );
               return true;
@@ -264,14 +269,14 @@ async function stopLeftoverContainers(
     listed
       .filter((c) => c.running && ours.has(c.agentId) && !ours.get(c.agentId)?.terminatedAt)
       .map(async (c) => {
-        const slug = ours.get(c.agentId)?.slug;
+        const handle = ours.get(c.agentId)?.handle;
         try {
           await containers.stopListed(c.id);
           stopped.add(c.agentId);
         } catch (err) {
           // The agent's next start stops it before anything else (spec §10 step 2).
           d.log.error(
-            { err, agent: slug, container: c.id },
+            { err, agent: handle, container: c.id },
             "stopping a leftover container failed",
           );
         }

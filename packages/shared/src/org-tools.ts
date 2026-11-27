@@ -8,18 +8,25 @@ import { createTemplateBodySchema, templateFileSchema } from "./templates.ts";
  * judge them and answer with the same sentence a human gets. Parameter semantics only; rules live in CLAUDE.md.
  */
 const ref = z.string().trim().min(1).max(80);
-const slugRef = ref.describe("An agent's name (slug); a leading @ is fine");
+const principalRef = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .describe("An agent or person: their mention <@ref|handle>, ref, or @handle");
 
 export const getTemplateToolSchema = z.object({ name: ref.describe("The template's name") });
 
-export const getAgentToolSchema = z.object({ slug: slugRef });
+export const getAgentToolSchema = z.object({ target: principalRef });
 
 export const createAgentToolSchema = z.object({
   template: ref.describe("The template's name"),
-  name: slugRef.describe("The new agent's name (slug)"),
+  handle: ref.describe("The new agent's handle"),
   display_name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500),
-  reports_to: ref.describe("Who it reports to: an agent or a person, as @handle"),
+  reports_to: ref.describe(
+    "Who it reports to: an agent or a person, as their mention <@ref|handle>, ref, or @handle",
+  ),
   credential: ref.describe("A credential's name"),
   projects: z.array(ref).optional().describe("Project names (default: the template's)"),
   config: agentOverlaySchema.optional().describe("The agent's overlay on its template"),
@@ -27,10 +34,14 @@ export const createAgentToolSchema = z.object({
 
 export const updateAgentToolSchema = z
   .object({
-    slug: slugRef,
+    target: principalRef,
     display_name: z.string().trim().min(1).max(80).optional(),
     description: z.string().trim().max(500).optional(),
-    reports_to: ref.optional().describe("Who it reports to now: an agent or a person, as @handle"),
+    reports_to: ref
+      .optional()
+      .describe(
+        "Who it reports to now: an agent or a person, as their mention <@ref|handle>, ref, or @handle",
+      ),
     credential: ref.optional(),
     projects: z.array(ref).optional().describe("The full new list (replaces the old one)"),
     config: agentOverlaySchema
@@ -48,8 +59,8 @@ export const updateAgentToolSchema = z
 
 /** I7 §9.1: `restart_agent`; the note is an ordinary message, at most the message body limit. */
 export const restartAgentToolSchema = z.object({
-  target: slugRef.describe(
-    "A direct report's name; with manage_org, any agent (a leading @ is fine)",
+  target: principalRef.describe(
+    "A direct report: their mention <@ref|handle>, ref, or @handle; with manage_org, any agent",
   ),
   note: z
     .string()

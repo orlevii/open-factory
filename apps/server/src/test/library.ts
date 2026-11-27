@@ -24,7 +24,7 @@ export function folderSource(dir: string, skills: string[]): SkillSourceRow {
     skills,
     state: "ready",
     startedAt: new Date(0),
-    addedBy: "@or",
+    addedById: "u-or",
     addedAt: new Date(0),
     deletedAt: null,
   };

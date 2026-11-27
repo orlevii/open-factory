@@ -22,6 +22,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import { MentionTextarea } from "@/components/composer/mention-field";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import {
@@ -33,7 +34,6 @@ import {
 } from "@/components/ui/select";
 import { SheetBody } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
@@ -43,7 +43,7 @@ import {
   type ModelEffort,
   saveModelEffort,
 } from "@/features/agents/api";
-import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ManagerCombobox } from "@/features/agents/manager-combobox";
 import { ModelEffortFields } from "@/features/agents/model-effort-fields";
@@ -53,6 +53,7 @@ import {
   type TemplateOption,
   TemplateSummary,
 } from "@/features/agents/template-field";
+import { FIELD_MENTION_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -120,19 +121,20 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   const templates: TemplateOption[] = useSuspenseQuery(templatesQueryOptions).data.templates;
   const qc = useQueryClient();
   const router = useRouter();
+  const at = useMentionSource({ note: FIELD_MENTION_NOTE });
   const taken = useTakenNames(true);
   // A list that failed can't hold the submit forever: it goes ahead without the suffix (the server still refuses).
   const takenFailed = useQueries({
     queries: TAKEN_LISTS,
     combine: (r) => r.some((q) => q.isError),
   });
-  const slugFor = useCallback((name: string) => deriveSlug(name, taken ?? EMPTY), [taken]);
+  const handleFor = useCallback((name: string) => deriveHandle(name, taken ?? EMPTY), [taken]);
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({
     mode: "create",
     draftKey: "new-agent",
     prefill: spec.template ? { template: spec.template } : undefined,
-    slugFor,
+    handleFor,
     form,
   });
   const { values, shown, errors, set, blur, claim, pending, config } = s;
@@ -268,8 +270,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   }, []);
 
   // The address field opens itself, focused, when Display name is left with a name that derives nothing.
-  const [forceSlug, setForceSlug] = useState(false);
-  const onSlugOpened = useCallback(() => setForceSlug(false), []);
+  const [forceHandle, setForceHandle] = useState(false);
+  const onHandleOpened = useCallback(() => setForceHandle(false), []);
 
   // More options opens itself, once per reason, and says why (§6.2); the user can fold it again.
   const several = (credentials?.length ?? 0) > 1;
@@ -347,7 +349,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     let notSet: string | undefined;
     if (modelEffort)
       try {
-        await saveModelEffort(qc, agent.slug, modelEffort);
+        await saveModelEffort(qc, agent.ref, modelEffort);
       } catch (err) {
         notSet = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
       }
@@ -363,13 +365,12 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       !getSheetState().child // a stacked child the user opened on it (and its input) stays
     )
       closeSheet();
-    const go = () =>
-      void router.navigate({ to: "/agents/$slug/chat", params: { slug: agent.slug } });
-    const created = `Created @${agent.slug}.`;
+    const go = () => void router.navigate({ to: "/agents/$ref/chat", params: { ref: agent.ref } });
+    const created = `Created @${agent.handle}.`;
     if (notSet) {
       // Said in a toast either way: the sheet closes onto the session.
       const configure = () =>
-        void router.navigate({ to: "/agents/$slug/config", params: { slug: agent.slug } });
+        void router.navigate({ to: "/agents/$ref/config", params: { ref: agent.ref } });
       if (open) {
         closeSheet();
         go();
@@ -388,7 +389,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
 
   // Until the taken names have answered the derivation has no suffix, so submit waits for them (§6.3).
   const [queued, setQueued] = useState(false);
-  const waitForTaken = !values.touched.slug && !taken && !takenFailed;
+  const waitForTaken = !values.touched.handle && !taken && !takenFailed;
   const run = () => void s.submit(create);
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -442,20 +443,20 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               }}
               onBlur={(e) => {
                 blur("displayName", e);
-                if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug)
-                  setForceSlug(true);
+                if (!values.touched.handle && shown.displayName.trim() !== "" && !shown.handle)
+                  setForceHandle(true);
               }}
               autoComplete="off"
             />
             <AddressLine
               name={shown.displayName}
-              slug={values.slug}
-              slugTouched={Boolean(values.touched.slug)}
-              onSlug={(v) => set("slug", v)}
-              onBlur={(e) => blur("slug", e)}
-              error={errors.slug}
-              forceOpen={forceSlug}
-              onOpened={onSlugOpened}
+              handle={values.handle}
+              handleTouched={Boolean(values.touched.handle)}
+              onHandle={(v) => set("handle", v)}
+              onBlur={(e) => blur("handle", e)}
+              error={errors.handle}
+              forceOpen={forceHandle}
+              onOpened={onHandleOpened}
             />
           </div>
           <FieldShell
@@ -478,15 +479,16 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
           <MoreOptions open={moreOpen} onOpenChange={setMoreOpen} reason={reason}>
             <FieldShell name="description" label="Description" error={errors.description}>
               {(a) => (
-                <Textarea
+                <MentionTextarea
                   id={a.id}
                   name="description"
                   rows={3}
                   data-vaul-no-drag=""
+                  source={at}
                   aria-invalid={a.invalid || undefined}
                   aria-describedby={a.describedBy}
                   value={shown.description}
-                  onChange={(e) => set("description", e.target.value)}
+                  onValueChange={(next) => set("description", next)}
                   onFocus={() => claim("description")}
                   onBlur={(e) => blur("description", e)}
                 />

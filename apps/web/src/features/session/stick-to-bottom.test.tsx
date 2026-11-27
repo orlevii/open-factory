@@ -1,6 +1,7 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import type { Row } from "./rows";
 import { repinTimeline } from "./session-commands";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
@@ -279,7 +280,7 @@ const rows: Row[] = ["a", "b"].map(
 test("sending from the composer re-pins the agent's timeline", () => {
   const view = render(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={rows}
       failedIds={new Set()}
       interruptedEnds={new Set()}
@@ -296,9 +297,9 @@ test("sending from the composer re-pins the agent's timeline", () => {
   fireEvent.scroll(scroller);
   scroller.scrollTop = 100;
   fireEvent.scroll(scroller);
-  act(() => repinTimeline("other"));
+  act(() => repinTimeline(refFor("other")));
   expect(scroller.scrollTop).toBe(100);
-  act(() => repinTimeline("dev"));
+  act(() => repinTimeline(refFor("dev")));
   expect(scroller.scrollTop).toBe(2000);
 });
 

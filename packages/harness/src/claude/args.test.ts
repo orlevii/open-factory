@@ -4,7 +4,7 @@ import { buildClaudeArgs } from "./args.ts";
 
 const spec = (p: Partial<AgentRuntimeSpec> = {}): AgentRuntimeSpec => ({
   agentId: "a",
-  slug: "a",
+  ref: "a",
   cwd: "/w",
   env: {},
   claudeBin: "claude",

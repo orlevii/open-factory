@@ -15,9 +15,8 @@ import {
   sendAs,
   silentLog,
 } from "../agents/testing/runtime-harness.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
-
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { Supervisor } from "./supervisor.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -25,8 +24,8 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -50,7 +49,7 @@ class World {
       credentialOf: (id) =>
         this.credentials.get(id) ?? this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: store,
-      load: async (slug) => [...this.loaded.values()].find((rt) => rt.agent.slug === slug),
+      load: async (handle) => [...this.loaded.values()].find((rt) => rt.agent.handle === handle),
     });
   }
 
@@ -59,13 +58,13 @@ class World {
   ): Promise<AgentRuntime> {
     n += 1;
     const id = `s${n}`;
-    await insertAgent(t.sql, { id, slug: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
+    await insertAgent(t.sql, { id, handle: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
     if (o.errorKind) await t.sql`update agents set error_kind = ${o.errorKind} where id = ${id}`;
     for (const body of o.pending ?? [])
       await store.createMessage({
         from: { userId: "u1" },
         toAgentId: id,
-        recipients: ["@test"],
+        recipientIds: [id],
         body,
         urgent: false,
       });
@@ -92,7 +91,7 @@ class World {
   }
   proc(rt: AgentRuntime): FakeProcess {
     const p = this.starts(rt).at(-1);
-    if (!p) throw new Error(`${rt.agent.slug} never started`);
+    if (!p) throw new Error(`${rt.agent.handle} never started`);
     return p;
   }
 
@@ -204,7 +203,9 @@ test("granted state closes the double-start window", async () => {
   expect(statusWhileGranted).toBe("queued");
   const bStatuses = w.frames
     .slice(framesBefore)
-    .flatMap((f) => (f.type === "agent_status" && f.agent === b.agent.slug ? [f.status] : []));
+    .flatMap((f) =>
+      f.type === "agent_status" && f.agent === testRef(b.agent.id) ? [f.status] : [],
+    );
   expect(bStatuses).not.toContain("hibernated");
   expect(w.starts(b)).toHaveLength(1);
   expect(

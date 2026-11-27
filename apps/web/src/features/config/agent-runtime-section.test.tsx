@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { QueryWrap } from "@/test/config-harness";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 import { AgentRuntimeSection } from "./agent-runtime-section";
 import { AGENT_RUNTIME_COPY, RUNTIME_COPY } from "./messages";
@@ -16,7 +17,7 @@ afterEach(() => off());
 
 function api(
   allowLocalRuntime = true,
-  patch = () => json({ agent: agentSummary({ slug: "ana", runtime: "local" }) }),
+  patch = () => json({ agent: agentSummary({ handle: "ana", runtime: "local" }) }),
 ) {
   return mockApi({
     "GET /api/settings/factory": () =>
@@ -28,7 +29,7 @@ function api(
         updatedAt: null,
         updatedBy: null,
       }),
-    "PATCH /api/agents/ana": patch,
+    [`PATCH /api/agents/${refFor("ana")}`]: patch,
   });
 }
 
@@ -38,7 +39,7 @@ const show = (
   render(
     <QueryWrap>
       <AgentRuntimeSection
-        agent={agentSummary({ slug: "ana", runtime: o.runtime ?? "docker" })}
+        agent={agentSummary({ handle: "ana", runtime: o.runtime ?? "docker" })}
         templateRuntime={o.templateRuntime ?? "docker"}
         templateBypass={o.templateBypass ?? false}
       />
@@ -107,7 +108,7 @@ test.each([
 );
 
 test("switching back to Docker asks nothing and switches the agent", async () => {
-  const m = api(true, () => json({ agent: agentSummary({ slug: "ana", runtime: "docker" }) }));
+  const m = api(true, () => json({ agent: agentSummary({ handle: "ana", runtime: "docker" }) }));
   show({ runtime: "local" });
   await userEvent.click(screen.getByRole("radio", { name: "Docker" }));
   await waitFor(() =>

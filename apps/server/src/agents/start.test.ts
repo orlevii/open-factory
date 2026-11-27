@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type AgentRow, schema } from "@open-factory/db";
+import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { and, eq } from "drizzle-orm";
@@ -19,10 +19,11 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import { type AgentRecord, agentRecords } from "../principals/principal-store.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
+import { seedTestPrincipal, testManagerUserId, testRef } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
@@ -43,7 +44,7 @@ let factoryConfig: Config;
 let resolver: ConfigResolver;
 /** Stands in for the runtimes' `started`: what a loaded spawner's process started with. */
 const loaded = new Map<string, Effective>();
-let agent: AgentRow;
+let agent: AgentRecord;
 let seq = 0;
 const vault = new Vault(KEY);
 
@@ -61,8 +62,8 @@ function writeYaml(name: string, doc: Record<string, unknown>) {
 const writeTemplateFile = (name: string, file: string, text: string) =>
   writeFileSync(path.join(home, "templates", name, file), text);
 
-async function reload(id: string): Promise<AgentRow> {
-  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, id));
+async function reload(id: string): Promise<AgentRecord> {
+  const [row] = await agentRecords(t.db).where(eq(schema.agents.id, id));
   if (!row) throw new Error("no agent");
   return row;
 }
@@ -79,7 +80,7 @@ async function seedStartFixture() {
   home = mkdtempSync(path.join(tmpdir(), "of-start-"));
   hs = mkdtempSync(path.join(tmpdir(), "hs-"));
   repo = mkdtempSync(path.join(tmpdir(), "repo-"));
-  const slug = `lead-${seq}`;
+  const handle = `lead-${seq}`;
   const config = templateYamlSchema.parse({
     name: "lead",
     display_name: "Lead",
@@ -109,22 +110,21 @@ async function seedStartFixture() {
     valueEnc: vault.seal("gh-1", "secrets:s1"),
   });
   await t.db.insert(schema.projects).values({ id: "p1", name: "app", hostPath: repo });
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", handle, `a-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
       id: `a-${seq}`,
-      slug,
       displayName: "Lead",
       template: "lead",
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
   if (!row) throw new Error("seed failed");
-  agent = row;
+  agent = { ...row, handle, ref: testRef(row.id) };
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
   const _fake = createFakeClaude({ scenario: "reply" });
@@ -139,16 +139,15 @@ async function seedStartFixture() {
   });
   const grants = [{ name: "app", hostPath: repo }];
   await workspace.materialize(
-    agent.id,
-    slug,
+    testRef(agent.id),
     { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } },
     {
-      slug,
+      handle: handle,
       displayName: "Lead",
       description: "",
       template: "lead",
       config,
-      manager: { kind: "user" as const, handle: "or", name: "Or" },
+      manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
       grants,
     },
   );
@@ -196,7 +195,7 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
   expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-1");
   expect(spec.credentialId).toBe("c1");
   expect(spec.env.GH_TOKEN).toBe("gh-1");
-  expect(spec.cwd).toBe(path.join(home, "agents", agent.slug));
+  expect(spec.cwd).toBe(path.join(home, "agents", testRef(agent.id)));
   expect(spec.runtime).toBe("local");
   expect(existsSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"))).toBe(true);
   expect(existsSync(path.join(spec.cwd, "projects/app"))).toBe(true);
@@ -216,7 +215,9 @@ test("the child env is an allowlist: server secrets and own credentials never re
   expect(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"].filter((k) => k in env)).toEqual([
     "CLAUDE_CODE_OAUTH_TOKEN",
   ]);
-  expect(env.CLAUDE_CONFIG_DIR).toBe(path.join(home, "agents", agent.slug, ".claude-config"));
+  expect(env.CLAUDE_CONFIG_DIR).toBe(
+    path.join(home, "agents", testRef(agent.id), ".claude-config"),
+  );
 });
 
 test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
@@ -227,76 +228,75 @@ test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
 });
 
 test("the manager is described in CLAUDE.md", async () => {
-  await claimTestHandle(t.db, "boss", "agent");
+  await seedTestPrincipal(t.db, "agent", "boss", "mgr");
   const mgr = await t.db
     .insert(schema.agents)
     .values({
       id: "mgr",
-      slug: "boss",
       displayName: "The Boss",
       template: "lead",
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""} where id = ${agent.id}`;
   const spec = await prepareStart(agent, { agentToken: "tok" }); // stale row: prepareStart must reload
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
   );
-  expect(md).toContain("@boss");
+  expect(md).toContain(`- Manager: <@${testRef("mgr")}|boss> (The Boss)`);
 });
 
-test("a peer's description an agent wrote is quoted with that agent's current slug; a human-written one is not", async () => {
-  for (const slug of ["ceo", "dev", "qa"]) await claimTestHandle(t.db, slug, "agent");
+test("a peer's description an agent wrote is quoted with that agent's current handle; a human-written one is not", async () => {
+  for (const handle of ["ceo", "dev", "qa"])
+    await seedTestPrincipal(t.db, "agent", handle, `${handle}-id`);
   const [mgr] = await t.db
     .insert(schema.agents)
     .values({
       id: "ceo-id",
-      slug: "ceo",
       displayName: "CEO",
       template: "lead",
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr?.id ?? ""} where id = ${agent.id}`;
   const sibling = { template: "lead", config: {}, runtime: "local" as const, credentialId: "c1" };
   await t.db.insert(schema.agents).values([
     {
       ...sibling,
       id: "dev-id",
-      slug: "dev",
       displayName: "Dev",
       description: "Builds.",
       descriptionBy: agent.id,
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
     },
     {
       ...sibling,
       id: "qa-id",
-      slug: "qa",
       displayName: "QA",
       description: "Tests.",
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
     },
   ]);
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const text = md(agent.slug);
-  expect(text).toContain(`- @dev (Dev), written by @${agent.slug}: "Builds."`);
-  expect(text).toContain("- @qa (QA): Tests.");
+  const text = md(agent);
+  expect(text).toContain(
+    `- <@${testRef("dev-id")}|dev> (Dev), written by <@${testRef(agent.id)}|${agent.handle}>: "Builds."`,
+  );
+  expect(text).toContain(`- <@${testRef("qa-id")}|qa> (QA): Tests.`);
 });
 
 test("a manage_org agent's CLAUDE.md gets the Managing the org section; before the grant it has none", async () => {
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).not.toContain("## Managing the org");
+  expect(md(agent)).not.toContain("## Managing the org");
   await t.sql`update agents set manage_org = true where id = ${agent.id}`;
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).toContain("## Managing the org\n- A human gave you manage_org.");
+  expect(md(agent)).toContain("## Managing the org\n- A human gave you manage_org.");
 });
 
 test.each([
@@ -338,14 +338,14 @@ test("archived agents never start", async () => {
   await t.sql`update agents set archived_at = now()`;
   await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentArchivedError",
-    message: `@${agent.slug} is archived. Restore it first.`,
+    message: `@${agent.handle} is archived. Restore it first.`,
   });
 });
 
-test("prepare runs under the workspace lock for the agent's slug", async () => {
+test("prepare runs under the workspace lock for the agent's handle", async () => {
   let release = () => {};
   const held = lock.run(
-    agent.slug,
+    testRef(agent.id),
     () =>
       new Promise<void>((r) => {
         release = r;
@@ -371,7 +371,7 @@ test("an invalid overlay is an AgentStartError with the config fix", async () =>
     .where(eq(schema.agents.id, agent.id));
   await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
-    message: `The configuration of @${agent.slug} is invalid. Fix it in Configuration.`,
+    message: `The configuration of @${agent.handle} is invalid. Fix it in Configuration.`,
     fix: "config",
   });
 });
@@ -406,7 +406,7 @@ test("prepare writes the template plus the overlay: a deny rule appended and an 
     })
     .where(eq(schema.agents.id, agent.id));
   const spec = await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const deny = settingsOf(agent.slug).permissions.deny;
+  const deny = settingsOf(agent).permissions.deny;
   expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch"]));
   expect(deny.indexOf("Bash(rm:*)")).toBeLessThan(deny.indexOf("WebFetch"));
   const mcp = JSON.parse(readFileSync(path.join(spec.cwd, ".mcp.json"), "utf8"));
@@ -416,7 +416,7 @@ test("prepare writes the template plus the overlay: a deny rule appended and an 
 
 test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
   const hostDir = mkdtempSync(path.join(tmpdir(), "host-"));
-  const workdir = workspace.workdir(agent.slug);
+  const workdir = workspace.workdir(testRef(agent.id));
   rmSync(`${workdir}/.claude-config`, { recursive: true, force: true });
   symlinkSync(hostDir, `${workdir}/.claude-config`);
   await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toThrow(AgentStartError);
@@ -466,15 +466,18 @@ const readlinkOrNull = (p: string) => {
   }
 };
 const leadTemplateSettings = () => path.join(home, "templates/lead/settings.json");
-const md = (slug: string) =>
-  readFileSync(path.join(workspace.workdir(slug), ".claude-config/CLAUDE.md"), "utf8");
-const settingsOf = (slug: string) =>
+const md = (a: { id: string }) =>
+  readFileSync(path.join(workspace.workdir(testRef(a.id)), ".claude-config/CLAUDE.md"), "utf8");
+const settingsOf = (a: { id: string }) =>
   JSON.parse(
-    readFileSync(path.join(workspace.workdir(slug), ".claude-config/settings.json"), "utf8"),
+    readFileSync(
+      path.join(workspace.workdir(testRef(a.id)), ".claude-config/settings.json"),
+      "utf8",
+    ),
   );
 
 /** The fixture's lead (secrets [GH_TOKEN], grant `app`, template deny `Bash(rm:*)`) spawned a child. */
-async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> {
+async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRecord> {
   writeFileSync(
     leadTemplateSettings(),
     JSON.stringify({
@@ -513,13 +516,12 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     "settings.json",
     JSON.stringify({ permissions: { deny: ["Bash(curl:*)"] } }),
   );
-  const slug = `dev-ab${seq}`;
-  await claimTestHandle(t.db, slug, "agent");
+  const handle = `dev-ab${seq}`;
+  await seedTestPrincipal(t.db, "agent", handle, `child-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
       id: `child-${seq}`,
-      slug,
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
@@ -533,8 +535,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
   if (!row) throw new Error("seed failed");
   await t.db.insert(schema.agentProjectGrants).values({ agentId: row.id, projectId: "p1" });
   await workspace.materialize(
-    row.id,
-    slug,
+    testRef(row.id),
     {
       dir: tdir,
       config,
@@ -542,16 +543,16 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       tplMcp: { mcpServers: {} },
     },
     {
-      slug,
+      handle: handle,
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
       config,
-      manager: { kind: "agent", slug: agent.slug, displayName: "Lead" },
+      manager: { kind: "agent", ref: "k7x2m9qd", handle: agent.handle, displayName: "Lead" },
       grants: [{ name: "app", hostPath: repo }],
     },
   );
-  return row;
+  return { ...row, handle, ref: testRef(row.id) };
 }
 
 test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny ∪ in settings.json, grants = spawner's current", async () => {
@@ -560,12 +561,14 @@ test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny 
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBeUndefined();
   expect(Object.values(spec.env)).not.toContain("npm-1");
-  const settings = settingsOf(child.slug);
+  const settings = settingsOf(child);
   expect(settings.permissions.deny).toContain("Bash(rm:*)");
   expect(settings.permissions.deny).toContain("Bash(curl:*)");
   expect(settings.autoMode.hard_deny).toEqual(["$defaults", "Never push to main"]);
-  expect(md(child.slug)).toContain("Environment variables provided to you: GH_TOKEN.");
-  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).not.toBeNull();
+  expect(md(child)).toContain("Environment variables provided to you: GH_TOKEN.");
+  expect(
+    readlinkOrNull(path.join(workspace.workdir(testRef(child.id)), "projects/app")),
+  ).not.toBeNull();
   // Revoked directly, without syncChildren: the child's start drops the grant anyway.
   await t.db
     .delete(schema.agentProjectGrants)
@@ -576,8 +579,10 @@ test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny 
       ),
     );
   await prepareStart(child, { agentToken: "tok" });
-  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).toBeNull();
-  expect(md(child.slug)).toContain("No projects are granted to you.");
+  expect(
+    readlinkOrNull(path.join(workspace.workdir(testRef(child.id)), "projects/app")),
+  ).toBeNull();
+  expect(md(child)).toContain("No projects are granted to you.");
 });
 
 test("a child's start uses its spawner's current credential, even when its own row lags (no syncChildren)", async () => {
@@ -604,7 +609,7 @@ test("the spawner's current deny rules reach the child at its next start (no sna
   await prepareStart(child, { agentToken: "tok" });
   writeFileSync(leadTemplateSettings(), JSON.stringify({ permissions: { deny: ["WebFetch"] } }));
   await prepareStart(child, { agentToken: "tok" });
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toContain("WebFetch");
   expect(deny).not.toContain("Bash(rm:*)");
   expect(deny).toContain("Bash(curl:*)");
@@ -689,13 +694,15 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
     .set({ description: 'Ship "it" <now>' })
     .where(eq(schema.agents.id, child.id));
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const lead = md(agent.slug);
+  const lead = md(agent);
   expect(lead).toContain("## Spawning");
-  expect(lead).toContain(`- @${child.slug} (Dev · ab), written by @${agent.slug}: "Ship 'it' now"`);
+  expect(lead).toContain(
+    `- <@${testRef(child.id)}|${child.handle}> (Dev · ab), written by <@${testRef(agent.id)}|${agent.handle}>: "Ship 'it' now"`,
+  );
   await prepareStart(child, { agentToken: "tok" });
-  const own = md(child.slug);
+  const own = md(child);
   expect(own).toContain(
-    `You are a spawned agent: @${agent.slug} spawned you for one piece of work.`,
+    `You are a spawned agent: <@${testRef(agent.id)}|${agent.handle}> spawned you for one piece of work.`,
   );
   expect(own).toContain("## Your lifecycle");
   expect(own).not.toContain("## Spawning");
@@ -703,7 +710,7 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
 
 test("a persistent agent without can_spawn has no Spawning section", async () => {
   await prepareStart(agent, { agentToken: "tok" });
-  expect(md(agent.slug)).not.toContain("## Spawning");
+  expect(md(agent)).not.toContain("## Spawning");
 });
 
 const setConfig = (id: string, config: Record<string, unknown>) =>
@@ -730,12 +737,10 @@ test("a spawned agent's start error from its template keeps the template fix", a
   });
 });
 
-// The DB keeps a spawned row's reports_to set and pointing at a row (CHECK + FK), so these two are reached
-// only through a stale row: deriveInheritance is called directly with one.
-test.each([
-  ["no spawner (null reports_to)", null],
-  ["a spawner row that doesn't exist", "ghost"],
-])("deriveInheritance fails closed with no fix: %s", async (_n, reportsTo) => {
+// The DB keeps a spawned row's reports_to set and pointing at a principal (NOT NULL + FK), so a missing spawner is
+// reached only through a stale row: deriveInheritance is called directly with one.
+test("deriveInheritance fails closed with no fix when the spawner row doesn't exist", async () => {
+  const reportsTo = "ghost";
   const child = await seedChild();
   const prepare = vi.spyOn(workspace, "prepare");
   try {
@@ -747,7 +752,7 @@ test.each([
       ),
     ).rejects.toMatchObject({
       name: "AgentStartError",
-      message: `The agent that spawned @${child.slug} no longer exists, so @${child.slug} can't start.`,
+      message: `The agent that spawned @${child.handle} no longer exists, so @${child.handle} can't start.`,
       fix: undefined,
     });
     expect(prepare).not.toHaveBeenCalled();
@@ -763,25 +768,22 @@ test.each([
   // Only an ephemeral row can be terminated, and only a terminated row can have a null credential (CHECKs),
   // so the spawner here is itself spawned by a top agent.
   const child = await seedChild();
-  await claimTestHandle(t.db, `top-${seq}`, "agent");
+  await seedTestPrincipal(t.db, "agent", `top-${seq}`, `top-${seq}`);
   await t.db.insert(schema.agents).values({
     id: `top-${seq}`,
-    slug: `top-${seq}`,
     displayName: "Top",
     template: "lead",
     config: {},
     runtime: "local",
     credentialId: "c1",
-    reportsToUser: await testManagerUserId(t.db),
+    reportsTo: await testManagerUserId(t.db),
   });
   await t.db
     .update(schema.agents)
     .set({
       kind: "ephemeral",
       reportsTo: `top-${seq}`,
-      reportsToUser: null,
       terminatedAt: new Date(),
-      terminatedBy: "@factory",
       credentialId: keepCredential ? "c1" : null,
     })
     .where(eq(schema.agents.id, agent.id));
@@ -789,7 +791,7 @@ test.each([
   try {
     await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
       name: "AgentStartError",
-      message: `@${agent.slug}, which spawned @${child.slug}, isn't active, so @${child.slug} can't start.`,
+      message: `@${agent.handle}, which spawned @${child.handle}, isn't active, so @${child.handle} can't start.`,
       fix: undefined,
     });
     expect(prepare).not.toHaveBeenCalled();
@@ -812,7 +814,7 @@ test("a loaded spawner counts as started ∩ current for secrets and started ∪
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBeUndefined(); // gained since it started: not yet held by the running process
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch", "Bash(curl:*)"]));
 });
 
@@ -826,7 +828,7 @@ test("a spawner that isn't loaded counts as its current config alone", async () 
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBe("npm-1");
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toContain("WebFetch");
   expect(deny).not.toContain("Bash(rm:*)");
 });
@@ -838,7 +840,7 @@ test("spawning is computed from the effective config being prepared, not from st
     .set({ config: { template: { can_spawn: ["dev"] } } })
     .where(eq(schema.agents.id, agent.id));
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).toContain("## Spawning");
+  expect(md(agent)).toContain("## Spawning");
 });
 
 test("a spawner that dropped a secret and a deny rule since it started: the child still gets neither secret, and keeps the deny rule", async () => {
@@ -849,7 +851,7 @@ test("a spawner that dropped a secret and a deny rule since it started: the chil
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBeUndefined();
   expect(spec.env.NPM_TOKEN).toBeUndefined();
-  expect(settingsOf(child.slug).permissions.deny).toContain("Bash(rm:*)");
+  expect(settingsOf(child).permissions.deny).toContain("Bash(rm:*)");
 });
 
 test("the stricter permission mode of started and current counts: a spawner that was auto at start still refuses a bypass child", async () => {
@@ -880,7 +882,7 @@ test("a spawner whose template is invalid fails the child's start generically, w
   const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
   expect(err).toBeInstanceOf(AgentStartError);
   expect(err).toMatchObject({
-    message: `The configuration of @${agent.slug}, which spawned @${child.slug}, can't be read, so @${child.slug} can't start.`,
+    message: `The configuration of @${agent.handle}, which spawned @${child.handle}, can't be read, so @${child.handle} can't start.`,
     fix: undefined,
   });
   expect((err as Error).message).not.toContain("Template lead");

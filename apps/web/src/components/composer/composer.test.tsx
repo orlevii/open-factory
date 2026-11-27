@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createUploadStore } from "@/features/session/uploads";
-import { readDraft } from "@/lib/drafts";
+import { readDraft, writeDraft } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { NO_FOLDERS, TOO_MANY } from "./attachments";
 import {
   type CompletionItem,
@@ -307,7 +308,7 @@ test("`@` anywhere opens the menu; items are asked for only while it is open", a
   expect(document.activeElement).toBe(box);
 });
 
-test("↑/↓ move the highlight; Enter accepts with `@slug ` and sends nothing", async () => {
+test("↑/↓ move the highlight; Enter accepts with `@handle ` and sends nothing", async () => {
   const { box, onSubmit } = setup({ completions: AT_ONLY });
   await userEvent.type(box, "ask @");
   expect(highlighted()).toHaveTextContent("Dev");
@@ -731,7 +732,7 @@ test("the toolbar's `/` button opens the menu in an empty box", async () => {
 function setupFiles(over: Partial<Parameters<typeof Composer>[0]> = {}) {
   installFakeXhr();
   const frames = holdFrames();
-  const store = createUploadStore("dev");
+  const store = createUploadStore(refFor("dev"));
   const r = setup({ attachments: store, ...over });
   const frame = r.box.closest("[data-composer-frame]") as HTMLElement;
   return { ...r, store, frames, frame };
@@ -760,7 +761,7 @@ test("a files-only paste attaches them as chips, max 12rem wide", () => {
   expect(pasteFiles(box, [file("notes.txt")])).toBe(false);
   expect(chips()).toHaveLength(1);
   expect(chips()[0]).toHaveTextContent("notes.txt");
-  expect(lastXhr().url).toBe("/api/agents/dev/uploads");
+  expect(lastXhr().url).toBe(`/api/agents/${refFor("dev")}/uploads`);
 });
 
 test("a file name is text: markup and bidi overrides are never interpreted", () => {
@@ -988,14 +989,14 @@ test("Send carries the finished uploads; a failed send puts the chips back", asy
 });
 
 test("removing a finished chip deletes the upload on the server", async () => {
-  const api = mockApi({ "DELETE /api/agents/dev/uploads/u1": () => json({}, 204) });
+  const api = mockApi({ [`DELETE /api/agents/${refFor("dev")}/uploads/u1`]: () => json({}, 204) });
   const { box } = setupFiles();
   pasteFiles(box, [file("a.txt")]);
   act(() => lastXhr().respond(201, ok("u1", "a.txt")));
   await userEvent.click(screen.getByRole("button", { name: "Remove a.txt" }));
   await vi.waitFor(() =>
     expect(api.calls).toContainEqual(
-      expect.objectContaining({ method: "DELETE", url: "/api/agents/dev/uploads/u1" }),
+      expect.objectContaining({ method: "DELETE", url: `/api/agents/${refFor("dev")}/uploads/u1` }),
     ),
   );
 });
@@ -1003,7 +1004,7 @@ test("removing a finished chip deletes the upload on the server", async () => {
 test("leaving keeps the uploads: a remounted composer shows them again", () => {
   installFakeXhr();
   holdFrames();
-  const store = createUploadStore("dev");
+  const store = createUploadStore(refFor("dev"));
   const props = {
     draftKey: "agent:dev",
     placeholder: "p",
@@ -1192,7 +1193,7 @@ test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Prev
   try {
     setup({
       preview: true,
-      attachments: createUploadStore("dev"),
+      attachments: createUploadStore(refFor("dev")),
       completions: { slash: SLASH, at: AT },
       hintMode: "coarse",
       turnOpen: true,
@@ -1399,4 +1400,287 @@ test("a held Send is focusable and aria-disabled, its reason linked; pressing it
   await userEvent.click(send);
   expect(onSubmit).not.toHaveBeenCalled();
   expect(slot()).toHaveTextContent("Waiting for 1 upload");
+});
+
+// ---- Mentions: atomic ranges over the text (principals and mentions §4.5) ----
+
+const ADA = refFor("ada");
+const BOB = refFor("bob");
+const HANDLES: Record<string, string> = { [ADA]: "ada", [BOB]: "bob" };
+const MENTIONING: CompletionSource = {
+  trigger: "@",
+  label: "Mention someone",
+  opensAt: mentionOpensAt,
+  items: (q) =>
+    [
+      { id: ADA, label: "Ada", detail: "@ada", group: "agents" },
+      { id: BOB, label: "Bob", detail: "@bob", group: "humans" },
+    ].filter((p) => p.detail.slice(1).startsWith(q)),
+  accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
+  toMention: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+  mentionHandle: (ref) => HANDLES[ref],
+};
+const MENTIONS = { at: MENTIONING };
+const sentText = (onSubmit: ReturnType<typeof setup>["onSubmit"]) => onSubmit.mock.calls[0]?.[0];
+/** The caret moved to `at`, then the event that makes React report a selection (a click's mouseup, a key's keyup). */
+const caretAt = (box: HTMLElement, at: number, to = at, event: "mouseUp" | "keyUp" = "mouseUp") => {
+  (box as HTMLTextAreaElement).setSelectionRange(at, to);
+  fireEvent[event](box);
+};
+const undoKey = (box: HTMLElement) =>
+  fireEvent(
+    box,
+    new InputEvent("beforeinput", { inputType: "historyUndo", cancelable: true, bubbles: true }),
+  );
+async function pickAda(box: HTMLElement, before = "") {
+  await userEvent.type(box, `${before}@a`);
+  await userEvent.keyboard("{Tab}");
+}
+
+test("↑ recall puts the caret at the end of the shown text, whatever length the mention shows as", async () => {
+  const long = refFor("long");
+  const source: CompletionSource = {
+    ...MENTIONING,
+    mentionHandle: (ref) => (ref === long ? "a-very-long-handle-name" : HANDLES[ref]),
+  };
+  const { box } = setup({ completions: { at: source }, recall: () => `<@${long}> please` });
+  await userEvent.click(box);
+  await userEvent.keyboard("{ArrowUp}");
+  expect(box).toHaveValue("@a-very-long-handle-name please");
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(
+    (box as HTMLTextAreaElement).value.length,
+  );
+});
+
+test("picking from @ inserts a mention that is sent as <@ref>", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  await pickAda(box, "hi ");
+  expect(box).toHaveValue("hi @ada ");
+  await userEvent.type(box, "now{Enter}");
+  expect(sentText(onSubmit)).toBe(`hi <@${ADA}> now`);
+});
+
+test("typed @name that wasn't picked is sent as text", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  await userEvent.type(box, "hi @ada{Escape}{Enter}");
+  expect(sentText(onSubmit)).toBe("hi @ada");
+});
+
+test("a click inside a mention puts the caret at its edge", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  fireEvent.mouseDown(box);
+  caretAt(box, 1);
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(0);
+  caretAt(box, 3);
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(4);
+});
+
+test("an arrow key moves the caret across a mention in one step", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "ArrowLeft" });
+  caretAt(box, 3, 3, "keyUp"); // the browser's own move: one character left, into the mention
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(0);
+});
+
+test("a selection ending inside a mention grows to hold the whole mention", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box, "x ");
+  caretAt(box, 0, 4);
+  expect([
+    (box as HTMLTextAreaElement).selectionStart,
+    (box as HTMLTextAreaElement).selectionEnd,
+  ]).toEqual([0, 6]);
+});
+
+test("Backspace at a mention's end removes it whole", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "Backspace" });
+  expect(box).toHaveValue("");
+  await userEvent.type(box, "x{Enter}");
+  expect(sentText(onSubmit)).toBe("x");
+});
+
+test("Delete at a mention's start removes it whole, with its space", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await userEvent.type(box, "a ");
+  await pickAda(box);
+  caretAt(box, 2);
+  fireEvent.keyDown(box, { key: "Delete" });
+  expect(box).toHaveValue("a ");
+});
+
+test("undo after deleting a mention restores it as a mention", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "Backspace" });
+  expect(box).toHaveValue("");
+  const notPrevented = undoKey(box);
+  expect(notPrevented).toBe(false); // the browser's own undo was stopped
+  expect(box).toHaveValue("@ada ");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${ADA}> `);
+});
+
+test("undo right after a pick brings back @query with the menu closed", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  expect(box).toHaveValue("@ada ");
+  undoKey(box);
+  expect(box).toHaveValue("@a");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("Ctrl+Y redoes what undo took back", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+  expect(box).toHaveValue("@a");
+  fireEvent.keyDown(box, { key: "y", ctrlKey: true });
+  expect(box).toHaveValue("@ada ");
+});
+
+test("typing undoes a word at a time, and after a pause", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const user = userEvent.setup({ delay: null });
+  const { box } = setup({ completions: MENTIONS });
+  await user.type(box, "one two");
+  vi.setSystemTime(Date.now() + 600);
+  await user.type(box, "three");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("one two");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("one");
+  fireEvent.keyDown(box, { key: "z", metaKey: true, shiftKey: true });
+  expect(box).toHaveValue("one two");
+});
+
+test("pasting copied mentions keeps them as mentions", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  const html = `<span data-of-mention="${ADA}">@ada</span> and <span data-of-mention="${BOB}">@bob</span>`;
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/html" ? html : "@ada and @bob"),
+    },
+  });
+  expect(box).toHaveValue("@ada and @bob");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${ADA}> and <@${BOB}>`);
+});
+
+test("a pasted stored mention in plain text becomes a mention", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/plain" ? `<@${BOB}|bob> hi` : ""),
+    },
+  });
+  expect(box).toHaveValue("@bob hi");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${BOB}> hi`);
+});
+
+test("copying a mention writes @handle as text and a data-of-mention span as html", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  (box as HTMLTextAreaElement).setSelectionRange(0, 5);
+  const set = vi.fn();
+  fireEvent.copy(box, { clipboardData: { setData: set } });
+  expect(set).toHaveBeenCalledWith("text/plain", "@ada ");
+  expect(set).toHaveBeenCalledWith("text/html", `<span data-of-mention="${ADA}">@ada</span> `);
+});
+
+test("a draft with a mention hydrates back to @handle and sends <@ref>", async () => {
+  writeDraft("agent:dev", `hi <@${ADA}> there`);
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  expect(box).toHaveValue("hi @ada there");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`hi <@${ADA}> there`);
+});
+
+test("a mention whose principal is still pending shows @… and takes its handle once known", async () => {
+  const late: Record<string, string> = {};
+  let notify = () => {};
+  const source: CompletionSource = {
+    ...MENTIONING,
+    mentionHandle: (ref) => late[ref],
+    watchMentions: (cb) => {
+      notify = cb;
+      return () => {};
+    },
+  };
+  writeDraft("agent:dev", `hi <@${ADA}>`);
+  const { box } = setup({ completions: { at: source } });
+  expect(box).toHaveValue("hi @…");
+  late[ADA] = "ada";
+  act(() => notify());
+  expect(box).toHaveValue("hi @ada");
+});
+
+test("an IME composition that starts inside a mention turns it back into plain text", async () => {
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  await pickAda(box);
+  (box as HTMLTextAreaElement).setSelectionRange(2, 2); // no select event: the caret is left inside
+  fireEvent.compositionStart(box);
+  fireEvent.compositionEnd(box);
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe("@ada ");
+});
+
+test("a composer without a mentioning source leaves <@ref> text raw", async () => {
+  writeDraft("agent:dev", `see <@${ADA}>`);
+  const { box } = setup({ completions: { at: AT } });
+  expect(box).toHaveValue(`see <@${ADA}>`);
+});
+
+test("a stored mention with a label or an uppercase ref hydrates as a mention without looping", async () => {
+  writeDraft("agent:dev", `a <@${ADA}|ada> b <@${BOB.toUpperCase()}>`);
+  const { box, onSubmit } = setup({ completions: MENTIONS });
+  expect(box).toHaveValue("a @ada b @bob");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toContain(`<@${ADA}|ada>`);
+});
+
+test("cutting a mention removes it, puts it on the clipboard as a mention, and undo brings it back", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await pickAda(box, "x ");
+  (box as HTMLTextAreaElement).setSelectionRange(2, 7);
+  const set = vi.fn();
+  fireEvent.cut(box, { clipboardData: { setData: set } });
+  expect(set).toHaveBeenCalledWith("text/html", `<span data-of-mention="${ADA}">@ada</span> `);
+  expect(box).toHaveValue("x ");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("x @ada ");
+});
+
+test("a paste never opens a menu, even when it ends in an @query", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  const html = `<span data-of-mention="${ADA}">@ada</span> and @bo`;
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/html" ? html : "@ada and @bo"),
+    },
+  });
+  caretAt(box, 12, 12, "keyUp");
+  expect(box).toHaveValue("@ada and @bo");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("an @query with no match closes the menu, and Esc then typing on doesn't reopen it", async () => {
+  const { box } = setup({ completions: MENTIONS });
+  await userEvent.type(box, "@a");
+  expect(screen.getByRole("listbox", { name: "Mention someone" })).toBeInTheDocument();
+  await userEvent.type(box, "zz");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.clear(box);
+  await userEvent.type(box, "@a{Escape}d");
+  expect(screen.queryByRole("listbox")).toBeNull();
 });

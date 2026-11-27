@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import { isSpeechRow, type Row } from "./rows";
 import { Timeline } from "./timeline";
@@ -76,7 +77,7 @@ test("isSpeechRow: messages, outgoing and text", () => {
 function setup(extra: Partial<Parameters<typeof Timeline>[0]> = {}) {
   const base = [msg(1), text(2)];
   const props = {
-    slug: "dev",
+    agentRef: refFor("dev"),
     rows: base,
     failedIds: new Set<string>(),
     interruptedEnds: new Set<number>(),

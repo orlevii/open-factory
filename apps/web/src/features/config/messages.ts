@@ -99,21 +99,22 @@ export const CONFIG_PAGE_COPY = {
 } as const;
 
 /** "Saved. Restarts @ana when idle.": only when the restart notice would have shown (running, with changes). */
-export const savedRestarts = (slug: string) => `Saved. Restarts @${slug} when idle.`;
+export const savedRestarts = (handle: string) => `Saved. Restarts @${handle} when idle.`;
 /** A save checked against the overlay schema only, because the template is broken (R5). */
 export const savedSchemaOnly = (template: string) =>
   `Saved. Checked fully once ${template} is fixed.`;
 /** The restart notice above the footer, while the agent is running (client-side `summarizeChanges`). */
-export const restartNotice = (slug: string, summary: string) =>
-  `Saving restarts @${slug} when idle to apply: ${summary}.`;
+export const restartNotice = (handle: string, summary: string) =>
+  `Saving restarts @${handle} when idle to apply: ${summary}.`;
 /** The restart-pending top line. */
 export const restartPendingLine = (summary: string) =>
   summary ? `Restarts when idle to apply: ${summary}.` : "Restarts when idle to apply changes.";
-export const archivedLine = (slug: string) =>
-  `@${slug} is archived. Changes apply when it's restored.`;
-export const brokenTemplateLine = (template: string, slug: string) =>
-  `Template ${template} has errors. @${slug} can't start.`;
-export const noAgentLine = (slug: string) => `There is no agent @${slug}.`;
+export const archivedLine = (handle: string) =>
+  `@${handle} is archived. Changes apply when it's restored.`;
+export const brokenTemplateLine = (template: string, handle: string) =>
+  `Template ${template} has errors. @${handle} can't start.`;
+/** An agent route whose ref names no agent. */
+export const NO_AGENT_LINE = "No agent at this link.";
 
 /** The template editor's Configuration tab (spec §12.5). */
 export const TEMPLATE_TAB_COPY = {
@@ -160,10 +161,10 @@ export const AGENT_RUNTIME_COPY = {
   templateDiffers: (runtime: string) => `Its template says ${runtime}, which applies to new agents`,
   bypassTemplate:
     "Local isn't available: the template's permission mode is Bypass, which needs Docker",
-  toLocalTitle: (slug: string) => `Run @${slug} outside the sandbox?`,
+  toLocalTitle: (handle: string) => `Run @${handle} outside the sandbox?`,
   toLocalBody:
     "It restarts on this machine with your user's access: every file, repo and key you can reach, not only its workdir and projects.",
-  toLocalAction: (slug: string) => `Run @${slug} locally`,
+  toLocalAction: (handle: string) => `Run @${handle} locally`,
   failed: "Couldn't switch the runtime. Try again.",
 } as const;
 

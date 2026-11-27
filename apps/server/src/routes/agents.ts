@@ -25,9 +25,9 @@ import {
   resetPersonaResponseSchema,
   restartAgentBodySchema,
   restartAgentResponseSchema,
-  slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
+import { mentionOf } from "@open-factory/shared/mentions";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -51,24 +51,26 @@ import {
 import { restartChanges, restartRuntimeAllowed } from "../agents/restart-changes.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { FieldError } from "../errors.ts";
+import { NO_AGENT_AT_REF, refParams, refSchema } from "./ref-params.ts";
 import { parseDays } from "./usage.ts";
 
-const slugParams = z.object({ slug: slugSchema });
-const queueItemParams = z.object({ slug: slugSchema, messageId: z.string().min(1) });
+const queueItemParams = z.object({ ref: refSchema, messageId: z.string().min(1) });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
+const notFound = (reply: FastifyReply) => err(reply, 404, "agent_not_found", NO_AGENT_AT_REF);
 const utf8 = new TextEncoder();
 
 export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: Fastify validates before preHandler, so auth must come first (401 before 400).
   app.addHook("onRequest", requireUser);
 
-  const user = (req: { user?: { id: string; handle: string } }) => {
+  const user = (req: { user?: { id: string; handle: string; ref: string } }) => {
     if (!req.user) throw new Error("requireUser did not set request.user");
     return req.user;
   };
-  const human = (req: { user?: { id: string; handle: string } }): Actor => ({
+  const human = (req: { user?: { id: string; handle: string; ref: string } }): Actor => ({
     kind: "human",
+    ref: user(req).ref,
     handle: user(req).handle,
   });
 
@@ -82,28 +84,28 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.get(
-    "/api/agents/:slug/usage",
-    { schema: { params: slugParams, response: { 200: agentUsageSchema } } },
+    "/api/agents/:ref/usage",
+    { schema: { params: refParams, response: { 200: agentUsageSchema } } },
     async (req, reply) => {
-      const u = await app.usage.agent(req.params.slug, parseDays(req.query));
-      if (!u) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const u = await app.usage.agent(req.params.ref, parseDays(req.query));
+      if (!u) return notFound(reply);
       return u;
     },
   );
 
   // I1 §6.3: this human's thread with the agent, with turn outcomes and the runtime's `working` fact.
   app.get(
-    "/api/agents/:slug/chat",
+    "/api/agents/:ref/chat",
     {
       schema: {
-        params: slugParams,
+        params: refParams,
         querystring: chatQuerySchema,
         response: { 200: chatPageSchema },
       },
     },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       const me = user(req);
       const { before, around, limit } = req.query;
       if (before !== undefined && around !== undefined)
@@ -112,14 +114,13 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       // not yet visible to either read, never both missing (§6.3 read order).
       const working = rt.workingFor(me.id);
       // The runtime's row can be stale (archived since): a rejected row's reason reads the stored one.
-      const row = (await app.store.agentBySlug(req.params.slug)) ?? rt.agent;
+      const row = (await app.store.agentByRef(req.params.ref)) ?? rt.agent;
       let slice: Awaited<ReturnType<typeof app.chat.page>>;
       try {
         slice = await app.chat.page(
           {
             agent: {
               id: row.id,
-              slug: row.slug,
               archivedAt: row.archivedAt,
               terminatedAt: row.terminatedAt,
             },
@@ -151,11 +152,11 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       reply.code(201).send({ agent: await app.agents.create(req.body, human(req)) }),
   );
 
-  app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
-    const rt = await app.runtimes.bySlug(req.params.slug);
-    if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+  app.get("/api/agents/:ref", { schema: { params: refParams } }, async (req, reply) => {
+    const rt = await app.runtimes.byRef(req.params.ref);
+    if (!rt) return notFound(reply);
     const [agent, lastSeq] = await Promise.all([
-      app.agents.summary(req.params.slug),
+      app.agents.summary(req.params.ref),
       app.store.lastSeq(rt.agent.id),
     ]);
     return agentDetailSchema.parse({ agent, queue: rt.queueItems(), lastSeq });
@@ -163,11 +164,11 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // U3 §13.3: the commands this agent may run (the allowed set the dispatch route enforces too).
   app.get(
-    "/api/agents/:slug/commands",
-    { schema: { params: slugParams, response: { 200: agentCommandsResponseSchema } } },
+    "/api/agents/:ref/commands",
+    { schema: { params: refParams, response: { 200: agentCommandsResponseSchema } } },
     async (req, reply) => {
-      const row = await app.store.agentBySlug(req.params.slug);
-      if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const row = await app.store.agentByRef(req.params.ref);
+      if (!row) return notFound(reply);
       // The skills the next start would have, never `started`: a stored session list is the running process's own,
       // so against `started` it could never be stale. Before the first start they are the list itself.
       return commandsResponse(
@@ -178,64 +179,65 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.patch(
-    "/api/agents/:slug",
+    "/api/agents/:ref",
     {
       schema: {
-        params: slugParams,
+        params: refParams,
         body: patchAgentBodySchema,
         response: { 200: agentResponseSchema },
       },
     },
-    async (req) => ({ agent: await app.agents.update(req.params.slug, req.body, human(req)) }),
+    async (req) => ({ agent: await app.agents.update(req.params.ref, req.body, human(req)) }),
   );
 
   // I2 §12.1: the agent's overlay over its template. The version is derived from the overlay, never stored.
   app.get(
-    "/api/agents/:slug/config",
-    { schema: { params: slugParams, response: { 200: agentConfigResponseSchema } } },
-    async (req) => app.configs.getConfig(req.params.slug),
+    "/api/agents/:ref/config",
+    { schema: { params: refParams, response: { 200: agentConfigResponseSchema } } },
+    async (req) => app.configs.getConfig(req.params.ref),
   );
 
   app.put(
-    "/api/agents/:slug/config",
+    "/api/agents/:ref/config",
     {
       schema: {
-        params: slugParams,
+        params: refParams,
         body: putAgentConfigBodySchema,
         response: { 200: putAgentConfigResponseSchema },
       },
     },
     async (req) =>
-      app.configs.saveOverlay(req.params.slug, req.body.overlay, req.body.baseVersion, human(req)),
+      app.configs.saveOverlay(req.params.ref, req.body.overlay, req.body.baseVersion, human(req)),
   );
 
   app.post(
-    "/api/agents/:slug/reset-persona",
-    { schema: { params: slugParams, response: { 200: resetPersonaResponseSchema } } },
-    async (req) => app.agents.resetPersona(req.params.slug, `@${user(req).handle}`),
+    "/api/agents/:ref/reset-persona",
+    { schema: { params: refParams, response: { 200: resetPersonaResponseSchema } } },
+    async (req) => app.agents.resetPersona(req.params.ref, mentionOf(user(req).ref)),
   );
 
   app.post(
-    "/api/agents/:slug/archive",
-    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
-    async (req) => ({ agent: await app.agents.archive(req.params.slug, human(req)) }),
+    "/api/agents/:ref/archive",
+    { schema: { params: refParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.archive(req.params.ref, human(req)) }),
   );
 
   app.post(
-    "/api/agents/:slug/unarchive",
-    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
-    async (req) => ({ agent: await app.agents.unarchive(req.params.slug, human(req)) }),
+    "/api/agents/:ref/unarchive",
+    { schema: { params: refParams, response: { 200: agentResponseSchema } } },
+    async (req) => ({ agent: await app.agents.unarchive(req.params.ref, human(req)) }),
   );
 
   /** S7 §8: the one termination path, with the human as `by`. Idempotent: a terminated agent stays as it is. */
   app.post(
-    "/api/agents/:slug/terminate",
-    { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
+    "/api/agents/:ref/terminate",
+    { schema: { params: refParams, response: { 200: agentResponseSchema } } },
     async (req, reply) => {
-      const row = await app.store.agentBySlug(req.params.slug);
-      if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      await app.terminator.terminate(row.id, `@${user(req).handle}`);
-      return { agent: await app.agents.summary(row.slug) };
+      const row = await app.store.agentByRef(req.params.ref);
+      if (!row) return notFound(reply);
+      const { id, ref, handle } = user(req);
+      await app.terminator.terminate(row.id, { id, kind: "human", ref, handle });
+      return { agent: await app.agents.summary(req.params.ref) };
     },
   );
 
@@ -244,18 +246,19 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
    * row re-read under it: a pin that returned success always keeps the workspace.
    */
   const setPin =
-    (pinned: boolean) => async (req: { params: { slug: string } }, reply: FastifyReply) => {
-      const slug = req.params.slug;
-      const outcome = await app.workspace.lock.run(slug, async () => {
-        const row = await app.store.agentBySlug(slug);
+    (pinned: boolean) => async (req: { params: { ref: string } }, reply: FastifyReply) => {
+      const ref = req.params.ref;
+      const found = await app.store.agentByRef(ref);
+      if (!found) return notFound(reply);
+      const outcome = await app.workspace.lock.run(ref, async () => {
+        const row = await app.store.agentById(found.id);
         if (!row) return "not_found" as const;
         if (!row.terminatedAt) return "not_terminated" as const;
         if (row.workspaceDeletedAt) return "workspace_deleted" as const;
         await app.store.setWorkspacePinned(row.id, pinned);
         return "ok" as const;
       });
-      if (outcome === "not_found")
-        return err(reply, 404, "agent_not_found", `No agent named ${slug}`);
+      if (outcome === "not_found") return notFound(reply);
       if (outcome === "not_terminated")
         return err(
           reply,
@@ -265,18 +268,18 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         );
       if (outcome === "workspace_deleted")
         return err(reply, 409, "workspace_deleted", "This agent's workspace was already deleted.");
-      return { agent: await app.agents.summary(slug) };
+      return { agent: await app.agents.summary(ref) };
     };
-  const pinRoute = { schema: { params: slugParams, response: { 200: agentResponseSchema } } };
-  app.put("/api/agents/:slug/workspace-pin", pinRoute, setPin(true));
-  app.delete("/api/agents/:slug/workspace-pin", pinRoute, setPin(false));
+  const pinRoute = { schema: { params: refParams, response: { 200: agentResponseSchema } } };
+  app.put("/api/agents/:ref/workspace-pin", pinRoute, setPin(true));
+  app.delete("/api/agents/:ref/workspace-pin", pinRoute, setPin(false));
 
   app.get(
-    "/api/agents/:slug/events",
-    { schema: { params: slugParams, querystring: eventsQuerySchema } },
+    "/api/agents/:ref/events",
+    { schema: { params: refParams, querystring: eventsQuerySchema } },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       const { before, around, limit } = req.query;
       if (before !== undefined && around !== undefined) {
         return err(reply, 400, "validation_error", "before and around can't be combined");
@@ -313,13 +316,16 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   /** The audit line (U3 §6.4): who, which agent, which message, and the refusal when there was one. */
   const queueAction = async <T>(
     action: "cancel" | "restore",
-    req: { user?: { id: string; handle: string }; params: { slug: string; messageId: string } },
+    req: {
+      user?: { id: string; handle: string; ref: string };
+      params: { ref: string; messageId: string };
+    },
     reply: FastifyReply,
     run: (rt: AgentRuntime, userId: string) => Promise<T>,
   ) => {
-    const rt = await app.runtimes.bySlug(req.params.slug);
-    if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-    const o = { user: user(req).id, agent: rt.agent.slug, messageId: req.params.messageId };
+    const rt = await app.runtimes.byRef(req.params.ref);
+    if (!rt) return notFound(reply);
+    const o = { user: user(req).id, agent: req.params.ref, messageId: req.params.messageId };
     try {
       const out = await run(rt, o.user);
       app.log.info(o, `queued message ${action}`);
@@ -333,7 +339,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   };
 
   app.delete(
-    "/api/agents/:slug/queue/:messageId",
+    "/api/agents/:ref/queue/:messageId",
     { schema: { params: queueItemParams, response: { 200: queueItemResponseSchema } } },
     (req, reply) =>
       queueAction("cancel", req, reply, async (rt, userId) => ({
@@ -342,7 +348,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
-    "/api/agents/:slug/queue/:messageId/restore",
+    "/api/agents/:ref/queue/:messageId/restore",
     { schema: { params: queueItemParams } },
     (req, reply) =>
       queueAction("restore", req, reply, async (rt, userId) => {
@@ -352,15 +358,15 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
-    "/api/agents/:slug/compact",
-    { schema: { params: slugParams, body: compactBodySchema } },
+    "/api/agents/:ref/compact",
+    { schema: { params: refParams, body: compactBodySchema } },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       try {
         const item = await rt.compact({
           ...(req.body.focus ? { focus: req.body.focus } : {}),
-          byHandle: user(req).handle,
+          by: mentionOf(user(req).ref),
           userId: user(req).id,
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
@@ -381,17 +387,16 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
    * written raw. Every outcome is audited with the kind and refusal code, never the text.
    */
   app.post(
-    "/api/agents/:slug/input",
-    { schema: { params: slugParams, body: inputBodySchema } },
+    "/api/agents/:ref/input",
+    { schema: { params: refParams, body: inputBodySchema } },
     async (req, reply) => {
       const u = user(req);
-      const row = await app.store.agentBySlug(req.params.slug);
-      const rt = row && (await app.runtimes.bySlug(req.params.slug));
-      if (!row || !rt)
-        return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const row = await app.store.agentByRef(req.params.ref);
+      const rt = row && (await app.runtimes.byRef(req.params.ref));
+      if (!row || !rt) return notFound(reply);
       const { clientMessageId } = req.body;
       const text = req.body.text.trimEnd();
-      const audit = { user: u.id, agent: row.slug };
+      const audit = { user: u.id, agent: req.params.ref };
       const refuse = (kind: string, status: number, code: string, message: string) => {
         app.log.info({ ...audit, kind, refused: code }, "input refused");
         return err(reply, status, code, message);
@@ -422,14 +427,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           cls.kind === "command" && cls.name === "compact"
             ? await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-                byHandle: u.handle,
+                by: mentionOf(u.ref),
                 userId: u.id,
                 clientMessageId,
               })
             : await rt.rawInput({
                 text: neutraliseEnvelopeTags(cls.kind === "command" ? text.trimStart() : text),
                 userId: u.id,
-                by: `@${u.handle}`,
+                by: mentionOf(u.ref),
                 clientMessageId,
               });
         app.log.info({ ...audit, kind: cls.kind === "command" ? cls.name : kind }, "input queued");
@@ -458,23 +463,23 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   };
 
   app.post(
-    "/api/agents/:slug/restart",
+    "/api/agents/:ref/restart",
     {
       schema: {
-        params: slugParams,
+        params: refParams,
         body: restartAgentBodySchema.nullish(), // a bodyless POST arrives as null
         response: { 202: restartAgentResponseSchema },
       },
     },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       try {
         // The row is read fresh, not the runtime's (it can be stale), so the config is the one a start would use.
-        const row = await app.store.agentBySlug(req.params.slug);
-        if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+        const row = await app.store.agentByRef(req.params.ref);
+        if (!row) return notFound(reply);
         const outcome = await rt.restartNow({
-          by: `@${user(req).handle}`,
+          by: mentionOf(user(req).ref),
           force: req.body?.force ?? false,
           changes: await restartChanges(app, row),
           // A Restart certain to fail isn't offered (spec §13).
@@ -489,13 +494,13 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // S9 §10.3: a human stops the agent's in-session crons (its process hibernates, with the passive notice waiting).
   app.post(
-    "/api/agents/:slug/stop-crons",
-    { schema: { params: slugParams, response: { 200: stopCronsResponseSchema } } },
+    "/api/agents/:ref/stop-crons",
+    { schema: { params: refParams, response: { 200: stopCronsResponseSchema } } },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       try {
-        return await rt.stopCrons(user(req).handle);
+        return await rt.stopCrons(mentionOf(user(req).ref));
       } catch (e) {
         return recoveryError(reply, e);
       }
@@ -503,13 +508,13 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
-    "/api/agents/:slug/reset-session",
-    { schema: { params: slugParams } },
+    "/api/agents/:ref/reset-session",
+    { schema: { params: refParams } },
     async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const rt = await app.runtimes.byRef(req.params.ref);
+      if (!rt) return notFound(reply);
       try {
-        await rt.resetSession({ byHandle: user(req).handle });
+        await rt.resetSession({ by: mentionOf(user(req).ref) });
         return reply.code(202).send({});
       } catch (e) {
         return recoveryError(reply, e);
@@ -517,24 +522,19 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  app.post(
-    "/api/agents/:slug/interrupt",
-    { schema: { params: slugParams } },
-    async (req, reply) => {
-      const rt = await app.runtimes.bySlug(req.params.slug);
-      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      try {
-        await rt.interrupt({ byHandle: user(req).handle });
-        return reply.code(202).send({});
-      } catch (e) {
-        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
-        if (e instanceof AgentTerminatedError)
-          return err(reply, 409, "agent_terminated", e.message);
-        if (e instanceof NoOpenTurnError)
-          return err(reply, 409, "no_open_turn", "Nothing to interrupt");
-        if (e instanceof CompactingError) return err(reply, 409, "compacting", e.message);
-        throw e;
-      }
-    },
-  );
+  app.post("/api/agents/:ref/interrupt", { schema: { params: refParams } }, async (req, reply) => {
+    const rt = await app.runtimes.byRef(req.params.ref);
+    if (!rt) return notFound(reply);
+    try {
+      await rt.interrupt({ by: mentionOf(user(req).ref) });
+      return reply.code(202).send({});
+    } catch (e) {
+      if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
+      if (e instanceof AgentTerminatedError) return err(reply, 409, "agent_terminated", e.message);
+      if (e instanceof NoOpenTurnError)
+        return err(reply, 409, "no_open_turn", "Nothing to interrupt");
+      if (e instanceof CompactingError) return err(reply, 409, "compacting", e.message);
+      throw e;
+    }
+  });
 };

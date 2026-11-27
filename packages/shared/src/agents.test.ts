@@ -10,11 +10,12 @@ import {
   terminateAgentToolSchema,
 } from "./agents.ts";
 
-test("PATCH body is strict: template and slug are rejected, not dropped", () => {
+test("PATCH body is strict: an unknown field is rejected, not dropped", () => {
   expect(patchAgentBodySchema.safeParse({ description: "x" }).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({}).success).toBe(true);
   expect(patchAgentBodySchema.safeParse({ template: "lead" }).success).toBe(false);
-  expect(patchAgentBodySchema.safeParse({ slug: "boss", description: "x" }).success).toBe(false);
+  expect(patchAgentBodySchema.safeParse({ handle: "boss", description: "x" }).success).toBe(true);
+  expect(patchAgentBodySchema.safeParse({ handle: "Boss" }).success).toBe(false);
 });
 
 test("spawn tool schema: enum from the caller's templates, suffix pattern, required fields", () => {
@@ -30,7 +31,7 @@ test("spawn tool schema: enum from the caller's templates, suffix pattern, requi
   ).toBe(false);
 });
 test("terminate tool schema", () => {
-  expect(terminateAgentToolSchema.safeParse({ slug: "@tech-lead-ab12" }).success).toBe(true);
+  expect(terminateAgentToolSchema.safeParse({ target: "@tech-lead-ab12" }).success).toBe(true);
   expect(terminateAgentToolSchema.safeParse({}).success).toBe(false);
 });
 test("list query: ended defaults to exclude", () => {
@@ -86,10 +87,10 @@ test("PATCH manageOrg must be a boolean", () => {
 test("create body accepts manageOrg as a boolean", () => {
   const valid = {
     template: "lead",
-    slug: "boss",
+    handle: "boss",
     displayName: "Boss",
     description: "",
-    reportsTo: "@or",
+    reportsTo: "k7x2m9qd",
     credential: "default",
   };
   expect(createAgentBodySchema.parse({ ...valid, manageOrg: true }).manageOrg).toBe(true);
@@ -97,17 +98,24 @@ test("create body accepts manageOrg as a boolean", () => {
 });
 
 test.each([
-  ["@or", "or"],
-  ["or", "or"],
-  [" @lead-dev ", "lead-dev"],
-])("a manager reference %j is read as the handle %j", (given, handle) => {
-  expect(patchAgentBodySchema.parse({ reportsTo: given }).reportsTo).toBe(handle);
+  ["k7x2m9qd", "k7x2m9qd"],
+  [" K7X2M9QD ", "k7x2m9qd"],
+  ["abidef23", "ab1def23"],
+])("a manager reference %j is read as the ref %j", (given, ref) => {
+  expect(patchAgentBodySchema.parse({ reportsTo: given }).reportsTo).toBe(ref);
 });
 
-test.each([null, "", "@", "  "])("a create body without a manager (%j) is refused", (reportsTo) => {
+test.each(["or", "@or", "k7x2m9q", "k7x2m9qdd"])(
+  "a manager that is not a ref (%j) is refused",
+  (given) => {
+    expect(patchAgentBodySchema.safeParse({ reportsTo: given }).success).toBe(false);
+  },
+);
+
+test.each([null, "", "  "])("a create body without a manager (%j) is refused", (reportsTo) => {
   const body = {
     template: "lead",
-    slug: "boss",
+    handle: "boss",
     displayName: "Boss",
     description: "",
     reportsTo,

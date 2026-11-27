@@ -23,7 +23,7 @@ export const FACT_CODES = [
 export type FactCode = (typeof FACT_CODES)[number];
 
 export const subjectSchema = z.object({
-  slug: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   relation: z.enum(["peer", "report"]),
   left: z
@@ -50,7 +50,7 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 
 /**
  * A request a report had received in its current turn when it wrote a forwarded text: the message's id and its
- * envelope sender (`@handle`, `@scheduler`, `@factory`). A `member_update`'s `re` lists them, so its manager can tell
+ * envelope sender (the sender's `<@ref>` mention, or `@scheduler` / `@factory`). A `member_update`'s `re` lists them, so its manager can tell
  * whose request the text answers.
  */
 export const requestRefSchema = z.object({ id: z.string(), from: z.string() });
@@ -101,16 +101,24 @@ export const INBOX_KINDS = ["notice", "mention", "task_event", "credential"] as 
 export const loopHoldSchema = z.object({
   id: z.string(),
   agents: z.tuple([
-    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
-    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
+    z.object({
+      ref: z.string(),
+      handle: z.string(),
+      status: z.enum(["live", "terminated", "archived"]),
+    }),
+    z.object({
+      ref: z.string(),
+      handle: z.string(),
+      status: z.enum(["live", "terminated", "archived"]),
+    }),
   ]),
   /** Rows still `loop_held` on this hold. */
   waiting: z.number().int(),
   /** Rows whose state is neither `loop_held` nor `rejected`. */
   sentOn: z.number().int(),
   resumedAt: z.string().nullable(),
-  /** The resuming human's handle with `@`. */
-  resumedBy: z.string().nullable(),
+  /** The resuming human. */
+  resumedBy: z.object({ ref: z.string(), handle: z.string() }).nullable(),
 });
 export const resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() });
 
@@ -119,7 +127,11 @@ export const inboxItemSchema = z.object({
   messageId: z.string(),
   kind: z.enum(INBOX_KINDS),
   read: z.boolean(),
-  from: z.object({ kind: z.enum(["agent", "human", "factory"]), name: z.string() }),
+  /** An agent or a human by principal; `factory` for the factory's own items. */
+  from: z.discriminatedUnion("kind", [
+    z.object({ kind: z.enum(["agent", "human"]), ref: z.string(), handle: z.string() }),
+    z.object({ kind: z.literal("factory") }),
+  ]),
   about: z.string().optional(),
   to: z.string(),
   preview: z.string(),
@@ -140,7 +152,7 @@ export const inboxItemSchema = z.object({
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),
-      agentSlug: z.string(),
+      agentRef: z.string(),
       seq: z.number().int().optional(),
     }),
     z.object({ kind: z.literal("task"), key: z.string(), commentId: z.string().optional() }),
@@ -163,7 +175,7 @@ export const readFromBodySchema = z.object({
   kind: z.enum(["message", "member_update"]).default("message"),
 });
 export const readFromResponseSchema = z.object({ marked: z.number().int(), readAt: z.string() });
-export const eventRefSchema = z.object({ agentSlug: z.string(), seq: z.number().int() });
+export const eventRefSchema = z.object({ agentRef: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({
   id: z.string(),
   kind: z.enum(MESSAGE_KINDS),

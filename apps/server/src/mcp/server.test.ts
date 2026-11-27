@@ -2,24 +2,24 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { callerOf, createFactoryMcp, toolUseIdOf } from "./server.ts";
 import { listPeersTool } from "./tools/list-peers.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
-  await claimTestHandleSql(t.sql, "ana", "user");
-  await t.sql`insert into users (id,name,email,handle) values ('u2','Ana','ana@x.io','ana')`;
-  await claimTestHandleSql(t.sql, "gone", "user");
-  await t.sql`insert into users (id,name,email,handle,disabled_at) values ('u3','Gone','gone@x.io','gone', now())`;
-  await insertAgent(t.sql, { id: "lead", slug: "lead", displayName: "Lead" });
-  await insertAgent(t.sql, { id: "dev", slug: "dev", displayName: "Dev", reportsTo: "lead" });
-  await insertAgent(t.sql, { id: "ops", slug: "ops", displayName: "Ops" });
-  await insertAgent(t.sql, { id: "side", slug: "side", displayName: "Side", reportsTo: "ops" });
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1','Or','or@x.io')`;
+  await t.sql.unsafe(principalSql("u2", "human", "ana"));
+  await t.sql`insert into users (id, name, email) values ('u2','Ana','ana@x.io')`;
+  await t.sql.unsafe(principalSql("u3", "human", "gone"));
+  await t.sql`insert into users (id, name, email, disabled_at) values ('u3','Gone','gone@x.io', now())`;
+  await insertAgent(t.sql, { id: "lead", handle: "lead", displayName: "Lead" });
+  await insertAgent(t.sql, { id: "dev", handle: "dev", displayName: "Dev", reportsTo: "lead" });
+  await insertAgent(t.sql, { id: "ops", handle: "ops", displayName: "Ops" });
+  await insertAgent(t.sql, { id: "side", handle: "side", displayName: "Side", reportsTo: "ops" });
 });
 afterAll(async () => t.close());
 
@@ -31,7 +31,7 @@ function rpc(method: string, params: unknown, id = 1) {
   });
 }
 
-test("list_peers reads the caller from authInfo and reports relations and status", async () => {
+test("list_peers returns each peer's mention, relation and status for the authenticated caller", async () => {
   const errors: Error[] = [];
   const mcp = createFactoryMcp({
     version: "0.0.0",
@@ -56,14 +56,15 @@ test("list_peers reads the caller from authInfo and reports relations and status
     peers: [
       {
         handle: "@lead",
+        mention: `<@${testRef("lead")}|lead>`,
         kind: "agent",
         displayName: "Lead",
         description: "",
         relation: "manager",
         status: "idle",
       },
-      { handle: "@ana", kind: "human", name: "Ana" },
-      { handle: "@or", kind: "human", name: "Or" },
+      { handle: "@ana", mention: `<@${testRef("u2")}|ana>`, kind: "human", name: "Ana" },
+      { handle: "@or", mention: `<@${testRef("u1")}|or>`, kind: "human", name: "Or" },
     ],
   });
   const lead = await call("lead", "all");

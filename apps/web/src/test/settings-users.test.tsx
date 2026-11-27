@@ -2,12 +2,12 @@ import type { InviteItem, UserAdminItem } from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { Session } from "@/lib/auth-client";
+import type { Session } from "@/lib/session";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { renderApp } from "@/test/render-app";
 
-vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
@@ -22,13 +22,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const me = {
-  user: { id: "u-or", name: "Or Levi", handle: "or", email: "or@example.com" },
-  session: { id: "s1" },
-} as unknown as Session;
+const me: Session = {
+  user: { id: "u-or", name: "Or Levi", handle: "or", email: "or@example.com", ref: "k3m5q7t9" },
+};
 
 const joined = new Date(2026, 10, 19, 9, 0).toISOString();
 const user = (o: Partial<UserAdminItem> & { id: string; handle: string }): UserAdminItem => ({
+  ref: refFor(o.handle),
   name: o.handle,
   email: `${o.handle}@example.com`,
   createdAt: joined,

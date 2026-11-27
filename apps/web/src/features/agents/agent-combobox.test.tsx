@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { installInputModality } from "@/lib/input-modality";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 import { AgentCombobox } from "./agent-combobox";
 
@@ -20,17 +21,17 @@ afterEach(() => {
 
 const many = Array.from({ length: 214 }, (_, i) =>
   agentSummary({
-    slug: `dev-${String(i).padStart(3, "0")}`,
+    handle: `dev-${String(i).padStart(3, "0")}`,
     displayName: i === 42 ? "Zelda Quinn" : `Builder ${String(i).padStart(3, "0")}`,
   }),
 );
 const ended = agentSummary({
-  slug: "old-one",
+  handle: "old-one",
   displayName: "Old One",
   terminatedAt: "2026-11-01T00:00:00Z",
 });
 const archived = agentSummary({
-  slug: "shelved",
+  handle: "shelved",
   displayName: "Shelved",
   archivedAt: "2026-11-01T00:00:00Z",
 });
@@ -79,7 +80,7 @@ function setup(props: Parameters<typeof Harness>[0] = {}) {
 const names = () =>
   screen.getAllByRole("option").map((o) => (o.textContent ?? "").replace(/\s+/g, " ").trim());
 
-test("typing a slug or a name finds the agent among 214", async () => {
+test("typing a handle or a name finds the agent among 214", async () => {
   world();
   const { trigger, onValueChange } = setup();
   await userEvent.click(trigger);
@@ -91,7 +92,7 @@ test("typing a slug or a name finds the agent among 214", async () => {
   await userEvent.type(screen.getByRole("combobox", { name: "Search" }), "zelda");
   await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
   await userEvent.keyboard("{Enter}");
-  expect(onValueChange).toHaveBeenCalledWith("dev-042");
+  expect(onValueChange).toHaveBeenCalledWith(refFor("dev-042"));
 });
 
 test("scope 'live' lists live agents only: no archived, no ended, and never fetches the ended list", async () => {
@@ -106,8 +107,8 @@ test("scope 'live' lists live agents only: no archived, no ended, and never fetc
 
 test("arrow keys only move the highlight; nothing commits until Enter", async () => {
   world([
-    agentSummary({ slug: "a", displayName: "A" }),
-    agentSummary({ slug: "b", displayName: "B" }),
+    agentSummary({ handle: "a", displayName: "A" }),
+    agentSummary({ handle: "b", displayName: "B" }),
   ]);
   const { trigger, onValueChange } = setup();
   await userEvent.click(trigger);
@@ -119,9 +120,9 @@ test("arrow keys only move the highlight; nothing commits until Enter", async ()
 });
 
 test("fixed options stay first and commit null for the empty value", async () => {
-  world([agentSummary({ slug: "a", displayName: "A" })]);
+  world([agentSummary({ handle: "a", displayName: "A" })]);
   const { trigger, onValueChange } = setup({
-    start: "a",
+    start: refFor("a"),
     fixed: [{ value: "", label: "Unassigned", fixed: true }],
   });
   await waitFor(() => expect(trigger).toHaveTextContent("@a"));
@@ -132,10 +133,10 @@ test("fixed options stay first and commit null for the empty value", async () =>
   expect(onValueChange).toHaveBeenCalledWith(null);
 });
 
-test("an unknown value renders @slug with a face", async () => {
+test("a value no list holds renders with a face while the principals cache names it", async () => {
   world();
-  const { trigger } = setup({ start: "ghost" });
-  expect(trigger).toHaveTextContent("@ghost");
+  const { trigger } = setup({ start: refFor("ghost") });
+  expect(trigger).toHaveTextContent("@…");
   expect(trigger.querySelector("[data-agent-avatar]")).not.toBeNull();
 });
 
@@ -147,15 +148,15 @@ test("a null value shows the placeholder", async () => {
 
 test("filter narrows the options", async () => {
   world();
-  const { trigger } = setup({ filter: (a) => a.slug === "dev-001" });
+  const { trigger } = setup({ filter: (a) => a.handle === "dev-001" });
   await userEvent.click(trigger);
   await screen.findByRole("option", { name: /Builder 001/ });
   expect(screen.getAllByRole("option")).toHaveLength(1);
 });
 
 test("'live+ended' lists ended agents last under Ended, and a chosen ended agent shows on the trigger", async () => {
-  world([agentSummary({ slug: "a", displayName: "A" })]);
-  const { trigger } = setup({ scope: "live+ended", start: "old-one" });
+  world([agentSummary({ handle: "a", displayName: "A" })]);
+  const { trigger } = setup({ scope: "live+ended", start: refFor("old-one") });
   await userEvent.click(trigger);
   const listbox = await screen.findByRole("listbox");
   await within(listbox).findByRole("option", { name: /Old One/ });

@@ -20,14 +20,14 @@ export class SecretService {
     },
   ) {}
 
-  /** Restart every user; one failure is logged by slug and never aborts the rest or the write. */
-  private async restartAll(users: { id: string; slug: string }[]) {
+  /** Restart every user; one failure is logged by handle and never aborts the rest or the write. */
+  private async restartAll(users: { id: string; handle: string }[]) {
     const results = await Promise.allSettled(
       users.map((u) => this.d.runtimes.requestRestart(u.id)),
     );
     results.forEach((r, i) => {
       if (r.status === "rejected")
-        this.d.log?.warn({ slug: users[i]?.slug }, "restart after secret change failed");
+        this.d.log?.warn({ handle: users[i]?.handle }, "restart after secret change failed");
     });
   }
 
@@ -36,11 +36,12 @@ export class SecretService {
    * valid parse lists it, or their overlay does. Plus those agents' live spawned children, which inherit their spawner's
    * secrets at each start. Rotate and delete restart exactly these; the Secrets page lists them.
    */
-  private async usedBy(name: string): Promise<{ id: string; slug: string }[]> {
-    const { agents, templates } = schema;
+  private async usedBy(name: string): Promise<{ id: string; handle: string }[]> {
+    const { agents, principals, templates } = schema;
     const users = await this.d.db
-      .select({ id: agents.id, slug: agents.slug })
+      .select({ id: agents.id, handle: principals.handle })
       .from(agents)
+      .innerJoin(principals, eq(principals.id, agents.id))
       .leftJoin(templates, eq(templates.name, agents.template))
       .where(
         and(
@@ -54,8 +55,9 @@ export class SecretService {
       );
     const children = users.length
       ? await this.d.db
-          .select({ id: agents.id, slug: agents.slug })
+          .select({ id: agents.id, handle: principals.handle })
           .from(agents)
+          .innerJoin(principals, eq(principals.id, agents.id))
           .where(
             and(
               inArray(
@@ -68,14 +70,14 @@ export class SecretService {
           )
       : [];
     const byId = new Map([...users, ...children].map((u) => [u.id, u]));
-    return [...byId.values()].sort((x, y) => x.slug.localeCompare(y.slug));
+    return [...byId.values()].sort((x, y) => x.handle.localeCompare(y.handle));
   }
 
-  private summary(row: typeof schema.secrets.$inferSelect, users: { slug: string }[]) {
+  private summary(row: typeof schema.secrets.$inferSelect, users: { handle: string }[]) {
     return {
       name: row.name,
       updatedAt: row.updatedAt.toISOString(),
-      usedBy: users.map((u) => u.slug),
+      usedBy: users.map((u) => u.handle),
     } satisfies SecretSummary;
   }
 

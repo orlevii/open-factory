@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentActions } from "@/features/agents/agent-layout";
 import { ArchivedNotice } from "@/features/agents/archived-notice";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { useAgentSummary } from "@/features/agents/use-agent-summary";
 import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
 import { cancelQueued, restoreQueued } from "@/features/session/api";
@@ -36,15 +37,22 @@ import { outcomeSentence, TurnLine } from "./turn-line";
 import { refreshChat, useChat, useWorkingKey } from "./use-chat";
 
 const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
+const toUserRef = (s: { user: { ref: string } } | null) => s?.user.ref;
 const toUserId = (s: { user: { id: string } } | null) => s?.user.id;
 const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
 const NO_NOTES: ReadonlyMap<string, CancelNote> = new Map();
 
 /** The chat page: the Chat inside the agent layout, which refetches the agent after a restore. */
-export function ChatView({ slug, messageId }: { slug: string; messageId?: string | undefined }) {
+export function ChatView({
+  agentRef,
+  messageId,
+}: {
+  agentRef: string;
+  messageId?: string | undefined;
+}) {
   const { refreshAgent } = useAgentActions();
   const onRestored = useCallback(() => void refreshAgent(), [refreshAgent]);
-  return <ChatBody slug={slug} messageId={messageId} onRestored={onRestored} />;
+  return <ChatBody agentRef={agentRef} messageId={messageId} onRestored={onRestored} />;
 }
 
 /** What the Inbox's reading pane changes about the Chat: it reads after the dwell, opens at the first
@@ -57,34 +65,36 @@ export type PaneOptions = { unread: number; latestId: string };
  * same component on the same cache, so your optimistic message is the cache's, never a second list.
  */
 export function ChatBody({
-  slug,
+  agentRef,
   messageId,
   pane,
   onRestored,
 }: {
-  slug: string;
+  agentRef: string;
   messageId?: string | undefined;
   pane?: PaneOptions;
   onRestored(): void;
 }) {
   // The highlighter's import lands in idle time while the thread loads, before any reply renders.
   useEffect(() => warmHighlighter(), []);
-  const agent = useAgentSummary(slug, pane ? {} : { refetchOnMount: false });
+  const agent = useAgentSummary(agentRef, pane ? {} : { refetchOnMount: false });
+  const handle = useHandle(agentRef);
   const archived = agent?.archivedAt != null;
   const terminated = agent?.status === "terminated";
   const session = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
   const userId = useQuery({ ...sessionQueryOptions, select: toUserId }).data;
-  const turn = useWorkingKey(slug, messageId === undefined);
+  const userRef = useQuery({ ...sessionQueryOptions, select: toUserRef }).data;
+  const turn = useWorkingKey(agentRef, messageId === undefined);
   // From a `?message=` window the newest page is what a send lands in: the chat goes back to it.
   const navigate = useNavigate();
   const leaveWindow = useCallback(
-    () => void navigate({ to: "/agents/$slug/chat", params: { slug }, search: {} }),
-    [navigate, slug],
+    () => void navigate({ to: "/agents/$ref/chat", params: { ref: agentRef }, search: {} }),
+    [navigate, agentRef],
   );
   return (
     <>
       <SpeakerProvider
-        slug={slug}
+        agentRef={agentRef}
         {...(agent
           ? {
               displayName: agent.displayName,
@@ -96,15 +106,15 @@ export function ChatBody({
           : {})}
       >
         <Thread
-          slug={slug}
+          agentRef={agentRef}
           messageId={messageId}
           pane={pane}
-          agentName={agent?.displayName ?? slug}
+          agentName={agent?.displayName ?? `@${handle}`}
           leaveWindow={leaveWindow}
         />
       </SpeakerProvider>
-      {archived ? (
-        <ArchivedNotice slug={slug} onRestored={onRestored} />
+      {archived && agent ? (
+        <ArchivedNotice agent={agent} onRestored={onRestored} />
       ) : terminated ? (
         <div className="shrink-0 border-t border-border px-4 py-3 md:px-6">
           <p data-readonly-line className="max-w-[52rem] text-sm text-muted-foreground">
@@ -113,10 +123,10 @@ export function ChatBody({
         </div>
       ) : (
         <ChatComposer
-          slug={slug}
-          agentName={agent?.displayName ?? slug}
+          agentRef={agentRef}
+          agentName={agent?.displayName ?? `@${handle}`}
           userId={userId}
-          self={session}
+          userRef={userRef}
           working={turn.key !== undefined}
           workingKey={turn.key}
           turnOpen={agent?.turnOpen === true}
@@ -131,21 +141,22 @@ export function ChatBody({
 }
 
 function Thread({
-  slug,
+  agentRef,
   messageId,
   pane,
   agentName,
   leaveWindow,
 }: {
-  slug: string;
+  agentRef: string;
   messageId: string | undefined;
   pane: PaneOptions | undefined;
   agentName: string;
   leaveWindow(): void;
 }) {
-  const chat = useChat(slug, { messageId });
+  const chat = useChat(agentRef, { messageId });
   const { entries, working, live, windowed, status } = chat;
   const self = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const selfRef = useQuery({ ...sessionQueryOptions, select: toUserRef }).data;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const loaded = status === "success";
@@ -154,11 +165,11 @@ function Thread({
   const newestAgentAt = useMemo(() => {
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i] as ChatEntry;
-      if (e.kind === "message" && e.fromKind === "agent") return e.createdAt;
+      if (e.kind === "message" && e.from.kind === "agent") return e.createdAt;
     }
     return undefined;
   }, [entries]);
-  useReadFrom(slug, newestAgentAt, { delayMs: pane ? INBOX_DWELL_MS : 0 });
+  useReadFrom(agentRef, newestAgentAt, { delayMs: pane ? INBOX_DWELL_MS : 0 });
 
   // The pane opens at the first unread message: the `unread` agent messages ending at the chat row's
   // newest (`latestId`), fixed once that message is in the thread (reading them doesn't move it). A
@@ -171,7 +182,7 @@ function Thread({
   if (loaded && pane && unreadKey === undefined && (pane.unread === 0 || latestAt >= 0)) {
     const theirs = entries
       .slice(0, latestAt + 1)
-      .filter((e) => e.kind === "message" && e.fromKind === "agent");
+      .filter((e) => e.kind === "message" && e.from.kind === "agent");
     const first = pane.unread > 0 ? theirs[theirs.length - pane.unread] : undefined;
     setUnreadKey(first ? entryKey(first) : null);
   }
@@ -179,8 +190,8 @@ function Thread({
   const qc = useQueryClient();
   const stale = loaded && pane !== undefined && pane.unread > 0 && latestAt < 0;
   useEffect(() => {
-    if (stale) void refreshChat(qc, slug, "other");
-  }, [stale, qc, slug]);
+    if (stale) void refreshChat(qc, agentRef, "other");
+  }, [stale, qc, agentRef]);
   const unreadDone = useRef(false);
 
   // The highest entry on screen when the reader left the bottom; the pill counts what came after.
@@ -194,8 +205,8 @@ function Thread({
   );
   const isPinned = useCallback(() => stick.pinned.current, [stick]);
   // Sending follows the conversation again.
-  useEffect(() => registerTimelineRepin(slug, stick.repin), [slug, stick]);
-  useRememberPosition(slug, "chat", scroller, isPinned, !windowed && !pane);
+  useEffect(() => registerTimelineRepin(agentRef, stick.repin), [agentRef, stick]);
+  useRememberPosition(agentRef, "chat", scroller, isPinned, !windowed && !pane);
 
   // The deep link: the thread opens around the message and tints it, as the session does.
   const targetKey = useMemo(() => {
@@ -233,7 +244,7 @@ function Thread({
     }
     if (!restored.current && loaded) {
       restored.current = true;
-      const left = windowed ? undefined : readViewPosition(slug, "chat");
+      const left = windowed ? undefined : readViewPosition(agentRef, "chat");
       if (left && !left.pinned) {
         stick.unpin();
         el.scrollTop = left.top;
@@ -242,7 +253,7 @@ function Thread({
     }
     // Pinned: the bottom, at once. Unpinned: the anchor row keeps its place (Load earlier included).
     stick.settle();
-  }, [entries, working, loaded, targetKey, unreadKey, stick, slug, windowed]);
+  }, [entries, working, loaded, targetKey, unreadKey, stick, agentRef, windowed]);
   // Cancel and Undo of a held message of yours, in the row's place.
   const [notes, setNotes] = useState<ReadonlyMap<string, CancelNote>>(NO_NOTES);
   const setNote = useCallback((id: string, note: CancelNote | undefined) => {
@@ -256,20 +267,20 @@ function Thread({
   const onCancel = useCallback(
     (id: string) => {
       setNote(id, {});
-      cancelQueued(slug, id).catch((e: unknown) =>
+      cancelQueued(agentRef, id).catch((e: unknown) =>
         setNote(id, { error: failureText(e), rolledBack: true }),
       );
     },
-    [slug, setNote],
+    [agentRef, setNote],
   );
   const onUndo = useCallback(
     (id: string) => {
-      restoreQueued(slug, id).then(
+      restoreQueued(agentRef, id).then(
         () => setNote(id, undefined),
         (e: unknown) => setNote(id, { error: failureText(e) }),
       );
     },
-    [slug, setNote],
+    [agentRef, setNote],
   );
 
   // One tab stop in the log; the arrows move between rows.
@@ -315,7 +326,7 @@ function Thread({
           e.kind === "turn_outcome" ? (
             <TurnLine
               key={key}
-              slug={slug}
+              agentRef={agentRef}
               name={agentName}
               at={e.endedAt}
               outcome={e.outcome}
@@ -327,9 +338,10 @@ function Thread({
             <ChatRow
               key={key}
               entry={e}
-              slug={slug}
+              agentRef={agentRef}
               agentName={agentName}
               self={self}
+              selfRef={selfRef}
               live={live.has(key)}
               grouped={grouped}
               gap={grouped ? "mt-1" : rowGap(i === 0)}
@@ -348,9 +360,10 @@ function Thread({
       entries,
       unreadKey,
       live,
-      slug,
+      agentRef,
       agentName,
       self,
+      selfRef,
       tabKey,
       targetKey,
       arrival,
@@ -369,7 +382,7 @@ function Thread({
     working && !entries.some((e) => e.kind === "turn_outcome" && e.key === working.key) ? (
       <TurnLine
         key={`turn:${working.key}`}
-        slug={slug}
+        agentRef={agentRef}
         name={agentName}
         at={working.since}
         live={baseline !== undefined && working.key !== baseline}
@@ -383,7 +396,7 @@ function Thread({
       const e = entries[i] as ChatEntry;
       if (!live.has(entryKey(e))) continue;
       if (e.kind === "turn_outcome") return `${outcomeSentence(agentName, e.outcome)}.`;
-      if (e.fromKind === "agent") return `${agentName}: ${e.body.split("\n", 1)[0]}`;
+      if (e.from.kind === "agent") return `${agentName}: ${e.body.split("\n", 1)[0]}`;
     }
     return "";
   }, [entries, live, agentName]);
@@ -396,7 +409,7 @@ function Thread({
     const next = new Map<string, string>();
     let note = "";
     for (const e of entries) {
-      if (e.kind !== "message" || e.fromKind !== "human") continue;
+      if (e.kind !== "message" || e.from.kind !== "human") continue;
       const state = isSending(e) ? "sending" : e.state;
       next.set(entryKey(e), state);
       const was = before.get(entryKey(e));

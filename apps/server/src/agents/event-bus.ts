@@ -9,16 +9,16 @@ export class EventBus {
   private readonly byUser = new Map<string, Set<Listener>>();
   private readonly closers = new Map<string, Set<() => void>>();
 
-  subscribe(agentSlug: string, fn: Listener): () => void {
-    const s = this.byAgent.get(agentSlug) ?? new Set<Listener>();
-    this.byAgent.set(agentSlug, s);
+  subscribe(agentId: string, fn: Listener): () => void {
+    const s = this.byAgent.get(agentId) ?? new Set<Listener>();
+    this.byAgent.set(agentId, s);
     s.add(fn);
     return () => {
       s.delete(fn);
     };
   }
-  publish(agentSlug: string, m: ServerMessage) {
-    for (const fn of this.byAgent.get(agentSlug) ?? []) fn(m);
+  publish(agentId: string, m: ServerMessage) {
+    for (const fn of this.byAgent.get(agentId) ?? []) fn(m);
   }
   subscribeAll(fn: Listener): () => void {
     this.all.add(fn);
@@ -53,9 +53,9 @@ export class EventBus {
   closeUser(userId: string) {
     for (const fn of [...(this.closers.get(userId) ?? [])]) fn();
   }
-  /** Live listeners, per agent or (without a slug) on the broadcast channel. Used to check for leaks. */
-  listenerCount(agentSlug?: string): number {
-    return agentSlug === undefined ? this.all.size : (this.byAgent.get(agentSlug)?.size ?? 0);
+  /** Live listeners, per agent id or (without an id) on the broadcast channel. Used to check for leaks. */
+  listenerCount(agentId?: string): number {
+    return agentId === undefined ? this.all.size : (this.byAgent.get(agentId)?.size ?? 0);
   }
   publishAll(m: ServerMessage) {
     for (const fn of this.all) fn(m);

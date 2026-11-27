@@ -270,7 +270,7 @@ export type AnyEvent = z.infer<typeof anyEventSchema>;
 
 export const sessionEventSchema = z.object({
   seq: z.number().int().positive(),
-  agentSlug: z.string(),
+  agentRef: z.string(),
   turnId: z.string().nullable(),
   at: z.string(),
   event: anyEventSchema,

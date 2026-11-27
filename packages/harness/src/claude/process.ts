@@ -107,7 +107,7 @@ export class ClaudeProcess implements HarnessProcess {
     private readonly transport: Transport,
     private readonly log: DriverLog = silent,
   ) {
-    const ctx = { agent: spec.slug };
+    const ctx = { agent: spec.ref };
     this.mapper = createMapperState({
       resumed: Boolean(opts.resumeSessionId),
       onUnmapped: (kind) => log.warn({ ...ctx, kind }, "unmapped stream-json line"),

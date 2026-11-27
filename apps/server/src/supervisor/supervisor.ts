@@ -25,7 +25,7 @@ export interface SupervisorDeps {
   /** The reset's durable side (spec §7.2): owed agents, the credential's name, clearing the columns. */
   rateLimits: Pick<EventStore, "owedAgents" | "credentialName" | "clearCredentialPause">;
   /** Loads an agent's runtime (an owed agent may be hibernated and not loaded). */
-  load(slug: string): Promise<AgentRuntime | undefined>;
+  load(agentId: string): Promise<AgentRuntime | undefined>;
   /**
    * Docker images (spec §11.2): `refOf` is the image a Docker agent starts from (undefined for a local agent);
    * `ensure` pulls it only when it is missing locally, and rejects with the start error a failed pull is.
@@ -132,7 +132,9 @@ export class Supervisor implements SlotPort {
       // An attempt whose wake was only queued never started a process: it isn't one the restart cut short (§5.7 step 4).
       void rt
         .wakeDropped()
-        .catch((err) => this.d.log.error({ err, agent: rt.agent.slug }, "dropping a wake failed"));
+        .catch((err) =>
+          this.d.log.error({ err, agent: rt.agent.handle }, "dropping a wake failed"),
+        );
     }
   }
 
@@ -246,14 +248,14 @@ export class Supervisor implements SlotPort {
           // A later window replaced this one meanwhile: the flags stay, so its reset writes the true time.
           if (this.pauses.get(credentialId) !== p) return;
           try {
-            const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.slug));
+            const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.id));
             await rt?.rateLimitReset(
               { credential: name, ...(p.exact ? { at: new Date(p.until) } : {}) },
               () => !this.closed && this.pauses.get(credentialId) === p,
             );
           } catch (err) {
             // That agent keeps its owed flag (boot retries); the others still get theirs.
-            this.d.log.error({ err, agent: a.slug }, "continue notice failed");
+            this.d.log.error({ err, agent: a.handle }, "continue notice failed");
           }
         }
       }
@@ -287,7 +289,7 @@ export class Supervisor implements SlotPort {
           void rt
             ?.imagePullFailed(failure.message, failure.fix)
             .catch((err) =>
-              this.d.log.error({ err, agent: rt.agent.slug }, "recording a failed pull failed"),
+              this.d.log.error({ err, agent: rt.agent.handle }, "recording a failed pull failed"),
             );
         }
         rt?.publishStatus();
@@ -332,7 +334,7 @@ export class Supervisor implements SlotPort {
     rt.publishStatus();
     void rt
       .grant(e.reason)
-      .catch((err) => this.d.log.error({ err, agent: rt.agent.slug }, "grant job failed"))
+      .catch((err) => this.d.log.error({ err, agent: rt.agent.handle }, "grant job failed"))
       .finally(() => {
         if (this.granted.get(e.agentId) === e) this.granted.delete(e.agentId);
       });

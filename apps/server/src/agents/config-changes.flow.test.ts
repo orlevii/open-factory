@@ -1,7 +1,8 @@
-import type { AgentRow } from "@open-factory/db";
 import type { AnyEvent, ConfigDoc, ConfigSnapshot, ServerMessage } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import { FILE_CHANGE } from "../templates/template-index.ts";
+import { testRef } from "../test/principals.ts";
 import { ConfigChanges } from "./config-changes.ts";
 import type { Effective } from "./config-resolver.ts";
 
@@ -21,11 +22,11 @@ const doc = (template: Record<string, unknown> = {}, more: Partial<ConfigDoc> = 
 });
 
 let n = 0;
-const row = (o: Partial<AgentRow> = {}): AgentRow => {
+const row = (o: Partial<AgentRecord> = {}): AgentRecord => {
   n += 1;
   return {
     id: `a${n}`,
-    slug: `dev-${n}`,
+    handle: `dev-${n}`,
     displayName: "Dev",
     description: "",
     sessionId: null,
@@ -51,7 +52,7 @@ const row = (o: Partial<AgentRow> = {}): AgentRow => {
     createdAt: new Date(),
     updatedAt: new Date(),
     ...o,
-  } as AgentRow;
+  } as AgentRecord;
 };
 
 type Rt = {
@@ -69,7 +70,7 @@ const resolvedTo =
     return { skills: Object.fromEntries(listed.map((n) => [n, refs[n] ?? "host"])) };
   };
 
-function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } = {}) {
+function world(o: { agents?: AgentRecord[]; children?: Record<string, string[]> } = {}) {
   const runtimes = new Map<string, Rt>();
   const appendedToStore: { agentId: string; event: AnyEvent }[] = [];
   const notices: { id: string; lines: string[] }[] = [];
@@ -105,6 +106,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
         appendedToStore.push({ agentId, event });
         return {} as never;
       },
+      refOfAgent: async (id: string) => testRef(id),
     },
     runtimes: {
       get: async (id: string) => {
@@ -142,7 +144,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     bus: { publishAll: (m: ServerMessage) => void frames.push(m) },
     log: { error: (obj: unknown) => void logged.push(obj) },
   });
-  const load = (a: AgentRow, running: boolean, stuck = false) => {
+  const load = (a: AgentRecord, running: boolean, stuck = false) => {
     const rt: Rt = { running, appended: [], stuck };
     runtimes.set(a.id, rt);
     return rt;
@@ -200,9 +202,9 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   ]);
   expect(w.frames).toEqual([
     { type: "config_changed", template: "dev" },
-    { type: "config_changed", agent: running.slug },
-    { type: "config_changed", agent: idle.slug },
-    { type: "config_changed", agent: spawned.slug },
+    { type: "config_changed", agent: testRef(running.id) },
+    { type: "config_changed", agent: testRef(idle.id) },
+    { type: "config_changed", agent: testRef(spawned.id) },
   ]);
 });
 
@@ -295,7 +297,7 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   w.restarts.length = 0;
   await w.changes.overlaySaved(
     lead,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     tpl({}),
     tpl({}, { permissions: { deny: ["Bash(rm:*)"] } }),
   );
@@ -305,7 +307,7 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   w.restarts.length = 0;
   await w.changes.overlaySaved(
     lead,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     tpl({ skills: [] }),
     tpl({ skills: ["x"] }),
   );
@@ -318,7 +320,7 @@ test("an overlay save on an archived agent writes the event only", async () => {
   const w = world();
   const out = await w.changes.overlaySaved(
     a,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     doc(),
     doc({ model: "opus" }),
   );
@@ -326,12 +328,12 @@ test("an overlay save on an archived agent writes the event only", async () => {
   expect(w.appendedToStore).toEqual([
     {
       agentId: a.id,
-      event: { type: "config_changed", by: "@orlevi", changes: ["model: default → opus"] },
+      event: { type: "config_changed", by: "<@h4r5r6r7>", changes: ["model: default → opus"] },
     },
   ]);
   expect([w.notices, w.restarts]).toEqual([[], []]);
   expect(w.nextImage.size).toBe(0);
-  expect(w.frames).toEqual([{ type: "config_changed", agent: a.slug }]);
+  expect(w.frames).toEqual([{ type: "config_changed", agent: testRef(a.id) }]);
 });
 
 test("nextImage is refreshed with the image the new config resolves to", async () => {
@@ -353,7 +355,7 @@ test("overlaySaved never waits on the runtime's queue (a start in progress)", as
   w.load(a, true, true);
   const out = await w.changes.overlaySaved(
     a,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     doc(),
     doc({ model: "opus" }),
   );
@@ -366,9 +368,9 @@ test("an overlay save asks for a wake only when the agent edited its own configu
   w.load(a, true);
   const save = (actor: Parameters<typeof w.changes.overlaySaved>[1]) =>
     w.changes.overlaySaved(a, actor, doc(), doc({ model: "opus" }));
-  await save({ kind: "agent", id: a.id, slug: a.slug });
-  await save({ kind: "agent", id: "someone-else", slug: "hr-bot" });
-  await save({ kind: "human", handle: "or" });
+  await save({ kind: "agent", id: a.id, ref: testRef(a.id), handle: a.handle });
+  await save({ kind: "agent", id: "someone-else", ref: testRef("someone-else"), handle: "hr-bot" });
+  await save({ kind: "human", ref: "k7x2m9qd", handle: "or" });
   await new Promise((r) => setImmediate(r));
   expect(w.restarts.map((r) => r.wake)).toEqual([true, undefined, undefined]);
 });
@@ -388,7 +390,12 @@ test("secret safety: no env value, MCP URL or command reaches an event, a notice
   );
   // The fixture does carry the value, so the checks below can fail.
   expect(JSON.stringify(after)).toContain(SECRET);
-  const out = await w.changes.overlaySaved(a, { kind: "human", handle: "orlevi" }, before, after);
+  const out = await w.changes.overlaySaved(
+    a,
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
+    before,
+    after,
+  );
   await new Promise((r) => setImmediate(r));
   const seen = JSON.stringify([out, rt.appended, w.appendedToStore, w.notices, w.frames, w.logged]);
   expect(seen).not.toContain(SECRET);

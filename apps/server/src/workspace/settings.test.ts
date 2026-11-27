@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { buildSettings, claudeMdExcludes, factoryEnvironment } from "./settings.ts";
 
 const base = {
-  slug: "lead",
+  handle: "lead",
   workdir: "/h/of/agents/lead",
   permissionMode: "auto" as const,
   grantedPaths: ["/code/app"],

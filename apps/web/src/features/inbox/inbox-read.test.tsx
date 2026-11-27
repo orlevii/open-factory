@@ -4,6 +4,7 @@ import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { inboxQueryKey, unreadQueryKey, useInboxCache } from "./api";
 
@@ -31,12 +32,12 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", name: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(14, 30 + n),
-  link: { kind: "session", agentSlug: "dev", seq: 40 + n },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 40 + n },
   ...o,
 });
 const mention = item(1, {
@@ -47,7 +48,7 @@ const mention = item(1, {
 });
 const taskEvent = item(2, {
   kind: "task_event",
-  from: { kind: "factory", name: "factory" },
+  from: { kind: "factory" },
   fact: "done",
   to: "@or",
   task: { key: "T-40", title: "Add usage export" },
@@ -55,7 +56,7 @@ const taskEvent = item(2, {
 });
 const humanMention = item(3, {
   kind: "mention",
-  from: { kind: "human", name: "sam" },
+  from: { kind: "human", ref: refFor("sam"), handle: "sam" },
   to: "@bob",
   task: { key: "T-1", title: "One" },
   link: { kind: "task", key: "T-1", commentId: "c1" },
@@ -245,11 +246,12 @@ test("the sidebar: the count, 99+, nothing at 0", async () => {
   await waitFor(() => expect(screen.getByRole("link", { name: "Inbox" })).toBeInTheDocument());
 });
 
-const chatRow = (slug: string, name: string, unread: number, createdAt: string) => ({
+const chatRow = (handle: string, name: string, unread: number, createdAt: string) => ({
   agent: {
-    slug,
+    ref: refFor(handle),
+    handle: handle,
     displayName: name,
-    template: slug,
+    template: handle,
     avatarVersion: null,
     color: null,
     kind: "persistent",
@@ -257,8 +259,8 @@ const chatRow = (slug: string, name: string, unread: number, createdAt: string) 
     archivedAt: null,
   },
   unread,
-  firstUnreadId: `${slug}-m`,
-  latest: { messageId: `${slug}-m`, preview: `${name} says hi`, createdAt, urgent: false },
+  firstUnreadId: `${handle}-m`,
+  latest: { messageId: `${handle}-m`, preview: `${name} says hi`, createdAt, urgent: false },
 });
 
 /** An inbox that has chats (and maybe items) and acts like the server for Mark all read and Undo. */
@@ -269,7 +271,7 @@ function chatWorld(chats: ReturnType<typeof chatRow>[], items: unknown[] = []) {
   const total = () =>
     cs.reduce((n, c) => n + c.unread, 0) +
     rows.filter((i) => !(i as { read: boolean }).read).length;
-  const byAgent = () => Object.fromEntries(cs.map((c) => [c.agent.slug, c.unread]));
+  const byAgent = () => Object.fromEntries(cs.map((c) => [c.agent.ref, c.unread]));
   const api = mockApi({
     "GET /api/inbox?": () =>
       json({ chats: cs.filter((c) => c.unread > 0), items: rows, nextCursor: null }),
@@ -340,14 +342,14 @@ test("Mark all read says what it covered: '3 chats and 2 items', zeroes the chat
 describe("per-agent unread in the cache", () => {
   const mk = () => {
     const qc = new QueryClient();
-    qc.setQueryData(unreadQueryKey, { count: 3, byAgent: { ada: 2 } });
+    qc.setQueryData(unreadQueryKey, { count: 3, byAgent: { [refFor("ada")]: 2 } });
     qc.setQueryData(inboxQueryKey, {
       pages: [
         {
           items: [
-            item(1, { from: { kind: "agent", name: "ada" } }),
-            item(2, { from: { kind: "agent", name: "ada" } }),
-            item(3, { from: { kind: "agent", name: "bob" } }),
+            item(1, { from: { kind: "agent", ref: refFor("ada"), handle: "ada" } }),
+            item(2, { from: { kind: "agent", ref: refFor("ada"), handle: "ada" } }),
+            item(3, { from: { kind: "agent", ref: refFor("bob"), handle: "bob" } }),
           ],
           nextCursor: null,
         },
@@ -363,29 +365,44 @@ describe("per-agent unread in the cache", () => {
   test("opening a row keeps byAgent and decrements its sender", () => {
     const { qc, cache } = mk();
     cache.setRead(new Set(["i1"]), true, -1, [
-      item(1, { from: { kind: "agent", name: "ada" } }) as never,
+      item(1, { from: { kind: "agent", ref: refFor("ada"), handle: "ada" } }) as never,
     ]);
-    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { ada: 1 } });
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { [refFor("ada")]: 1 } });
   });
 
   test("mark all read leaves byAgent for the refetch", () => {
     const { qc, cache } = mk();
     cache.setRead(new Set(["i1", "i2", "i3"]), true, -3);
-    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 0, byAgent: { ada: 2 } });
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 0, byAgent: { [refFor("ada")]: 2 } });
   });
 
   test("setChatsRead zeroes the chats and their byAgent entries, and puts them back", () => {
     const { qc, cache } = mk();
-    qc.setQueryData(unreadQueryKey, { count: 4, byAgent: { ada: 2, bo: 1 } });
+    qc.setQueryData(unreadQueryKey, {
+      count: 4,
+      byAgent: { [refFor("ada")]: 2, [refFor("bo")]: 1 },
+    });
     qc.setQueryData(inboxQueryKey, {
-      pages: [{ chats: [{ agent: { slug: "ada" }, unread: 2 }], items: [], nextCursor: null }],
+      pages: [
+        {
+          chats: [{ agent: { ref: refFor("ada"), handle: "ada" }, unread: 2 }],
+          items: [],
+          nextCursor: null,
+        },
+      ],
       pageParams: [undefined],
     });
-    const counts = new Map([["ada", 2]]);
+    const counts = new Map([[refFor("ada"), 2]]);
     cache.setChatsRead(counts, true);
-    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { ada: 0, bo: 1 } });
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({
+      count: 2,
+      byAgent: { [refFor("ada")]: 0, [refFor("bo")]: 1 },
+    });
     cache.setChatsRead(counts, false);
-    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 4, byAgent: { ada: 2, bo: 1 } });
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({
+      count: 4,
+      byAgent: { [refFor("ada")]: 2, [refFor("bo")]: 1 },
+    });
     expect(
       qc.getQueryData<{ pages: { chats: { unread: number }[] }[] }>(inboxQueryKey)?.pages[0]
         ?.chats[0]?.unread,
@@ -394,8 +411,8 @@ describe("per-agent unread in the cache", () => {
 
   test("readFrom flips that sender's cached rows and zeroes its count", () => {
     const { qc, cache } = mk();
-    cache.readFrom("ada");
-    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 1, byAgent: { ada: 0 } });
+    cache.readFrom(refFor("ada"));
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 1, byAgent: { [refFor("ada")]: 0 } });
     const d = qc.getQueryData<{ pages: { items: { id: string; read: boolean }[] }[] }>(
       inboxQueryKey,
     );

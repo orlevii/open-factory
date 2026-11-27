@@ -1,5 +1,5 @@
-import type { AgentRow } from "@open-factory/db";
 import { describeChanges } from "@open-factory/shared";
+import type { AgentRecord } from "../principals/principal-store.ts";
 import type { ConfigResolver } from "./config-resolver.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
@@ -10,7 +10,7 @@ import type { AgentRuntimes } from "./runtimes.ts";
  */
 export async function restartChanges(
   d: { runtimes: Pick<AgentRuntimes, "startedOf">; resolver: Pick<ConfigResolver, "effective"> },
-  row: AgentRow,
+  row: AgentRecord,
 ): Promise<string[] | null> {
   const started = d.runtimes.startedOf(row.id);
   try {
@@ -22,5 +22,5 @@ export async function restartChanges(
 }
 
 /** Whether a restart's start can go ahead (I7 §9.2): a local-runtime agent needs the local runtime enabled. The row is the fresh one. */
-export const restartRuntimeAllowed = (row: Pick<AgentRow, "runtime">, localAllowed: boolean) =>
+export const restartRuntimeAllowed = (row: Pick<AgentRecord, "runtime">, localAllowed: boolean) =>
   row.runtime !== "local" || localAllowed;

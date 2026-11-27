@@ -15,7 +15,7 @@ export function isTaskKey(q: string): boolean {
 }
 
 // Match tiers, best first.
-const EXACT_SLUG = 0;
+const EXACT_HANDLE = 0;
 const EXACT_NAME = 1;
 const PREFIX = 2;
 const RECENT = 3;
@@ -39,7 +39,7 @@ function indexOf(list: string[]): Map<string, number> {
 
 /**
  * Ranks agents for the palette. Pure and snapshot-friendly: call it when the query changes, not on
- * every status frame. Live agents come before ended ones; within each, exact slug, exact name,
+ * every status frame. Live agents come before ended ones; within each, exact handle, exact name,
  * prefix, recent, then substring; ties keep tree order (agents missing from `treeOrder` go last,
  * in input order). An empty query lists only the recent agents, in recency order.
  */
@@ -55,15 +55,15 @@ export function rankAgents(
 
   if (q === "") {
     if (recent.length === 0) return [];
-    const bySlug = new Map<string, RankedAgent>();
-    for (const agent of ended) bySlug.set(agent.slug, { agent, ended: true, strong: true });
-    for (const agent of live) bySlug.set(agent.slug, { agent, ended: false, strong: true });
+    const byRef = new Map<string, RankedAgent>();
+    for (const agent of ended) byRef.set(agent.ref, { agent, ended: true, strong: true });
+    for (const agent of live) byRef.set(agent.ref, { agent, ended: false, strong: true });
     const out: RankedAgent[] = [];
     const seen = new Set<string>();
-    for (const slug of recent) {
-      const hit = bySlug.get(slug);
-      if (hit && !seen.has(slug)) {
-        seen.add(slug);
+    for (const agentRef of recent) {
+      const hit = byRef.get(agentRef);
+      if (hit && !seen.has(agentRef)) {
+        seen.add(agentRef);
         out.push(hit);
       }
     }
@@ -78,22 +78,22 @@ export function rankAgents(
 
   const collect = (list: AgentSummary[], isEnded: boolean) => {
     for (const agent of list) {
-      if (seen.has(agent.slug)) continue;
-      const slug = agent.slug.toLowerCase();
+      if (seen.has(agent.ref)) continue;
+      const handle = agent.handle.toLowerCase();
       const name = agent.displayName.toLowerCase();
       let tier: number;
-      if (slug === q) tier = EXACT_SLUG;
+      if (handle === q) tier = EXACT_HANDLE;
       else if (name === q) tier = EXACT_NAME;
-      else if (slug.startsWith(q) || name.startsWith(q)) tier = PREFIX;
-      else if (slug.includes(q) || name.includes(q))
-        tier = recents.has(agent.slug) ? RECENT : SUBSTRING;
+      else if (handle.startsWith(q) || name.startsWith(q)) tier = PREFIX;
+      else if (handle.includes(q) || name.includes(q))
+        tier = recents.has(agent.ref) ? RECENT : SUBSTRING;
       else continue;
-      seen.add(agent.slug);
+      seen.add(agent.ref);
       hits.push({
         agent,
         ended: isEnded,
         tier,
-        order: tree.get(agent.slug) ?? treeOrder.length + n,
+        order: tree.get(agent.ref) ?? treeOrder.length + n,
       });
       n++;
     }

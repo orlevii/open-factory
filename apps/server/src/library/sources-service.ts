@@ -112,8 +112,6 @@ export interface UpdateView {
   removed: string[];
   /** New folders at the new commit; never picked automatically. */
   added: string[];
-  /** Picked skills that can't be used at the new commit. */
-  unusable: Array<{ name: string; detail: string }>;
 }
 
 /** The database reads and writes of sources, behind a seam so the rules run without Postgres. */
@@ -932,7 +930,6 @@ export class SourcesService {
       changed: [],
       removed: [],
       added: [],
-      unusable: [],
     };
     if (this.d.githubUrl === DEFAULT_GITHUB) {
       view.compareUrl = `${DEFAULT_GITHUB}/${row.repo}/compare/${row.commit}...${row.updateCommit}`;
@@ -945,11 +942,6 @@ export class SourcesService {
       const tree = nowTrees[n];
       if (tree === undefined || !(await readSkillMd(dir))) {
         view.removed.push(n);
-        continue;
-      }
-      const f = await inspect(n, dir);
-      if (f.state !== "ok") {
-        view.unusable.push({ name: n, detail: f.detail ?? "Unusable" });
         continue;
       }
       if (row.trees?.[n] === tree) continue;

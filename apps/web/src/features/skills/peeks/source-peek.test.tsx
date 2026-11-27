@@ -73,7 +73,6 @@ const updateView = (o: Record<string, unknown> = {}) => ({
   ],
   removed: [],
   added: [],
-  unusable: [],
   ...o,
 });
 

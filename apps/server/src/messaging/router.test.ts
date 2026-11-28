@@ -343,7 +343,7 @@ test("Router.forward: a report's text and facts go to its manager agent as membe
   expect(await h.sql`select 1 from inbox_items`).toHaveLength(0);
 });
 
-test("Router.forward: a human manager gets their report's text and facts in their own inbox only, and an errored episode as one notice for them alone", async () => {
+test("Router.forward: a human manager gets none of their report's text or facts; an errored episode is one notice for them alone", async () => {
   const or = await signUp(h.app, { handle: "or" });
   const sam = await signUp(h.app, { handle: "sam" });
   const lead = await agentRowOf(h.app, "lead");
@@ -357,47 +357,32 @@ test("Router.forward: a human manager gets their report's text and facts in thei
           from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${userId} order by m.created_at`;
 
   await h.app.router.forward({ agentId: lead.id, body: "top-level text" });
-  await h.app.router.forward({ agentId: lead.id, fact: "recovered", body: "@lead recovered." });
+  for (const fact of ["turn_failed", "denied", "crashed", "recovered", "work_lost"] as const)
+    await h.app.router.forward({ agentId: lead.id, fact, body: `${fact} about @lead` });
+  expect(await h.sql`select 1 from messages where to_id = ${or.user.id}`).toHaveLength(0);
+  expect(await inboxOf(or.user.id)).toEqual([]);
+  expect(seen.or).toEqual([]);
+
+  await h.app.router.forward({
+    agentId: lead.id,
+    fact: "errored",
+    body: "@lead is errored and needs a human.",
+  });
   expect(await inboxOf(or.user.id)).toEqual([
     {
-      inbox_kind: "member_update",
-      kind: "member_update",
-      notice: null,
-      from_id: lead.id,
-      subject_agent_id: null,
-      to_id: or.user.id,
-      to_all_humans: false,
-    },
-    {
-      inbox_kind: "member_update",
-      kind: "member_update",
-      notice: "recovered",
+      inbox_kind: "message",
+      kind: "system",
+      notice: "agent_errored",
       from_id: null,
       subject_agent_id: lead.id,
       to_id: or.user.id,
       to_all_humans: false,
     },
   ]);
-  await h.app.router.forward({
-    agentId: lead.id,
-    fact: "errored",
-    body: "@lead is errored and needs a human.",
-  });
-  expect(await inboxOf(or.user.id)).toHaveLength(3);
-  expect(await inboxOf(or.user.id)).toContainEqual(
-    expect.objectContaining({
-      inbox_kind: "message",
-      kind: "system",
-      notice: "agent_errored",
-      subject_agent_id: lead.id,
-      to_all_humans: false,
-    }),
-  );
   // Nobody else hears of it: not the other human, not the seeded fixture user.
   expect(await inboxOf(sam.user.id)).toEqual([]);
-  expect(await h.sql`select 1 from inbox_items`).toHaveLength(3);
-  expect(await h.sql`select 1 from messages where to_all_humans`).toHaveLength(0);
-  expect(seen.or.filter((m) => m.type === "inbox_changed")).toHaveLength(3);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(1);
+  expect(seen.or.filter((m) => m.type === "inbox_changed")).toHaveLength(1);
   expect(seen.sam).toEqual([]);
 });
 
@@ -479,29 +464,6 @@ test("a report's top-level text is persisted for its manager and handed over to 
   expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
 });
 
-test("a member update's re stores the sender's mention: a report's text to a human manager keeps the request it answers on the inbox row", async () => {
-  const { user: manager } = await signUp(h.app, { handle: "boss" });
-  const ada = await agentRowOf(h.app, "ada");
-  await h.sql`update agents set reports_to = ${manager.id} where id = ${ada?.id ?? ""}`;
-  const { cookie } = await signUp(h.app, { handle: "asker" });
-  await h.app.inject({
-    method: "POST",
-    url: "/api/messages",
-    headers: { cookie },
-    payload: { to: [h.seededRef("ada")], body: "update the README" },
-  });
-  const [asked] = await h.sql<{ id: string }[]>`
-    select id from messages where to_id = ${ada?.id ?? ""} and kind = 'message'`;
-  proc("ada")?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
-  await settle("ada");
-  const rows = await h.sql`
-    select body, re from messages where to_id = ${manager.id} and kind = 'member_update'`;
-  const [asker] = await h.sql<{ ref: string }[]>`select ref from principals where handle = 'asker'`;
-  expect(rows).toEqual([
-    { body: "README updated", re: [{ id: asked?.id, from: `<@${asker?.ref}>` }] },
-  ]);
-});
-
 test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
   const tokA = await startIdle("ada");
   vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("init failed"));
@@ -579,10 +541,11 @@ test("R4 (owner): a restart that cuts short a human retry inside a reported epis
   });
   // A human retry was under way when the factory stopped: boot finds it cut short.
   await h.sql`update agents set attempting = true where id = ${lead.id}`;
+  const items = (await h.sql`select 1 from inbox_items`).length;
   await h.app.close();
   await h.reopen({ harnessDriver: new FakeDriver(), env: { FACTORY_AGENT_PORT: "0" } });
   expect(await errored()).toHaveLength(1);
-  expect(await h.sql`select 1 from inbox_items`).toHaveLength(2);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(items);
 });
 
 test("errored_reported clears with the error, so the next episode is reported", async () => {

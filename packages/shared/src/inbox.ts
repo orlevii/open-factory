@@ -33,11 +33,6 @@ export type ChatRow = z.infer<typeof chatRowSchema>;
 export const inboxPageSchema = z.object({
   /** The unread chats: only on the first page (no `before`), unpaginated. */
   chats: z.array(chatRowSchema).optional(),
-  /**
-   * I9 §4.5: the unread member updates of your reports (you are a human manager), one chat-shaped row per
-   * report ("3 updates from @ada"): only on the first page, unpaginated. They never notify.
-   */
-  updates: z.array(chatRowSchema).optional(),
   items: z.array(inboxItemSchema),
   nextCursor: z.string().nullable(),
 });

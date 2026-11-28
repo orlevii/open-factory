@@ -15,16 +15,11 @@ const COUNT = new Intl.NumberFormat();
 const ended = (a: ChatRow["agent"]): string | undefined =>
   a.status === "terminated" ? "terminated" : a.archivedAt !== null ? "archived" : undefined;
 
-/** "3 updates from @ada" (I9 §4.5). */
-const updatesText = (n: number, handle: string) =>
-  `${COUNT.format(n)} ${n === 1 ? "update" : "updates"} from @${handle}`;
-
 /**
  * One unread chat as an Inbox row (I1 §6.7): the item row's anatomy. Line one is the agent (16px chip,
  * its handle in the tooltip, a spawned agent keeps `· ab12`), a muted "· 3 new", Urgent, "archived" or
  * "terminated" when ended, and the time. Only the name truncates; the rest never shrink. Line two is the
- * preview. A chat with no count (read, held in the list) shows read. With `updates` the row is a report's
- * member updates (I9 §4.5): the same anatomy, "· 3 updates from @ada", opening the report's session.
+ * preview. A chat with no count (read, held in the list) shows read.
  */
 export const ChatInboxRow = memo(function ChatInboxRow({
   row,
@@ -32,7 +27,6 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   onOpen,
   selected,
   selectable,
-  updates = false,
 }: {
   row: ChatRow;
   /** Epoch ms rounded to the minute. */
@@ -41,21 +35,15 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   selected: boolean;
   /** A plain click selects (the pane), so the link's target isn't preloaded. */
   selectable: boolean;
-  /** The row is a report's grouped member updates, not a chat. */
-  updates?: boolean;
 }) {
   const { agent, unread, latest } = row;
   const preview = usePlainMentions(latest.preview);
   const read = unread === 0;
   const at = new Date(latest.createdAt);
   const time = formatInboxTime(at, new Date(now));
-  const previewId = `inbox-preview-${updates ? "update" : "chat"}-${agent.ref}`;
+  const previewId = `inbox-preview-chat-${agent.ref}`;
   const state = ended(agent);
-  const count = read
-    ? ""
-    : updates
-      ? updatesText(unread, agent.handle)
-      : `${COUNT.format(unread)} new`;
+  const count = read ? "" : `${COUNT.format(unread)} new`;
   const label = [
     read ? "" : "Unread",
     agent.displayName,
@@ -70,11 +58,10 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   return (
     <li className="border-b border-border last:border-b-0">
       <Link
-        to={updates ? "/agents/$ref/session" : "/agents/$ref/chat"}
+        to="/agents/$ref/chat"
         params={{ ref: agent.ref }}
-        data-inbox-id={updates ? undefined : chatRowId(agent.ref)}
-        data-chat-row={updates ? undefined : ""}
-        data-update-row={updates ? "" : undefined}
+        data-inbox-id={chatRowId(agent.ref)}
+        data-chat-row=""
         data-row=""
         aria-label={label}
         aria-describedby={previewId}

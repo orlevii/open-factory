@@ -595,9 +595,8 @@ export class Router {
    * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). The
    * manager is read from the database (a change moves future rows only). A manager agent gets a `member_update` (the
    * report's text as itself; a fact as `@factory` about it), handed over once boot is done and never awaited; the
-   * manager's runtime delivers it after the debounce, like a message (I9 §4.8). A human manager gets the same as a
-   * `member_update` inbox item of their own, and an `errored` fact as an `agent_errored` notice: to that user only,
-   * never to the other humans (I9 §4.5).
+   * manager's runtime delivers it after the debounce, like a message (I9 §4.8). A human manager gets only an `errored`
+   * fact, as an `agent_errored` notice to that user alone; the report's text and other facts stay in its session.
    */
   async forward(f: Forward): Promise<void> {
     const agent = await this.d.store.agentById(f.agentId);
@@ -642,36 +641,21 @@ export class Router {
       );
       return { update };
     }
-    if (!manager) return undefined;
-    const to = { userId: manager.id };
-    const { userIds } =
-      f.fact === "errored"
-        ? await this.d.store.createHumanMessage(
-            {
-              kind: "system",
-              fromAgentId: null,
-              notice: "agent_errored",
-              subjectAgentId: f.agentId,
-              to,
-              body: f.body,
-              urgent: false,
-            },
-            tx,
-          )
-        : await this.d.store.createHumanMessage(
-            {
-              kind: "member_update",
-              inboxKind: "member_update",
-              ...(f.fact
-                ? { subjectAgentId: f.agentId, notice: f.fact }
-                : { fromAgentId: f.agentId }),
-              ...(f.re ? { re: f.re } : {}),
-              to,
-              body: f.body,
-              urgent: false,
-            },
-            tx,
-          );
+    // A human's inbox holds only what is addressed to them: their report's text and facts stay in its session, and
+    // only an errored report, which needs a human, becomes a notice.
+    if (manager?.kind !== "human" || f.fact !== "errored") return undefined;
+    const { userIds } = await this.d.store.createHumanMessage(
+      {
+        kind: "system",
+        fromAgentId: null,
+        notice: "agent_errored",
+        subjectAgentId: f.agentId,
+        to: { userId: manager.id },
+        body: f.body,
+        urgent: false,
+      },
+      tx,
+    );
     return { userIds };
   }
 

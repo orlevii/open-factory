@@ -26,12 +26,9 @@ import {
   type InboxItem,
   prefetchChat,
   prefetchPane,
-  updateRowId,
   useInbox,
   useInboxChats,
-  useInboxUpdates,
   useOpenItem,
-  useOpenUpdate,
 } from "./api";
 import { ChatInboxRow } from "./chat-row";
 import { InboxRow } from "./inbox-row";
@@ -43,7 +40,6 @@ const plainClick = (e: MouseEvent) =>
 /** A row of the list: an unread chat or an item, in one order by time. */
 type Row =
   | { kind: "chat"; id: string; at: string; chat: ChatRow }
-  | { kind: "update"; id: string; at: string; chat: ChatRow }
   | { kind: "item"; id: string; at: string; item: InboxItem };
 
 const rowKey = (r: Row) => r.id;
@@ -58,25 +54,12 @@ const NO_ITEMS: InboxItem[] = [];
  * The chats and the items by time, newest first. While more pages exist, a chat older than the oldest
  * loaded item waits until a page reaches its time (I1 §6.7).
  */
-function interleave(
-  chats: readonly ChatRow[],
-  updates: readonly ChatRow[],
-  items: readonly InboxItem[],
-  more: boolean,
-): Row[] {
+function interleave(chats: readonly ChatRow[], items: readonly InboxItem[], more: boolean): Row[] {
   const oldest = more ? items.at(-1)?.createdAt : undefined;
   const rows: Row[] = [];
   for (const chat of chats)
     if (oldest === undefined || chat.latest.createdAt >= oldest)
       rows.push({ kind: "chat", id: chatRowId(chat.agent.ref), at: chat.latest.createdAt, chat });
-  for (const chat of updates)
-    if (oldest === undefined || chat.latest.createdAt >= oldest)
-      rows.push({
-        kind: "update",
-        id: updateRowId(chat.agent.ref),
-        at: chat.latest.createdAt,
-        chat,
-      });
   for (const item of items) rows.push({ kind: "item", id: item.id, at: item.createdAt, item });
   return rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
@@ -107,8 +90,6 @@ export function InboxList({
   const items = q.data ?? NO_ITEMS;
   const loaded = q.data !== undefined;
   const chats = useInboxChats();
-  const updates = useInboxUpdates();
-  const openUpdate = useOpenUpdate();
   const list = useRef<HTMLUListElement>(null);
   // The rows' times are relative to the minute: a number, so a selection doesn't re-render every row.
   const now = Math.floor(Date.now() / 60_000) * 60_000;
@@ -127,8 +108,8 @@ export function InboxList({
     const fallback = lastSelected.current ?? selectedChat;
     if (selectedRef && !inList && fallback?.agent.ref === selectedRef)
       shown.push({ ...fallback, unread: 0 });
-    return interleave(shown, updates, items, q.hasNextPage);
-  }, [chats, updates, items, q.hasNextPage, selectedRef, inList, selectedChat]);
+    return interleave(shown, items, q.hasNextPage);
+  }, [chats, items, q.hasNextPage, selectedRef, inList, selectedChat]);
   const held = useHeldList(live, rowKey, asRead, selectedId);
   const rows = held.rows;
 
@@ -187,14 +168,6 @@ export function InboxList({
       }
     },
     [onSelect],
-  );
-
-  const onOpenUpdate = useCallback(
-    (agentRef: string) => {
-      const row = latest.current.find((r) => r.id === updateRowId(agentRef));
-      if (row?.kind === "update") openUpdate(row.chat);
-    },
-    [openUpdate],
   );
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -283,17 +256,7 @@ export function InboxList({
           className="border-y border-border [overflow-anchor:auto]"
         >
           {rows.map((r) =>
-            r.kind === "update" ? (
-              <ChatInboxRow
-                key={r.id}
-                row={r.chat}
-                now={now}
-                onOpen={onOpenUpdate}
-                selected={false}
-                selectable={false}
-                updates
-              />
-            ) : r.kind === "chat" ? (
+            r.kind === "chat" ? (
               <ChatInboxRow
                 key={r.id}
                 row={r.chat}

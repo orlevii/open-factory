@@ -163,7 +163,6 @@ test("GET /api/inbox pages items with a cursor; a bad cursor or limit is a 400, 
   expect(p2.nextCursor).toBeNull();
   expect(p1.chats).toEqual([]);
   expect("chats" in p2).toBe(false); // only the first page carries the chats
-  expect(p1.updates).toEqual([]); // no report's updates: the factory notices are items, not updates
   for (const i of [...p1.items, ...p2.items]) expect(i.kind).toBe("notice"); // never "message" (I1 §6.7)
 
   const forged = (s: string) => Buffer.from(s).toString("base64url");
@@ -457,66 +456,47 @@ test("GET /api/inbox/:id: the owner's item equals the list entry; another user's
   expect((await get(`/api/inbox/${mine.id}`, {})).statusCode).toBe(401);
 });
 
-/** A report of @or's forwards `n` updates, as its runtime does. */
-async function updatesFrom(handle: string, n: number, over: { fact?: "denied" } = {}) {
-  const a = await agentRowOf(h.app, handle);
-  if (!a) throw new Error(`no agent ${handle}`);
-  for (let i = 1; i <= n; i++)
-    await h.app.router.forward({ agentId: a.id, body: `${handle} update ${i}`, ...over });
-}
+test("a human manager's report finishing a turn adds nothing to their inbox; its send_message to them is a chat row", async () => {
+  await h.sql`update agents set reports_to = ${orId} where id = (select id from principals where handle = 'ada')`;
+  const unreadBefore = (await get("/api/inbox/unread-count")).json().count;
+  procOf("ada").emit(ev.turn(), ev.text("my work log"), ev.usage(), ev.end());
+  await (await runtimeOf(h.app, "ada"))?.settled();
+  expect((await get("/api/inbox/unread-count")).json().count).toBe(unreadBefore);
+  expect((await get("/api/inbox")).json()).toMatchObject({ items: [], chats: [] });
 
-test("a human manager's reports' updates come grouped per report as updates, never as items, for that user only", async () => {
-  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
-  const sam = await signUp(h.app, { handle: "sam" });
-  await updatesFrom("ada", 3);
-  await updatesFrom("bob", 1);
-  await updatesFrom("ada", 1, { fact: "denied" });
+  await aCalls("toolu_01Y", { to: ["@or"], body: "done, see the PR" });
+  expect((await get("/api/inbox/unread-count")).json().count).toBe(unreadBefore + 1);
   const page = (await get("/api/inbox")).json();
   expect(page.items).toEqual([]);
-  expect(page.chats).toEqual([]);
-  expect(
-    page.updates.map((u: { agent: { handle: string }; unread: number }) => [
-      u.agent.handle,
-      u.unread,
-    ]),
-  ).toEqual([
-    ["ada", 4],
-    ["bob", 1],
+  expect(page.chats).toEqual([
+    expect.objectContaining({
+      agent: expect.objectContaining({ handle: "ada" }),
+      unread: 1,
+      latest: expect.objectContaining({ preview: "done, see the PR" }),
+    }),
   ]);
-  expect(page.updates[0].latest.preview).toBe("ada update 1"); // a fact is counted for its subject; its text is the body
-  expect((await get("/api/inbox/unread-count")).json().count).toBe(5);
-  expect((await get("/api/inbox", { cookie: sam.cookie })).json().updates).toEqual([]);
-  expect((await get("/api/inbox/unread-count", { cookie: sam.cookie })).json().count).toBe(0);
-  // Only the first page carries them.
-  const more = (
-    await get(
-      `/api/inbox?before=${Buffer.from("2999-01-01T00:00:00.000Z|z").toString("base64url")}`,
-    )
-  ).json();
-  expect(more.updates).toBeUndefined();
 });
 
-test("read-from with kind member_update marks one report's updates read and leaves chats and other reports alone", async () => {
-  await h.sql`update agents set reports_to = ${orId} where id in (select id from principals where handle in ('ada', 'bob'))`;
-  await updatesFrom("ada", 2);
-  await updatesFrom("bob", 1);
-  await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
-  const upTo = (await get("/api/inbox")).json().updates[0].latest.createdAt;
-  const before = (await get("/api/inbox/unread-count")).json().count;
-  const done = await h.app.inject({
-    method: "POST",
-    url: `/api/inbox/read-from/${await h.refOf("ada")}`,
-    headers: { cookie },
-    payload: { upTo, kind: "member_update" },
-  });
-  expect(done.json().marked).toBe(2);
-  expect((await get("/api/inbox/unread-count")).json().count).toBe(before - 2);
-  const after = (await get("/api/inbox")).json();
-  expect(after.updates.map((u: { agent: { handle: string } }) => u.agent.handle)).toEqual(["bob"]);
-  expect(after.chats).toEqual([expect.objectContaining({ unread: 1 })]);
+test("a report's member_update inbox row from before is never shown, counted or marked read", async () => {
+  const ada = await agentRowOf(h.app, "ada");
+  if (!ada) throw new Error("seed");
+  const [m] = await h.sql<{ id: string }[]>`
+    insert into messages (id, kind, from_id, to_id, body, urgent, state, created_at, delivered_at)
+    values (gen_random_uuid(), 'member_update', ${ada.id}, ${orId}, 'old update', false, 'delivered', now(), now())
+    returning id`;
+  if (!m) throw new Error("insert");
+  const [item] = await h.sql<{ id: string }[]>`
+    insert into inbox_items (id, user_id, kind, message_id, created_at)
+    values (gen_random_uuid(), ${orId}, 'member_update', ${m.id}, now()) returning id`;
+  expect((await get("/api/inbox/unread-count")).json().count).toBe(0);
+  expect((await get("/api/inbox")).json()).toMatchObject({ items: [], chats: [] });
+  expect((await get("/api/inbox?unread=true&notify=true")).json().items).toEqual([]);
+  expect((await get(`/api/inbox/${item?.id}`)).statusCode).toBe(404);
+  const all = await post("/api/inbox/read-all", { upTo: "2999-01-01T00:00:00.000000Z" });
+  expect(all.json().count).toBe(0);
 });
 
-test("read-from with the default kind leaves the human manager's errored notice about that agent unread", async () => {
+test("read-from leaves the human manager's errored notice about that agent unread", async () => {
   await h.sql`update agents set reports_to = ${orId} where id = (select id from principals where handle = 'ada')`;
   const ada = await agentRowOf(h.app, "ada");
   if (!ada) throw new Error("seed");

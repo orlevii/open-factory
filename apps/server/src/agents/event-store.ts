@@ -166,6 +166,12 @@ export interface TurnClose {
   usage?: Extract<AnyEvent, { type: "usage" }>;
 }
 
+/**
+ * The inbox items a human sees. A report's `member_update` items (from before a human's inbox held only what is
+ * addressed to them) stay in the database but are never shown, counted or marked read.
+ */
+const SHOWN = ne(inboxItems.kind, "member_update");
+
 export class EventStore {
   constructor(private readonly db: Db) {}
 
@@ -1062,7 +1068,7 @@ export class EventStore {
    */
   async createHumanMessage(
     m: {
-      kind: "message" | "system" | "task_comment" | "task_update" | "member_update";
+      kind: "message" | "system" | "task_comment" | "task_update";
       fromAgentId?: string | null;
       /** A human author (a human's mention in a task comment). */
       fromUserId?: string;
@@ -1081,12 +1087,10 @@ export class EventStore {
       /** A `kind: "message"` row's recipient list, as principal ids. */
       recipientIds?: string[];
       /** The inbox item's kind; `message` when not given. */
-      inboxKind?: "message" | "mention" | "task_event" | "credential" | "member_update";
+      inboxKind?: "message" | "mention" | "task_event" | "credential";
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
-      /** A report's text to its human manager: the requests it answers. */
-      re?: RequestRef[];
     },
     outer: Exec = this.db,
   ): Promise<{ row: MessageRow; userIds: string[] }> {
@@ -1103,11 +1107,6 @@ export class EventStore {
         );
       if (m.kind === "message" && !m.recipientIds?.length)
         throw new Error("a human message needs its recipients");
-      if (m.kind === "member_update") {
-        if (m.to === "all") throw new Error("a member update goes to its one manager");
-        if (!m.fromAgentId === !(m.subjectAgentId && m.notice))
-          throw new Error("a member update is a report's text or a fact about it, not both");
-      }
       if (m.to === "all" && m.kind !== "system")
         throw new Error("only a factory fact goes to every human; address people by handle");
       if (m.kind === "task_update" && (authors > 0 || m.subjectAgentId))
@@ -1138,7 +1137,6 @@ export class EventStore {
           toAllHumans: m.to === "all",
           recipientIds: m.kind === "message" ? (m.recipientIds ?? null) : null,
           fromToolUseId: m.fromToolUseId ?? null,
-          re: m.re?.length ? m.re : null,
           body: m.body,
           urgent: m.urgent,
           state: "delivered",
@@ -1553,7 +1551,7 @@ export class EventStore {
     const holds = await this.loopHoldsOf(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
-      // Member updates are the page's grouped `updates` (I9 §4.5), never items.
+      // Never selected (SHOWN); the check narrows the kind.
       if (r.item.kind === "member_update") continue;
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty handle.
       if (r.m.subjectCredentialId && r.credName !== null) {
@@ -1692,11 +1690,7 @@ export class EventStore {
   /** One item of the user's inbox, or null when it does not exist or belongs to someone else. */
   async inboxItem(userId: string, id: string): Promise<InboxEntry | null> {
     const rows = await this.inboxRows(
-      and(
-        eq(inboxItems.userId, userId),
-        eq(inboxItems.id, id),
-        ne(inboxItems.kind, "member_update"),
-      ),
+      and(eq(inboxItems.userId, userId), eq(inboxItems.id, id), SHOWN),
     );
     return (await this.toEntries(rows))[0] ?? null;
   }
@@ -1712,7 +1706,6 @@ export class EventStore {
     o: { unread?: boolean; notify?: boolean } = {},
   ): Promise<{
     chats?: UnreadChat[];
-    updates?: UnreadChat[];
     items: InboxEntry[];
     nextCursor: string | null;
   }> {
@@ -1725,9 +1718,10 @@ export class EventStore {
     const rows = await this.inboxRows(
       and(
         eq(inboxItems.userId, userId),
-        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A report's member updates
-        // come back grouped as `updates` (I9 §4.5). A factory notice (`system`) has no chat: it is an item of kind `notice`.
-        notInArray(messages.kind, ["message", "member_update"]),
+        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A factory notice
+        // (`system`) has no chat: it is an item of kind `notice`.
+        ne(messages.kind, "message"),
+        SHOWN,
         cursor,
         o.unread || o.notify ? isNull(inboxItems.readAt) : undefined,
         // What notifies (I8 §5.1): a mention, a credential, or an @factory error or held loop.
@@ -1751,45 +1745,25 @@ export class EventStore {
       rows.length > limit && last
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
-    // `chats` and `updates` are unpaginated: only the first page carries them.
+    // `chats` are unpaginated: only the first page carries them.
     if (before) return { items, nextCursor };
-    const [chats, updates] = await Promise.all([
-      this.unreadChats(userId),
-      this.unreadUpdates(userId),
-    ]);
-    return { chats, updates, items, nextCursor };
+    return { chats: await this.unreadChats(userId), items, nextCursor };
   }
 
   /**
    * I1 §6.7: every agent with unread messages to the user, newest first: how many, and the newest one (its body cut
    * to a plain-text preview). Unpaginated: one row per agent.
    */
-  unreadChats(userId: string): Promise<UnreadChat[]> {
-    return this.unreadGroups(userId, "message");
-  }
-
-  /** I9 §4.5: the same grouping for a human manager's unread member updates, one row per report. */
-  unreadUpdates(userId: string): Promise<UnreadChat[]> {
-    return this.unreadGroups(userId, "member_update");
-  }
-
-  /** Unread inbox items of `kind` grouped by the agent they come from (a fact's subject, for a member update). */
-  private async unreadGroups(
-    userId: string,
-    kind: "message" | "member_update",
-  ): Promise<UnreadChat[]> {
+  async unreadChats(userId: string): Promise<UnreadChat[]> {
     const fa = alias(agents, "fa");
     const fp = alias(principals, "fp");
-    // A chat message is from its agent; a member update is from the report, or about it (a fact). A factory notice
-    // (`system`, also an item of kind `message`) is neither: it has no sender, so it never groups.
-    const from =
-      kind === "message"
-        ? eq(fa.id, messages.fromId)
-        : eq(fa.id, sql`coalesce(${messages.fromId}, ${messages.subjectAgentId})`);
+    // A chat message is from its agent. A factory notice (`system`, also an item of kind `message`) has no sender, so
+    // it never groups.
+    const from = eq(fa.id, messages.fromId);
     const unread = and(
       eq(inboxItems.userId, userId),
       isNull(inboxItems.readAt),
-      eq(inboxItems.kind, kind),
+      eq(inboxItems.kind, "message"),
     );
     const [counts, latest, oldest] = await Promise.all([
       this.db
@@ -1847,7 +1821,7 @@ export class EventStore {
       .set({
         readAt: sql`coalesce(${inboxItems.readAt}, ${this.clock().toISOString()}::timestamptz)`,
       })
-      .where(and(eq(inboxItems.id, itemId), eq(inboxItems.userId, userId)))
+      .where(and(eq(inboxItems.id, itemId), eq(inboxItems.userId, userId), SHOWN))
       .returning({ id: inboxItems.id });
     return rows.length > 0;
   }
@@ -1867,6 +1841,7 @@ export class EventStore {
           eq(inboxItems.userId, userId),
           isNull(inboxItems.readAt),
           sql`${inboxItems.createdAt} <= ${upTo}::timestamptz`,
+          SHOWN,
         ),
       )
       .returning({ id: inboxItems.id });
@@ -1874,15 +1849,13 @@ export class EventStore {
   }
 
   /**
-   * Marks the user's unread `kind` items (chat messages, or member updates, I9 §4.5) from the agent `ref`, created at
-   * or before `upTo`, read with one stamp. `null` for an unknown ref. Mentions, task events and items from other
-   * agents are untouched.
+   * Marks the user's unread chat messages from the agent `ref`, created at or before `upTo`, read with one stamp.
+   * `null` for an unknown ref. Mentions, task events and items from other agents are untouched.
    */
   async markReadFrom(
     userId: string,
     ref: string,
     upTo: string,
-    kind: "message" | "member_update" = "message",
   ): Promise<{ marked: number; readAt: string } | null> {
     if (!isCursorInstant(upTo)) throw new InvalidCursorError();
     const agent = await this.agentByRef(ref);
@@ -1895,18 +1868,11 @@ export class EventStore {
         and(
           eq(inboxItems.userId, userId),
           isNull(inboxItems.readAt),
-          eq(inboxItems.kind, kind),
+          eq(inboxItems.kind, "message"),
           sql`${inboxItems.createdAt} <= ${upTo}::timestamptz`,
           inArray(
             inboxItems.messageId,
-            this.db
-              .select({ id: messages.id })
-              .from(messages)
-              .where(
-                kind === "member_update"
-                  ? or(eq(messages.fromId, agent.id), eq(messages.subjectAgentId, agent.id))
-                  : eq(messages.fromId, agent.id),
-              ),
+            this.db.select({ id: messages.id }).from(messages).where(eq(messages.fromId, agent.id)),
           ),
         ),
       )
@@ -1929,7 +1895,7 @@ export class EventStore {
     const [r] = await this.db
       .select({ n: count() })
       .from(inboxItems)
-      .where(and(eq(inboxItems.userId, userId), isNull(inboxItems.readAt)));
+      .where(and(eq(inboxItems.userId, userId), isNull(inboxItems.readAt), SHOWN));
     return r?.n ?? 0;
   }
 

@@ -149,6 +149,17 @@ test("Messaging section names the factory tools and the rules once; the report l
   expect(full).toContain("member_update` envelopes, batched");
 });
 
+test("the work log is forwarded to an agent manager; with a human manager it reaches no one", () => {
+  const logLine = (md: string) => md.split("\n").find((l) => l.includes("Your text output")) ?? "";
+  expect(logLine(buildClaudeMd(input))).toBe(
+    `- Your text output is your work log: it stays in your session, and the factory forwards it to your manager as updates. ${T("cto")} reads them in its session, so an answer to ${T("cto")} can simply be written.`,
+  );
+  const human = buildClaudeMd({ ...input, manager: { kind: "human", ...who("or"), name: "Or" } });
+  expect(logLine(human)).toBe(
+    `- Your text output is your work log: it stays in your session and reaches no one, not even your manager. To reach ${T("or")}, use \`send_message\`.`,
+  );
+});
+
 test("only a manager is told how to read re and re_from on its reports' updates", () => {
   const rule = "So check `re_from` before you treat an update as an answer to you.";
   expect(buildClaudeMd({ ...input, reports: [] })).not.toContain(rule);

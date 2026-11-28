@@ -169,11 +169,7 @@ export const unreadCountSchema = z.object({
   count: z.number().int().nonnegative(),
   byAgent: z.record(z.string(), z.number().int().nonnegative()).default({}),
 });
-export const readFromBodySchema = z.object({
-  upTo: z.string().min(1),
-  /** Chat messages (the default) or a report's member updates (I9 §4.5). */
-  kind: z.enum(["message", "member_update"]).default("message"),
-});
+export const readFromBodySchema = z.object({ upTo: z.string().min(1) });
 export const readFromResponseSchema = z.object({ marked: z.number().int(), readAt: z.string() });
 export const eventRefSchema = z.object({ agentRef: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({

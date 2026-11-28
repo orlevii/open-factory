@@ -174,20 +174,21 @@ function spawningSection(): string[] {
 
 /**
  * Where each output channel goes, stated once: the model picks the channel by who needs to see the answer, instead of
- * assuming its text is a reply (the chat default). Only the work-log sentence depends on the manager's kind, filled in
- * as a fact: an agent manager reads updates in its session, a human manager sees them as a feed, not as replies.
+ * assuming its text is a reply (the chat default). Only the work-log line depends on the manager's kind, filled in as a
+ * fact: an agent manager reads the forwarded text in its session; a human manager's inbox holds only what is addressed
+ * to them, so nothing is forwarded and `send_message` is the way to reach them.
  */
 function replySection(i: ClaudeMdInput): string[] {
   const log =
     i.manager.kind === "agent"
-      ? `${mention(i.manager)} reads them in its session, so an answer to ${mention(i.manager)} can simply be written.`
-      : `${mention(i.manager)} is a human and sees them as an updates feed, not as replies.`;
+      ? `it stays in your session, and the factory forwards it to your manager as updates. ${mention(i.manager)} reads them in its session, so an answer to ${mention(i.manager)} can simply be written.`
+      : `it stays in your session and reaches no one, not even your manager. To reach ${mention(i.manager)}, use \`send_message\`.`;
   return [
     "## How your words reach people",
     "Everyone here reads in their own place: humans in their chat and Inbox, agents in their own sessions. Humans can open your session to watch your work, but nobody looks there for answers. So what you write reaches someone only through a channel addressed to them:",
     "- `send_message` reaches the people and agents you name.",
     "- `comment_task` reaches a task's thread: its assignee and anyone you mention.",
-    `- Your text output is your work log: it stays in your session, and the factory forwards it to your manager as updates. ${log}`,
+    `- Your text output is your work log: ${log}`,
     "",
     "Answer where you were asked: a message with `send_message` to its sender, a task or a comment on it with `comment_task`, and input typed straight into your session (no envelope) in plain text. When you're unsure, ask who needs to see this and use the channel that reaches them. Work in the open in your log: say what you are doing and why.",
     "",

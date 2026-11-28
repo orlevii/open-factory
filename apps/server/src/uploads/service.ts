@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema, type UploadRow } from "@open-factory/db";
+import type { MessageAttachment } from "@open-factory/shared";
 import { and, count, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import { type AgentRecord, agentRecords, principalById } from "../principals/principal-store.ts";
@@ -7,7 +8,7 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 import { excludeFactoryDir } from "./git-exclude.ts";
 import { storedUploadName } from "./names.ts";
-import { type ImageMime, type Refusal, sniffType, type TEXT_MIME } from "./sniff.ts";
+import { type Refusal, type Sniffed, sniffType } from "./sniff.ts";
 import { type StoreHooks, UploadStore } from "./store.ts";
 
 const { uploads, agentProjectGrants, projects } = schema;
@@ -19,7 +20,7 @@ const TMP_TTL_MS = 3_600_000;
 
 export type UploadInfo = {
   uploadId: string;
-  kind: "image" | "text";
+  kind: MessageAttachment["kind"];
   bytes: number;
   width?: number;
   height?: number;
@@ -145,7 +146,7 @@ export class UploadService {
     const id = randomUUID();
     const at = this.now();
     const store = await UploadStore.open(await this.workdir(agent.id), this.storeHooks);
-    const written = await store.write(source, { storedName: storedUploadName(at, id, name), name });
+    const written = await store.write(source, { storedName: storedUploadName(at, id, name) });
     if ("status" in written) return written;
     let row: UploadRow;
     try {
@@ -223,7 +224,7 @@ export class UploadService {
   async read(
     agent: AgentRecord,
     r: UploadRow,
-  ): Promise<{ data: Buffer; mime: ImageMime | typeof TEXT_MIME } | "gone" | "changed"> {
+  ): Promise<{ data: Buffer; mime: Sniffed["mime"] } | "gone" | "changed"> {
     if (agent.workspaceDeletedAt) return "gone";
     let store: UploadStore;
     try {

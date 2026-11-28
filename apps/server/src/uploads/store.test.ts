@@ -41,7 +41,7 @@ test("writes into .factory/uploads with 0644 files and 0755 folders whatever the
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
   const data = png(10, 10);
-  const r = await store.write(chunks(data), { storedName: "20261122-a-x.png", name: "x.png" });
+  const r = await store.write(chunks(data), { storedName: "20261122-a-x.png" });
   if ("status" in r) throw new Error("refused");
   expect(r).toMatchObject({
     rel: ".factory/uploads/20261122-a-x.png",
@@ -64,7 +64,7 @@ test("a symlinked .factory is refused and nothing is written outside the workspa
   symlinkSync(outside, path.join(wd, ".factory"));
   const store = await UploadStore.open(wd);
   await expect(
-    store.write(chunks(Buffer.from("hi")), { storedName: "a.txt", name: "a.txt" }),
+    store.write(chunks(Buffer.from("hi")), { storedName: "a.txt" }),
   ).rejects.toBeInstanceOf(UnsafePathError);
   expect(readdirSync(outside)).toEqual([]);
 });
@@ -76,7 +76,7 @@ test("a symlinked .factory/uploads is refused and nothing is written outside the
   symlinkSync(outside, uploadsOf(wd));
   const store = await UploadStore.open(wd);
   await expect(
-    store.write(chunks(Buffer.from("hi")), { storedName: "a.txt", name: "a.txt" }),
+    store.write(chunks(Buffer.from("hi")), { storedName: "a.txt" }),
   ).rejects.toBeInstanceOf(UnsafePathError);
   expect(readdirSync(outside)).toEqual([]);
 });
@@ -95,14 +95,14 @@ test("an existing file or link at the target is refused (O_EXCL), never replaced
   await store.ensureDir();
   writeFileSync(path.join(uploadsOf(wd), "taken.txt"), "original");
   await expect(
-    store.write(chunks(Buffer.from("new")), { storedName: "taken.txt", name: "taken.txt" }),
+    store.write(chunks(Buffer.from("new")), { storedName: "taken.txt" }),
   ).rejects.toBeInstanceOf(UploadExistsError);
   expect(readFileSync(path.join(uploadsOf(wd), "taken.txt"), "utf8")).toBe("original");
   const secret = path.join(tmp("secret-"), "key");
   writeFileSync(secret, "secret");
   symlinkSync(secret, path.join(uploadsOf(wd), "link.txt"));
   await expect(
-    store.write(chunks(Buffer.from("new")), { storedName: "link.txt", name: "link.txt" }),
+    store.write(chunks(Buffer.from("new")), { storedName: "link.txt" }),
   ).rejects.toBeInstanceOf(UploadExistsError);
   expect(readFileSync(secret, "utf8")).toBe("secret");
   expect(readdirSync(uploadsOf(wd)).sort()).toEqual(["link.txt", "taken.txt"]);
@@ -112,7 +112,7 @@ test("a stored name that could leave the folder is refused before anything is op
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
   for (const storedName of ["../x.txt", "a/b.txt", "..", ""])
-    await expect(store.write(chunks(Buffer.from("x")), { storedName, name: "x" })).rejects.toThrow(
+    await expect(store.write(chunks(Buffer.from("x")), { storedName })).rejects.toThrow(
       `${storedName} isn't a stored upload name.`,
     );
   // Nothing was created: not in the uploads folder, and not where the name pointed.
@@ -127,7 +127,6 @@ test("a stream crossing the limit throws and deletes the temp file", async () =>
   const err = await store
     .write(chunks(Buffer.alloc(6, 0x61), Buffer.alloc(6, 0x61)), {
       storedName: "big.txt",
-      name: "big.txt",
       limit: 10,
     })
     .catch((e) => e);
@@ -142,17 +141,15 @@ test("an aborted stream deletes the temp file", async () => {
     yield Buffer.from("partial");
     throw new Error("aborted");
   }
-  await expect(store.write(aborted(), { storedName: "a.txt", name: "a.txt" })).rejects.toThrow(
-    "aborted",
-  );
+  await expect(store.write(aborted(), { storedName: "a.txt" })).rejects.toThrow("aborted");
   expect(readdirSync(uploadsOf(wd))).toEqual([]);
 });
 
-test("a refused type returns the refusal and leaves no file", async () => {
+test("an empty file returns the refusal and leaves no file", async () => {
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
-  const r = await store.write(chunks(Buffer.from("<svg>")), { storedName: "a.svg", name: "a.svg" });
-  expect(r).toMatchObject({ status: 415 });
+  const r = await store.write(chunks(Buffer.alloc(0)), { storedName: "a.svg" });
+  expect(r).toMatchObject({ status: 422 });
   expect(readdirSync(uploadsOf(wd))).toEqual([]);
 });
 
@@ -160,7 +157,7 @@ test("read checks size and sha256 and refuses a swapped, resized, linked or hard
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
   const data = Buffer.from("hello world\n");
-  const r = await store.write(chunks(data), { storedName: "a.txt", name: "a.txt" });
+  const r = await store.write(chunks(data), { storedName: "a.txt" });
   if ("status" in r) throw new Error("refused");
   const expected = { bytes: r.bytes, sha256: r.sha256 };
   expect(await store.read(r.rel, expected)).toEqual(data);
@@ -189,7 +186,7 @@ test("read refuses a symlinked uploads folder", async () => {
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
   const data = Buffer.from("x\n");
-  const r = await store.write(chunks(data), { storedName: "a.txt", name: "a.txt" });
+  const r = await store.write(chunks(data), { storedName: "a.txt" });
   if ("status" in r) throw new Error("refused");
   const { renameSync } = await import("node:fs");
   const moved = path.join(tmp("moved-"), "uploads");
@@ -203,7 +200,7 @@ test("read refuses a symlinked uploads folder", async () => {
 test("remove deletes the file; a planted link is removed itself, never its target", async () => {
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
-  const r = await store.write(chunks(Buffer.from("x\n")), { storedName: "a.txt", name: "a.txt" });
+  const r = await store.write(chunks(Buffer.from("x\n")), { storedName: "a.txt" });
   if ("status" in r) throw new Error("refused");
   await store.remove(r.rel);
   expect(existsSync(path.join(wd, r.rel))).toBe(false);
@@ -234,7 +231,6 @@ test("Docker: the stored file is under the workdir mount the container sees and 
   const store = await UploadStore.open(wd);
   const r = await store.write(chunks(png(20, 20)), {
     storedName: "20261122-id-shot.png",
-    name: "shot.png",
   });
   if ("status" in r) throw new Error("refused");
   const mounts = buildMounts({
@@ -284,7 +280,7 @@ test("a .factory swapped for a link between the walk and the open is refused bef
     },
   });
   await expect(
-    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt", name: "a.txt" }),
+    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt" }),
   ).rejects.toBeInstanceOf(UnsafePathError);
   expect(readdirSync(path.join(outside, "uploads"))).toEqual([]);
   expect(readdirSync(path.join(wd, ".factory-real/uploads"))).toEqual([]);
@@ -301,7 +297,7 @@ test("a folder moved out between the write and the link is refused, and our file
     },
   });
   await expect(
-    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt", name: "a.txt" }),
+    store.write(chunks(Buffer.from("secret bytes")), { storedName: "a.txt" }),
   ).rejects.toBeInstanceOf(UnsafePathError);
   expect(readdirSync(path.join(outside, "fac/uploads"))).toEqual([]);
 });
@@ -325,7 +321,7 @@ test("a workdir reached through a symlinked parent is resolved and used at its r
   symlinkSync(home, alias);
   const store = await UploadStore.open(path.join(alias, "agents/dev"));
   expect(store.root).toBe(path.join(home, "agents/dev"));
-  const r = await store.write(chunks(Buffer.from("hi\n")), { storedName: "a.txt", name: "a.txt" });
+  const r = await store.write(chunks(Buffer.from("hi\n")), { storedName: "a.txt" });
   expect(r).toMatchObject({ rel: ".factory/uploads/a.txt" });
   expect(readFileSync(path.join(home, "agents/dev/.factory/uploads/a.txt"), "utf8")).toBe("hi\n");
 });
@@ -334,7 +330,7 @@ test("a workdir reached through a symlinked parent is resolved and used at its r
 test("read never reads past the row's size", async () => {
   const wd = tmp("wd-");
   const store = await UploadStore.open(wd);
-  const r = await store.write(chunks(Buffer.from("abc\n")), { storedName: "a.txt", name: "a.txt" });
+  const r = await store.write(chunks(Buffer.from("abc\n")), { storedName: "a.txt" });
   if ("status" in r) throw new Error("refused");
   expect(await store.read(r.rel, { bytes: r.bytes, sha256: r.sha256 })).toEqual(
     Buffer.from("abc\n"),

@@ -22,7 +22,7 @@ import { agentRecords, principalsByHandles } from "../principals/principal-store
 import { makeTestApp } from "../test/helpers.ts";
 import { UNKNOWN_REF } from "../test/principals.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
-import { heic, jpeg, png } from "../uploads/fixtures.ts";
+import { jpeg, pdf, png, zip } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -118,10 +118,12 @@ test("POST stores a PNG under .factory/uploads with a safe name and answers its 
   expect(statSync(uploadsDir("dev")).mode & 0o777).toBe(0o755);
 });
 
-test("a JPEG and UTF-8 text are accepted by content (sniff.test.ts owns every type)", async () => {
+test("a JPEG, UTF-8 text, a zip and a PDF are accepted by content (sniff.test.ts owns every type)", async () => {
   for (const [data, name, kind] of [
     [jpeg(100, 50), "a.jpg", "image"],
     [Buffer.from("# Notes\nhello\n"), "notes.md", "text"],
+    [zip(), "a.zip", "file"],
+    [pdf(), "doc.pdf", "file"],
   ] as const) {
     const res = await upload("dev", data, name);
     expect(res.statusCode, name).toBe(201);
@@ -199,37 +201,37 @@ test("a stream crossing 20 MiB is refused with 413 and its temp file deleted", a
   ).toEqual([]);
 });
 
-test("SVG, HTML, HEIC and UTF-16 are 415 with a reason; nothing is kept", async () => {
-  const before = listUploads("ops");
-  const cases: [Buffer, string, string][] = [
-    [
-      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
-      "x.png",
-      "SVG isn't supported; export it as PNG.",
-    ],
-    [Buffer.from("<!doctype html><script>1</script>"), "x.txt", "HTML files aren't supported."],
-    [heic(), "IMG_1.HEIC", "HEIC isn't supported; export as JPEG"],
-    [
-      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hi", "utf16le")]),
-      "u.txt",
-      "UTF-16 text isn't supported; save it as UTF-8.",
-    ],
-  ];
-  for (const [data, name, reason] of cases) {
-    const res = await upload("ops", data, name);
-    expect(res.statusCode, name).toBe(415);
-    expect(res.json().error).toEqual({ code: "unsupported_type", message: reason });
-  }
-  expect(listUploads("ops")).toEqual(before);
-});
-
-test("a 30000×30000 PNG header is 422 without decoding", async () => {
-  const res = await upload("ops", png(30000, 30000), "huge.png");
-  expect(res.statusCode).toBe(422);
-  expect(res.json().error).toEqual({
-    code: "image_too_large",
-    message: "Image is too large (max 8000 px a side).",
-  });
+test.each([
+  [
+    "an HTML document",
+    Buffer.from("<!doctype html><html><body><script>alert(1)</script>"),
+    "page.html",
+  ],
+  [
+    "an SVG",
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>'),
+    "icon.svg",
+  ],
+  [
+    "an SVG behind <?xml",
+    Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>'),
+    "a.svg",
+  ],
+  ["HTML named like an image", Buffer.from("<html><script>alert(1)</script>"), "x.png"],
+  ["HTML named a.html", Buffer.from("<!DOCTYPE html><p>hi"), "a.html"],
+  ["a PNG over the image limits", png(30000, 30000), "huge.png"],
+])("%s is accepted as a file and only ever downloads as octet-stream", async (_, data, name) => {
+  const res = await upload("ops", data, name);
+  expect(res.statusCode).toBe(201);
+  expect(res.json()).toMatchObject({ kind: "file", bytes: data.length, name });
+  expect(res.json()).not.toHaveProperty("width");
+  const got = await get("ops", res.json().uploadId);
+  expect(got.statusCode).toBe(200);
+  expect(got.headers["content-type"]).toBe("application/octet-stream");
+  expect(String(got.headers["content-disposition"])).toMatch(/^attachment; /);
+  expect(got.headers["x-content-type-options"]).toBe("nosniff");
+  expect(got.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+  expect(got.rawPayload).toEqual(data);
 });
 
 test("a symlinked .factory refuses the upload and nothing is written outside the workspace", async () => {

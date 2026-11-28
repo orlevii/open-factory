@@ -111,3 +111,13 @@ export function gifWithFrame(
   const data = Buffer.from([0x02, 0x02, 0x44, 0x01, 0x00, 0x3b]);
   return Buffer.concat([head, ext, desc, data]);
 }
+
+/** An empty zip archive: just the end-of-central-directory record (it contains NULs). */
+export function zip(): Buffer {
+  return Buffer.concat([Buffer.from("PK\x05\x06", "latin1"), Buffer.alloc(18)]);
+}
+
+/** An all-ASCII PDF, so it exercises the `%PDF-` rule rather than the NUL rule. */
+export function pdf(): Buffer {
+  return Buffer.from("%PDF-1.7\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
+}

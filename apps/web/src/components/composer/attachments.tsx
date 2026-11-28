@@ -1,7 +1,14 @@
-import { FileText, RotateCw, X } from "lucide-react";
+import type { MessageAttachment } from "@open-factory/shared";
+import { RotateCw, X } from "lucide-react";
 import { memo, useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { MiddleTruncate } from "@/components/middle-truncate";
+import {
+  FileChipLead,
+  FileChipSize,
+  FileChipText,
+  KindIcon,
+} from "@/components/attachments/file-chip";
 import { Button } from "@/components/ui/button";
+import { formatBytes } from "@/features/session/format";
 
 /** One file in the composer (U3 §13.5). A new object on every change, so a snapshot compares by identity. */
 export type UploadView = {
@@ -9,8 +16,8 @@ export type UploadView = {
   /** The original name, as the person chose it (shown through `displayName`, never as HTML). */
   readonly name: string;
   readonly bytes: number;
-  /** A guess from the browser's type, for the icon only; the server sniffs the content. */
-  readonly image: boolean;
+  /** The server's answer; unset until it comes (the icon is a generic file until then). */
+  readonly kind?: MessageAttachment["kind"];
   readonly status: "uploading" | "done" | "failed";
   /** 0..1 while uploading. */
   readonly progress: number;
@@ -118,34 +125,36 @@ const UploadChip = memo(function UploadChip({
   const name = displayName(v.name);
   const pct = Math.round(v.progress * 100);
   const failed = v.status === "failed";
+  const status =
+    v.status === "uploading" ? `uploading ${pct}%` : failed ? `failed: ${v.error}` : "uploaded";
   return (
     <li
       data-upload-chip
       data-status={v.status}
+      aria-label={`${name}, ${formatBytes(v.bytes)}, ${status}`}
       inert={hidden}
       aria-hidden={hidden || undefined}
       // A failed chip grows to show its reason on up to two lines (the evidence pass, D13).
       className={`relative flex min-h-9 max-w-[12rem] min-w-0 items-center gap-1.5 overflow-hidden rounded-sm border pointer-coarse:gap-1 bg-background py-0.5 pr-0.5 pl-1 ${failed ? "border-destructive" : "border-border"}`}
     >
-      {v.thumb ? (
-        <Thumb bitmap={v.thumb} />
-      ) : (
-        <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-      )}
+      <FileChipLead>
+        {v.thumb ? <Thumb bitmap={v.thumb} /> : <KindIcon kind={v.kind} />}
+      </FileChipLead>
       <span className="flex min-w-0 flex-1 flex-col text-[0.8125rem] leading-4">
-        <span dir="auto" className="min-w-0">
-          <MiddleTruncate text={name} keepEnd headMin />
-        </span>
-        {failed ? (
-          <span
-            data-upload-error
-            className="line-clamp-2 text-xs leading-4 break-words whitespace-normal text-destructive"
-          >
-            {v.error}
-          </span>
-        ) : v.status === "uploading" ? (
-          <span className="text-xs leading-4 text-muted-foreground tabular-nums">{pct}%</span>
-        ) : null}
+        <FileChipText name={v.name}>
+          {failed ? (
+            <span
+              data-upload-error
+              className="line-clamp-2 text-xs leading-4 break-words whitespace-normal text-destructive"
+            >
+              {v.error}
+            </span>
+          ) : v.status === "uploading" ? (
+            <span className="text-xs leading-4 text-muted-foreground tabular-nums">{pct}%</span>
+          ) : (
+            <FileChipSize bytes={v.bytes} />
+          )}
+        </FileChipText>
       </span>
       {failed && v.retryable ? (
         <Button

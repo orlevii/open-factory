@@ -228,7 +228,13 @@ export function createUploadStore(agentRef: string): UploadStore {
           const attachment = parsed.data;
           e.attachment = attachment;
           described.set(attachment.uploadId, attachment);
-          setView(k, { status: "done", progress: 1 });
+          if (attachment.kind !== "image") e.view.thumb?.close();
+          setView(k, {
+            status: "done",
+            progress: 1,
+            kind: attachment.kind,
+            ...(attachment.kind !== "image" ? { thumb: undefined } : {}),
+          });
         } else
           setView(k, {
             status: "failed",
@@ -293,7 +299,6 @@ export function createUploadStore(agentRef: string): UploadStore {
             key,
             name: file.name,
             bytes: file.size,
-            image,
             status: refusal ? "failed" : "uploading",
             progress: 0,
             retryable: false,
@@ -304,7 +309,8 @@ export function createUploadStore(agentRef: string): UploadStore {
         if (image && typeof createImageBitmap === "function" && !refusal)
           createImageBitmap(file, { resizeWidth: 64 }).then(
             (bitmap) => {
-              if (entries.get(key) !== entry) return bitmap.close();
+              if (entries.get(key) !== entry || (entry.view.kind && entry.view.kind !== "image"))
+                return bitmap.close();
               setView(key, { thumb: bitmap });
               notifyKey(key);
             },

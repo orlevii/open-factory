@@ -150,7 +150,12 @@ const UploadChip = memo(function UploadChip({
               {v.error}
             </span>
           ) : v.status === "uploading" ? (
-            <span className="text-xs leading-4 text-muted-foreground tabular-nums">{pct}%</span>
+            <span
+              dir="ltr"
+              className="text-xs leading-4 whitespace-nowrap text-muted-foreground tabular-nums"
+            >
+              {pct}%
+            </span>
           ) : (
             <FileChipSize bytes={v.bytes} />
           )}

@@ -91,7 +91,7 @@ export class UploadService {
   }
 
   /**
-   * Streams `source` into the agent's `.factory/uploads/`, then records the row. A refused type returns the refusal;
+   * Streams `source` into the agent's `.factory/uploads/`, then records the row. An empty file returns the refusal;
    * over the cap throws `UploadTooLargeError`; an agent that ended meanwhile loses the file and throws
    * `UploadAgentEndedError`. On the first upload (and idempotently after), `.factory/` goes into `info/exclude`.
    */

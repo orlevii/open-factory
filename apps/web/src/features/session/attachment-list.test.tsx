@@ -27,6 +27,7 @@ test("a text chip downloads too", () => {
   const link = screen.getByRole("link", { name: /^Download run\.log\s+2\sKB$/ });
   expect(link).toHaveAttribute("download");
   expect(link).not.toHaveAttribute("target");
+  expect(link.querySelector("[data-kind-icon]")).toHaveAttribute("data-kind-icon", "text");
 });
 
 test("an image chip opens in a new tab and previews up to 1 MB, with its size", () => {

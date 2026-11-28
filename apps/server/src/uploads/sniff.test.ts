@@ -89,6 +89,16 @@ test("a NUL far past the head still makes it a file", () => {
   expect(s.finish()).toEqual(FILE);
 });
 
+test.each([
+  ["invalid UTF-8 past the head", [0xc3, 0x28]],
+  ["a truncated multibyte end", [0xe2, 0x9c]],
+])("%s makes it a file", (_, tail) => {
+  const s = new Sniffer();
+  s.push(Buffer.alloc(600 * 1024, 0x61));
+  s.push(Buffer.from(tail));
+  expect(s.finish()).toEqual(FILE);
+});
+
 test("the largest accepted image stays an image", () => {
   expect(sniffType(png(8000, 6000))).toMatchObject({ kind: "image" }); // 48 MP
 });

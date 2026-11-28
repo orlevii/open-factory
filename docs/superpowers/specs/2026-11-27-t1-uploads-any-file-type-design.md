@@ -92,7 +92,7 @@ Unchanged. The file is stored at `.factory/uploads/<yyyymmdd>-<id>-<safe>` with 
 - `N B` under 1024 bytes; whole `KB` below 1 MiB, except that a value that would round to 1024 KB reads "1.0 MB" instead; one decimal in `MB` from there on.
 - A no-break space between the number and the unit, so the size can never wrap.
 - Test cases: 999 B, 1023 → "1023 B", 1024 → "1 KB", 1,048,575 → "1.0 MB" (never "1024 KB"), and just under 20 MiB → "20.0 MB" (never "21.0 MB").
-- The activity line keeps its "from 1 KB on" gate; only its comment, which claims `formatBytes` would read "0 KB", is fixed.
+- The activity line's "from 1 KB on" gate moves from `>= 1000` to `>= 1024`, so its first value reads "1 KB", never "1000 B". Its comment, which claims `formatBytes` would read "0 KB", is fixed.
 
 ## 4. DESIGN.md amendment
 
@@ -142,3 +142,8 @@ Pre-release; no migration and no flag. A browser tab still running the old bundl
 
 - Whether `ImageMime`/`TEXT_MIME` and the new octet-stream constant live together as a `SniffedMime` type for `read()`'s return.
 - Test fixture builders (a zip header, PDF bytes) in `uploads/fixtures.ts`.
+
+## 9. Revision record
+
+- 2026-11-27, design review: the size moved to a second line (Q7 reversed); one chip anatomy with a fixed 28px slot; "Download …"/"Open …" names; Q8 moved to a follow-up issue.
+- 2026-11-27, plan review: the activity line's gate moves to `>= 1024` (previously "keeps its gate"), a consequence of Q6's binary units. Proxy, certainty 4.

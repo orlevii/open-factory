@@ -29,7 +29,7 @@
 1. **A NUL or invalid UTF-8 byte far past the 512 KB head** must still make the file `file`, not `text`, because the UTF-8 check streams over every chunk. Test in Task 2.
 2. **A BOM plus whitespace before `<!doctype html>` or `<svg`** must be `file`, so the BOM strip and `trimStart` still apply. Test in Task 2.
 3. **Raster magic that becomes `file`** (an over-limit PNG) must download as octet-stream and never be `inline`. The disposition keys off `row.kind`, not the magic. Test in Task 2.
-4. **A retried composer upload** must go from the reason back to the percentage, then to the size, and the second line is never blank. Test in Task 5.
+4. **A retried composer upload** must go from the reason back to the percentage, then to the size, and the second line is never blank. Test in Task 4.
 5. **A file at exactly the 20 MiB cap** must read "20.0 MB" on its chip. Test in Task 1.
 
 ---
@@ -40,7 +40,7 @@ Its own commit (spec §3.5 "Size formatting").
 
 **Files:**
 - Modify: `apps/web/src/features/session/format.ts` (`formatBytes`)
-- Modify: `apps/web/src/features/session/activity-line.tsx:206` (comment only)
+- Modify: `apps/web/src/features/session/activity-line.tsx:206` (the gate becomes `>= 1024`, and its comment)
 - Test: `apps/web/src/features/session/format.test.ts` (the `"bytes"` test)
 - Update expectations: `apps/web/src/features/session/activity-line.test.tsx` (lines ~172–245: `"12 KB"`, `"32 KB"`, `"40 KB"`, `"2 KB"`, `"1 KB"`), `apps/web/src/features/session/tools/bash.test.tsx:105` (`"Binary output · 14 KB · show raw"`)
 
@@ -66,8 +66,8 @@ test.each([
 - [ ] **Step 3: Implement `formatBytes`** as specified under Interfaces.
 - [ ] **Step 4: Update the caller tests' expected strings** to the new output.
   - Compute each from the bytes the test feeds (12_000 → `12 KB`, 32_000 → `31 KB`, 40_000 → `39 KB`, 2000 → `2 KB`, 14_000 → `14 KB`).
-  - The activity line's gate stays `>= 1000`. Its "1 KB" test feeds a byte count; recompute it (1000 → `1000 B`). If that reads wrong next to the gate's purpose, raise it in review; don't change the gate (spec: "keeps its gate").
-  - Fix the comment at `activity-line.tsx:206` so it no longer claims `formatBytes` would read "0 KB". It now reads "under 1 KB the counter is noise, so it's hidden".
+  - The activity line's gate becomes `>= 1024` (agreed with the proxy in the plan review, a direct consequence of binary units), so the counter's first value is "1 KB", never "1000 B". Update its tests: 1000 bytes is hidden; 1024 shows `1 KB`.
+  - Fix the comment at `activity-line.tsx:206` so it no longer claims `formatBytes` would read "0 KB". It now reads "under 1 KB (1024 bytes) the counter is noise, so it's hidden".
 - [ ] **Step 5: Run.** `pnpm test:related apps/web/src/features/session/format.ts`, expecting PASS (format, activity-line, bash and any other importer).
 - [ ] **Step 6: Commit.** `fix(web): formatBytes uses binary units, bytes under 1 KB and a no-break space`
 
@@ -141,7 +141,7 @@ test.each([
 ```
 
   - Keep `png(8000, 6000)` and `gifWithFrame(10, 10, 20, 30)` as `image` assertions.
-  - Replace "the extension is not trusted" with: "the same bytes get the same kind whatever they're called". `sniffType` takes no name, so assert that `png(10,10)` is `image`, `"hello\n"` is `text` and the SVG bytes are `file` (this one test covers the end-to-end name case in the route test).
+  - Delete "the extension is not trusted" with no replacement. `sniffType` takes no name, so a name test here couldn't fail; the route `test.each` (`x.png`, `a.html`) proves the name has no effect.
   - Add the **Review Focus 1** test:
 
 ```ts

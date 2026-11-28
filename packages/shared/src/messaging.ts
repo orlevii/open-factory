@@ -40,7 +40,7 @@ export const subjectSchema = z.object({
 export const messageAttachmentSchema = z.object({
   uploadId: z.string(),
   name: z.string(),
-  kind: z.enum(["image", "text"]),
+  kind: z.enum(["image", "text", "file"]),
   /** The file's size: the UI previews an image automatically only when it is small. */
   bytes: z.number().int().nonnegative(),
   width: z.number().int().positive().optional(),

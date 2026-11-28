@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, expect, test } from "vitest";
 import { resetSeq, se } from "@/test/session-fixtures";
-import { formatBytes } from "../format";
 import { buildRows, type ToolRow } from "../rows";
 import { ToolCallRow } from "../tool-call-row";
 
@@ -101,8 +100,8 @@ test("expanded: binary output reads Binary output · 14 KB · show raw", async (
   const content = "\u0000".repeat(14_000);
   render(<Harness open row={bashRow({ command: "cat x.png" }, { content })} />);
   const line = screen.getByText(/^Binary output/).closest("p");
-  expect(line).toHaveTextContent(`Binary output · ${formatBytes(14_000)} · show raw`);
-  expect(line).toHaveTextContent("Binary output · 14 KB · show raw");
+  // Exact text: the size's no-break space must survive (toHaveTextContent folds it to a space).
+  expect(line?.textContent).toBe("Binary output · 14\u00a0KB · show raw");
   await userEvent.click(screen.getByRole("button", { name: "show raw" }));
   // Raw means unstripped, in the capped plate.
   expect(document.querySelector("pre")?.textContent).toBe(content);

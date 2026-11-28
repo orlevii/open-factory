@@ -6,9 +6,15 @@ export function formatTokens(n: number): string {
   if (Math.round(n / 100) >= 1000) return `${Math.round(n / 1000)}k`;
   return `${(n / 1000).toFixed(1)}k`;
 }
+/** Binary units (1024), matching `MAX_UPLOAD_BYTES`. The number and unit are joined by a no-break
+ *  space, so a size never wraps. A KB value that would round to 1024 KB reads as MB instead. */
 export function formatBytes(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} MB`;
-  return `${Math.round(n / 1000)} KB`;
+  if (n < 1024) return `${n} B`;
+  if (n < 1_048_576) {
+    const kb = Math.round(n / 1024);
+    if (kb < 1024) return `${kb} KB`;
+  }
+  return `${(n / 1_048_576).toFixed(1)} MB`;
 }
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], {

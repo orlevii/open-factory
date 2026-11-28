@@ -4,7 +4,6 @@ import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { UploadAgentEndedError, UploadLimitError } from "../uploads/service.ts";
-import { IMAGE_TOO_LARGE, type Refusal } from "../uploads/sniff.ts";
 import { MAX_UPLOAD_BYTES, UploadExistsError, UploadTooLargeError } from "../uploads/store.ts";
 import { WorkspaceError } from "../workspace/safe-fs.ts";
 import { NO_AGENT_AT_REF, refParams, refSchema } from "./ref-params.ts";
@@ -20,13 +19,6 @@ const WORKSPACE_GONE = "This agent's workspace no longer exists.";
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The longest original name kept for the chip (characters, after decoding). */
 const MAX_NAME_CHARS = 255;
-
-const refusalCode = (r: Refusal) =>
-  r.status === 415
-    ? "unsupported_type"
-    : r.reason === IMAGE_TOO_LARGE
-      ? "image_too_large"
-      : "empty_file";
 
 /** `filename="…"` gets the safe ASCII form; `filename*` carries the original (RFC 6266). */
 function disposition(type: "inline" | "attachment", storedPath: string, original: string) {
@@ -104,7 +96,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
 
     try {
       const r = await app.uploads.create(agent, user(req).id, name, bodyStream(req.raw));
-      if ("status" in r) return err(reply, r.status, refusalCode(r), r.reason);
+      if ("status" in r) return err(reply, r.status, "empty_file", r.reason);
       return reply.code(201).send(r);
     } catch (e) {
       // The rest of the body may be unread: close the connection after answering.

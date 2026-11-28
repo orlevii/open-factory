@@ -306,7 +306,7 @@ export const uploads = pgTable(
     /** Relative to the agent's workdir: `.factory/uploads/<yyyymmdd>-<id>-<safe>`. */
     storedPath: text("stored_path").notNull(),
     originalName: text("original_name").notNull(),
-    kind: text("kind").notNull().$type<"image" | "text">(),
+    kind: text("kind").notNull().$type<"image" | "text" | "file">(),
     bytes: integer("bytes").notNull(),
     sha256: text("sha256").notNull(),
     width: integer("width"),

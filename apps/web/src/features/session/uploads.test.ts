@@ -86,20 +86,20 @@ test("a 201 makes the upload done; its attachment is described for the send", ()
 
 test("a refusal of the file shows the server's reason and offers no Retry", () => {
   const s = createUploadStore(refFor("dev"));
-  s.add([file("p.heic", 10, "image/heic"), file("big.png", 10, "image/png")]);
+  s.add([file("a.txt"), file("b.bin")]);
   const [a, b] = s.keys() as [string, string];
-  (FakeXhr.all[0] as FakeXhr).respond(415, {
-    error: { code: "unsupported_type", message: "HEIC isn't supported; export as JPEG" },
+  (FakeXhr.all[0] as FakeXhr).respond(422, {
+    error: { code: "empty_file", message: "The file is empty." },
   });
-  (FakeXhr.all[1] as FakeXhr).respond(422, {
-    error: { message: "Image is too large (max 8000 px a side)." },
+  (FakeXhr.all[1] as FakeXhr).respond(413, {
+    error: { code: "too_large", message: "The file is larger than 20 MB." },
   });
   expect(s.get(a)).toMatchObject({
     status: "failed",
-    error: "HEIC isn't supported; export as JPEG",
+    error: "The file is empty.",
     retryable: false,
   });
-  expect(s.get(b)?.retryable).toBe(false);
+  expect(s.get(b)).toMatchObject({ error: "The file is larger than 20 MB.", retryable: false });
   expect(s.summary()).toEqual({ count: 2, pending: 0, failed: 2 });
   s.retry(a);
   expect(FakeXhr.all).toHaveLength(2);
@@ -248,6 +248,48 @@ test("an image gets a 64px-wide bitmap thumbnail; never the full-size file", asy
   await vi.waitFor(() => expect(s.get(k)?.thumb).toBe(bitmap));
   s.remove(k);
   expect(bitmap.close).toHaveBeenCalled();
+});
+
+test("the server's kind lands on the view; a file answer drops the local thumbnail", async () => {
+  const bitmap = { width: 64, height: 48, close: vi.fn() };
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async () => bitmap),
+  );
+  const s = createUploadStore(refFor("dev"));
+  s.add([file("big.png", 10, "image/png")]);
+  const k = only(s);
+  await vi.waitFor(() => expect(s.get(k)?.thumb).toBe(bitmap));
+  lastXhr().respond(201, { uploadId: "u1", name: "big.png", kind: "file", bytes: 10 });
+  expect(s.get(k)).toMatchObject({ status: "done", kind: "file" });
+  expect(s.get(k)?.thumb).toBeUndefined();
+  expect(bitmap.close).toHaveBeenCalled();
+});
+
+test("a thumbnail that resolves after a file answer is closed, not shown", async () => {
+  const bitmap = { width: 64, height: 48, close: vi.fn() };
+  let resolve: (b: typeof bitmap) => void = () => {};
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(() => new Promise((r) => (resolve = r))),
+  );
+  const s = createUploadStore(refFor("dev"));
+  s.add([file("big.png", 10, "image/png")]);
+  const k = only(s);
+  lastXhr().respond(201, { uploadId: "u1", name: "big.png", kind: "file", bytes: 10 });
+  resolve(bitmap);
+  await vi.waitFor(() => expect(bitmap.close).toHaveBeenCalled());
+  expect(s.get(k)?.thumb).toBeUndefined();
+});
+
+test("a text answer keeps no thumbnail and records the kind", () => {
+  const s = createUploadStore(refFor("dev"));
+  s.add([file("a.txt")]);
+  const k = only(s);
+  expect(s.get(k)?.kind).toBeUndefined();
+  lastXhr().respond(201, ok("u1"));
+  expect(s.get(k)).toMatchObject({ status: "done", kind: "text" });
+  expect(s.get(k)?.thumb).toBeUndefined();
 });
 
 const att = (uploadId: string, name = "a.png"): MessageAttachment => ({

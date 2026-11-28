@@ -535,7 +535,8 @@ test("a capped tool input shows its truncation note", async () => {
   };
   renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: /echo/ }));
-  expect(screen.getByText("Truncated (1.2 MB)")).toBeInTheDocument();
+  // Exact text: the size's no-break space must survive (the text matcher folds it to a space).
+  expect(screen.getByText(/^Truncated/).textContent).toBe("Truncated (1.1\u00a0MB)");
 });
 
 test("an invalid ?event is ignored", async () => {

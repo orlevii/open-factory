@@ -155,7 +155,7 @@ export class UploadStore {
    */
   async write(
     source: AsyncIterable<Buffer | Uint8Array>,
-    o: { storedName: string; name: string; limit?: number },
+    o: { storedName: string; limit?: number },
   ): Promise<Written | Refusal> {
     checkStored(o.storedName);
     const limit = o.limit ?? MAX_UPLOAD_BYTES;
@@ -184,7 +184,7 @@ export class UploadStore {
         hash.update(buf);
         await fh.write(buf);
       }
-      const sniffed = sniffer.finish(o.name);
+      const sniffed = sniffer.finish();
       if ("status" in sniffed) return sniffed;
       await this.fs.assertParents(rel);
       await this.hooks.beforeLink?.(finalAbs);

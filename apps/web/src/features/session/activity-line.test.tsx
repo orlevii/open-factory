@@ -169,7 +169,7 @@ const counter = () => document.querySelector("[data-activity-count]")?.textConte
 test("live tool input: the open tool's label, with a KB counter that updates at most twice a second", () => {
   const view = render(<TurnActivity open={undefined} live={writing(12_400)} turnKey="1" />);
   expect(label()).toBe("Writing app.ts");
-  expect(counter()).toBe("12 KB");
+  expect(counter()).toBe("12\u00a0KB");
   const seen = new Set<string | undefined>([counter()]);
   // Frames every 50ms for a second: the counter moves at most twice.
   let changes = 0;
@@ -184,7 +184,7 @@ test("live tool input: the open tool's label, with a KB counter that updates at 
   expect(changes).toBeLessThanOrEqual(2);
   // It settles on the latest figure.
   act(() => vi.advanceTimersByTime(500));
-  expect(counter()).toBe("32 KB");
+  expect(counter()).toBe("32\u00a0KB");
   // Not part of the label (the title keeps the label alone).
   expect(document.querySelector("[data-activity-label]")).toHaveAttribute(
     "title",
@@ -194,7 +194,7 @@ test("live tool input: the open tool's label, with a KB counter that updates at 
 
 test("a new tool's input starts its own counter at once", () => {
   const view = render(<TurnActivity open={undefined} live={writing(40_000)} turnKey="1" />);
-  expect(counter()).toBe("40 KB");
+  expect(counter()).toBe("39\u00a0KB");
   view.rerender(
     <TurnActivity
       open={undefined}
@@ -205,7 +205,7 @@ test("a new tool's input starts its own counter at once", () => {
       turnKey="1"
     />,
   );
-  expect(counter()).toBe("2 KB");
+  expect(counter()).toBe("2\u00a0KB");
 });
 
 test("thinking shows only while live thinking is set; live text reads Writing a reply", () => {
@@ -237,10 +237,10 @@ test("a text block ending and the next tool starting within 400ms never shows Wo
   expect(shown).toEqual(["Writing a reply", "Writing app.ts"]);
 });
 
-test("the KB counter waits until there is at least 1 KB (never '0 KB')", () => {
-  const view = render(<TurnActivity open={undefined} live={writing(400)} turnKey="1" />);
+test("the size counter is hidden under 1 KB (1000 bytes) and reads 1 KB from 1024 bytes", () => {
+  const view = render(<TurnActivity open={undefined} live={writing(1000)} turnKey="1" />);
   expect(label()).toBe("Writing app.ts");
   expect(counter()).toBeUndefined();
-  view.rerender(<TurnActivity open={undefined} live={writing(1200)} turnKey="1" />);
-  expect(counter()).toBe("1 KB");
+  view.rerender(<TurnActivity open={undefined} live={writing(1024)} turnKey="1" />);
+  expect(counter()).toBe("1\u00a0KB");
 });

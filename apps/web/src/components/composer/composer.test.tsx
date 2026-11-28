@@ -862,21 +862,62 @@ test("a progress tick renders only its own chip, once per frame; not the compose
   expect(boxRenders.n).toBe(box0);
 });
 
+test("a composer chip's second line is the size before and after the upload, the percentage during it", () => {
+  const { box, frames } = setupFiles();
+  pasteFiles(box, [file("report.zip", 1_258_291)]);
+  const chip = () => screen.getByRole("listitem", { name: /^report\.zip, 1\.2\sMB, / });
+  expect(chip()).toHaveAccessibleName(/^report\.zip, 1\.2\sMB, uploading 0%$/);
+  expect(chip()).toHaveTextContent("0%");
+  act(() => {
+    lastXhr().progress(50, 100);
+    frames.flush();
+  });
+  expect(chip()).toHaveTextContent("50%");
+  act(() =>
+    lastXhr().respond(201, { uploadId: "u1", name: "report.zip", kind: "file", bytes: 1_258_291 }),
+  );
+  expect(chip()).toHaveAccessibleName(/^report\.zip, 1\.2\sMB, uploaded$/);
+  expect(chip()).toHaveTextContent(/1\.2\sMB/);
+  expect(chip()).not.toHaveTextContent("%");
+});
+
+test("a retried upload goes from the reason to the percentage and back to the size", async () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("report.zip", 1_258_291)]);
+  act(() => lastXhr().respond(503, { error: { message: "The server is busy." } }));
+  expect(chips()[0]).toHaveTextContent("The server is busy.");
+  await userEvent.click(screen.getByRole("button", { name: "Retry report.zip" }));
+  expect(chips()[0]).toHaveTextContent("0%");
+  expect(chips()[0]).not.toHaveTextContent("The server is busy.");
+  act(() =>
+    lastXhr().respond(201, { uploadId: "u1", name: "report.zip", kind: "file", bytes: 1_258_291 }),
+  );
+  expect(chips()[0]).toHaveTextContent(/1\.2\sMB/);
+  expect(chips()[0]).not.toHaveTextContent("%");
+});
+
+test("the chip shows the generic file icon until the server says text", () => {
+  const { box } = setupFiles();
+  pasteFiles(box, [file("a.txt")]);
+  const icon = () => chips()[0]?.querySelector("[data-kind-icon]");
+  expect(icon()).toHaveAttribute("data-kind-icon", "file");
+  act(() => lastXhr().respond(201, ok("u1", "a.txt")));
+  expect(icon()).toHaveAttribute("data-kind-icon", "text");
+});
+
 test("a refused file shows its reason with Remove only; a failure a retry can fix offers Retry", async () => {
   const { box } = setupFiles();
-  pasteFiles(box, [file("p.heic", 10, "image/heic"), file("a.txt")]);
+  pasteFiles(box, [file("p.bin", 10), file("a.txt")]);
   const [heic, txt] = FakeXhr.all as [FakeXhr, FakeXhr];
   act(() => {
-    heic.respond(415, {
-      error: { code: "unsupported_type", message: "HEIC isn't supported; export as JPEG" },
-    });
+    heic.respond(422, { error: { code: "empty_file", message: "The file is empty." } });
     txt.respond(503, { error: { message: "The server is busy." } });
   });
-  expect(chips()[0]).toHaveTextContent("HEIC isn't supported; export as JPEG");
-  expect(screen.queryByRole("button", { name: "Retry p.heic" })).toBeNull();
+  expect(chips()[0]).toHaveTextContent("The file is empty.");
+  expect(screen.queryByRole("button", { name: "Retry p.bin" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Retry a.txt" }));
   expect(FakeXhr.all).toHaveLength(3);
-  await userEvent.click(screen.getByRole("button", { name: "Remove p.heic" }));
+  await userEvent.click(screen.getByRole("button", { name: "Remove p.bin" }));
   expect(chips()).toHaveLength(1);
 });
 
@@ -1125,7 +1166,7 @@ test("chips that wrap after their names lay out still collapse to two rows (each
     return [...(this.parentElement?.children ?? [])].indexOf(this) * 42;
   });
   const { box } = setupFiles();
-  pasteFiles(box, [file("a.txt"), file("b.txt"), file("p.heic", 10, "image/heic")]);
+  pasteFiles(box, [file("a.txt"), file("b.txt"), file("p.bin", 10)]);
   expect(screen.queryByRole("button", { name: "+1 file" })).toBeNull();
   const lis = chips();
   expect(observers.some((o) => lis.every((li) => o.els.includes(li)))).toBe(true);
@@ -1141,10 +1182,14 @@ test("chips that wrap after their names lay out still collapse to two rows (each
 
 test("a failed chip's reason takes up to two lines instead of being cut to a few words", () => {
   const { box } = setupFiles();
-  pasteFiles(box, [file("p.heic", 10, "image/heic")]);
-  act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
+  pasteFiles(box, [file("p.bin", 10)]);
+  act(() =>
+    lastXhr().respond(413, {
+      error: { code: "too_large", message: "The file is larger than 20 MB." },
+    }),
+  );
   const reason = chips()[0]?.querySelector("[data-upload-error]");
-  expect(reason).toHaveTextContent("HEIC isn't supported; export as JPEG");
+  expect(reason).toHaveTextContent("The file is larger than 20 MB.");
 });
 
 test("the `/` menu renders every row its source gives (the list scrolls); `@` keeps its 8", async () => {

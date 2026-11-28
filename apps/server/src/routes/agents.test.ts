@@ -15,7 +15,7 @@ import { agentRecords, principalsByHandles } from "../principals/principal-store
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp, runtimeOf } from "../test/helpers.ts";
 import { principalSql, seedTestUser, UNKNOWN_REF } from "../test/principals.ts";
-import { png } from "../uploads/fixtures.ts";
+import { png, zip } from "../uploads/fixtures.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -1154,16 +1154,18 @@ describe("U3 §13.5: attachments on POST /messages", () => {
   test("each file adds one [attached: …] line, sets message_id, and the envelope carries the list", async () => {
     const img = await upload("dev", png(64, 32), "screen shot.png");
     const txt = await upload("dev", Buffer.from("log line\n"), "run.log");
-    const res = await post({ body: "look at these", attachments: [img, txt] });
+    const zipId = await upload("dev", zip(), "bundle.zip");
+    const res = await post({ body: "look at these", attachments: [img, txt, zipId] });
     expect(res.statusCode).toBe(202);
     const messageId = res.json().results[0].item.id as string;
     const imgRow = await uploadRow(img);
     const txtRow = await uploadRow(txt);
+    const zipRow = await uploadRow(zipId);
     expect(imgRow?.messageId).toBe(messageId);
     expect(txtRow?.messageId).toBe(messageId);
     const [msg] = await s.sql`select body, attachments from messages where id = ${messageId}`;
     expect(msg?.body).toBe(
-      `look at these\n\n[attached: ${imgRow?.storedPath}]\n[attached: ${txtRow?.storedPath}]`,
+      `look at these\n\n[attached: ${imgRow?.storedPath}]\n[attached: ${txtRow?.storedPath}]\n[attached: ${zipRow?.storedPath}]`,
     );
     const attachments = [
       {
@@ -1175,6 +1177,7 @@ describe("U3 §13.5: attachments on POST /messages", () => {
         height: 32,
       },
       { uploadId: txt, name: "run.log", kind: "text", bytes: txtRow?.bytes },
+      { uploadId: zipId, name: "bundle.zip", kind: "file", bytes: zipRow?.bytes },
     ];
     expect(msg?.attachments).toEqual(attachments);
 
@@ -1188,6 +1191,8 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     const abs = path.resolve(drv.last.spec.cwd, rel);
     expect(readFileSync(abs)).toEqual(png(64, 32));
     expect(statSync(abs).mode & 0o004).toBe(0o004);
+    const zipRel = /\[attached: ([^\]]+)\]$/.exec(sent?.body ?? "")?.[1] ?? "";
+    expect(readFileSync(path.resolve(drv.last.spec.cwd, zipRel))).toEqual(zip());
 
     // The stored message_in event carries the list for the UI.
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());

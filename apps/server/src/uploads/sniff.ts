@@ -1,35 +1,29 @@
 /**
- * U3 §13.5: an upload's type comes from its bytes, never its extension or the client's MIME type. Accepted: PNG, JPEG,
- * GIF and WebP (magic bytes, dimensions read from the header only, never decoded) and UTF-8 text. Everything else,
- * SVG and HTML in particular, is refused with a reason the chip shows.
+ * An upload's type comes from its bytes, never its extension or the client's MIME type. PNG, JPEG, GIF and WebP within
+ * the size limits (magic bytes, dimensions read from the header only, never decoded) are images; plain UTF-8 text that
+ * isn't SVG or HTML markup is text. Everything else is an opaque file, which is only ever served as octet-stream.
  */
 
 export type ImageMime = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 export const TEXT_MIME = "text/plain; charset=utf-8";
+export const FILE_MIME = "application/octet-stream";
 export type Sniffed =
   | { kind: "image"; mime: ImageMime; width: number; height: number }
-  | { kind: "text"; mime: typeof TEXT_MIME };
-export type Refusal = { status: 415 | 422; reason: string };
+  | { kind: "text"; mime: typeof TEXT_MIME }
+  | { kind: "file"; mime: typeof FILE_MIME };
+export type Refusal = { status: 422; reason: string };
 
 export const MAX_IMAGE_SIDE = 8000;
 export const MAX_IMAGE_PIXELS = 50_000_000;
-export const IMAGE_TOO_LARGE = "Image is too large (max 8000 px a side).";
-const UNSUPPORTED = "Only images (PNG, JPEG, GIF, WebP) and UTF-8 text are supported.";
-const SVG = "SVG isn't supported; export it as PNG.";
-const HTML = "HTML files aren't supported.";
-const HEIC = "HEIC isn't supported; export as JPEG";
-const UTF16 = "UTF-16 text isn't supported; save it as UTF-8.";
-const NO_SIZE = "This image's size can't be read.";
 
 /** Enough to reach a JPEG's SOF behind EXIF and other APPn segments (each at most 64 KB). */
 const HEAD_BYTES = 512 * 1024;
 
-const SVG_EXT = new Set(["svg", "svgz"]);
-const HTML_EXT = new Set(["html", "htm", "xhtml", "shtml", "mht", "mhtml"]);
-const HEIF_BRANDS = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"]);
 // WHATWG MIME sniffing's HTML patterns (the ones that are unambiguous markup), each followed by a space or `>`.
 const HTML_START =
   /^<(!doctype\s+html|html|head|body|script|iframe|style|title|table|div|font|h1)[\s>]/i;
+
+const FILE = { kind: "file", mime: FILE_MIME } as const;
 
 const eq = (b: Buffer, at: number, bytes: number[]) =>
   b.length >= at + bytes.length && bytes.every((x, i) => b[at + i] === x);
@@ -143,8 +137,6 @@ export function imageDimensions(
   }
 }
 
-const extOf = (name: string | undefined) => /\.([^./\\]+)$/.exec(name ?? "")?.[1]?.toLowerCase();
-
 /** Fed the upload's bytes as they stream; `finish()` decides. Keeps only the head and a streaming UTF-8 check. */
 export class Sniffer {
   private readonly headChunks: Buffer[] = [];
@@ -171,50 +163,44 @@ export class Sniffer {
     }
   }
 
-  finish(name?: string): Sniffed | Refusal {
+  finish(): Sniffed | Refusal {
     if (this.total === 0) return { status: 422, reason: "The file is empty." };
     const head = Buffer.concat(this.headChunks);
-    const ext = extOf(name);
     const image = magic(head);
     if (image) {
       const size = imageDimensions(head, image);
-      if (!size || size.width < 1 || size.height < 1) return { status: 415, reason: NO_SIZE };
       if (
-        size.width > MAX_IMAGE_SIDE ||
-        size.height > MAX_IMAGE_SIDE ||
-        size.width * size.height > MAX_IMAGE_PIXELS
+        size &&
+        size.width >= 1 &&
+        size.height >= 1 &&
+        size.width <= MAX_IMAGE_SIDE &&
+        size.height <= MAX_IMAGE_SIDE &&
+        size.width * size.height <= MAX_IMAGE_PIXELS
       )
-        return { status: 422, reason: IMAGE_TOO_LARGE };
-      return { kind: "image", mime: image, ...size };
+        return { kind: "image", mime: image, ...size };
+      return FILE;
     }
-    if (ascii(head, 4, "ftyp") && HEIF_BRANDS.has(head.toString("latin1", 8, 12)))
-      return { status: 415, reason: HEIC };
-    if (eq(head, 0, [0xff, 0xfe]) || eq(head, 0, [0xfe, 0xff]))
-      return { status: 415, reason: UTF16 };
-    if (ascii(head, 0, "%PDF-")) return { status: 415, reason: "PDFs aren't supported yet." };
-    if (ext && SVG_EXT.has(ext)) return { status: 415, reason: SVG };
-    if (ext && HTML_EXT.has(ext)) return { status: 415, reason: HTML };
-    if (this.nul || !this.utf8) return { status: 415, reason: UNSUPPORTED };
+    if (ascii(head, 0, "%PDF-")) return FILE;
+    if (this.nul || !this.utf8) return FILE;
     try {
       this.decoder.decode(); // flush: a truncated multibyte sequence at the end throws
     } catch {
-      return { status: 415, reason: UNSUPPORTED };
+      return FILE;
     }
     const start = head
       .toString("utf8", 0, Math.min(head.length, 4096))
-      .replace(/^﻿/, "")
+      .replace(/^\uFEFF/, "")
       .trimStart();
-    if (/^<svg[\s>/]/i.test(start) || /^<!doctype\s+svg/i.test(start))
-      return { status: 415, reason: SVG };
-    if (/^<\?xml/i.test(start) && /<svg[\s>/]/i.test(start)) return { status: 415, reason: SVG };
-    if (HTML_START.test(start)) return { status: 415, reason: HTML };
+    if (/^<svg[\s>/]/i.test(start) || /^<!doctype\s+svg/i.test(start)) return FILE;
+    if (/^<\?xml/i.test(start) && /<svg[\s>/]/i.test(start)) return FILE;
+    if (HTML_START.test(start)) return FILE;
     return { kind: "text", mime: TEXT_MIME };
   }
 }
 
 /** The whole file at once (tests, and re-checking a stored file). */
-export function sniffType(data: Buffer, name?: string): Sniffed | Refusal {
+export function sniffType(data: Buffer): Sniffed | Refusal {
   const s = new Sniffer();
   s.push(data);
-  return s.finish(name);
+  return s.finish();
 }

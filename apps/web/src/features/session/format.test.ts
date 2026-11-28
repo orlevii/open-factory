@@ -22,10 +22,17 @@ test("tokens", () => {
   expect(formatTokens(99_949)).toBe("99.9k");
   expect(formatTokens(99_950)).toBe("100k");
 });
-test("bytes", () => {
-  expect(formatBytes(1_200_000)).toBe("1.2 MB");
-  expect(formatBytes(70_000)).toBe("70 KB");
-});
+// The number and its unit are joined by a no-break space (U+00A0), so a size never wraps.
+test.each([
+  [999, "999\u00a0B"],
+  [1023, "1023\u00a0B"],
+  [1024, "1\u00a0KB"],
+  [70_000, "68\u00a0KB"],
+  [1_048_575, "1.0\u00a0MB"], // never "1024 KB"
+  [1_200_000, "1.1\u00a0MB"],
+  [20 * 1024 * 1024 - 1, "20.0\u00a0MB"], // never "21.0 MB"
+  [20 * 1024 * 1024, "20.0\u00a0MB"],
+])("formatBytes(%i) is %s", (n, out) => expect(formatBytes(n)).toBe(out));
 test("formatResetTime", () => {
   expect(formatResetTime(new Date(2026, 10, 19, 14, 30), new Date(2026, 10, 19, 9))).toBe("14:30");
   expect(formatResetTime(new Date(2026, 10, 20, 9, 10), new Date(2026, 10, 19, 9))).toBe(
